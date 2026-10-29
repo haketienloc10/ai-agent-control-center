@@ -11,13 +11,14 @@
 
 **Nghiệm thu:** cấu hình đường dẫn, tạo và chạy một Task, nhìn thấy event và trạng thái cuối.
 
-## P1 — Lead-controlled dispatch
+## P1 — Lead-controlled dispatch (nhánh PR)
 
-- [ ] `LeadPlan` và `PeerTask` schema có validation.
-- [ ] Queue + dependency + concurrency limit theo module.
-- [ ] Handoff kết quả Peer → Lead (artifact, diff, tests).
-- [ ] Lead review → accept/rework với giới hạn vòng lặp, Business Approval.
-- [ ] Bổ sung mock runtime và integration tests cho điều phối.
+- [x] `LeadPlan`/`PeerResult`/`LeadReview` schema và validation, DAG module allowlist.
+- [x] Queue + dependency + giới hạn tổng 2 concurrent, mỗi module 1 Peer.
+- [x] Handoff `PeerResult` có changedFiles/tests/risks sang Lead review. Đây là **self-report**, chưa có Git diff và artifact verification độc lập.
+- [x] Lead review → accept/rework với tối đa 2 reworks/Peer, Business Approval trên UI.
+- [x] Mock executor + tests kiểm tra dependency/rework/concurrency/restart.
+- [ ] Live integration E2E với Codex app-server đã đăng nhập ở máy local.
 
 **Nghiệm thu:** một yêu cầu Lead tạo ít nhất hai PeerTask, retry một Peer riêng và xuất báo cáo tổng hợp.
 
@@ -26,7 +27,7 @@
 - [ ] Git worktree theo repository và chính sách merge.
 - [ ] SQLite/PostgreSQL state, durable event journal.
 - [ ] Restart reconciliation, resume thread, không thực thi trùng.
-- [ ] Artifact store, diff viewer, tests evidence.
+- [ ] Artifact store, diff viewer và xác minh tests evidence độc lập.
 - [ ] Permission boundary và shell/MCP policy theo Agent.
 
 ## P3 — Experience

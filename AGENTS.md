@@ -11,3 +11,8 @@
 - Không commit `config/workspace.local.json`, `.data/`, credentials.
 - Ưu tiên giữ API hợp đồng ổn định, xử lý lỗi và lifecycle rõ ràng, tránh abstractions không có nhu cầu.
 - Đọc `docs/GOALS.md`, `docs/ARCHITECTURE.md` trước khi thay đổi mô hình điều phối.
+
+- P1: LeadPlan, PeerResult, LeadReview trả JSON hợp lệ; không tự động accept khi parse/validation lỗi.
+- Dependency chỉ mở khóa khi Lead accept. Rework tối đa 2 lần, không tự retry vô hạn.
+- Peer làm việc trong `moduleId` thuộc registry, tối đa một writer mỗi module ở P1; chưa có Git worktree isolation.
+- Business Approval chỉ là quyết định của người dùng trên Workflow, khác Runtime Approval trong Codex.

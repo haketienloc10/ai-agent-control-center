@@ -7,15 +7,16 @@ flowchart TD
     U["Dashboard (React/Vite)"] <-->|"REST + SSE"| API["Local Backend (Node/TS)"]
     API --> REG["Workspace / Module Registry"]
     API --> TS["Task Store + Event Journal"]
-    API --> CO["Session Manager / Orchestrator boundary"]
-    CO --> R["CodexRuntimeAdapter"]
+    API --> CO["WorkflowEngine: plan, dispatch, review"]
+    CO --> SM["SessionManager: queue + thread/turn"]
+    SM --> R["CodexRuntimeAdapter"]
     R <-->|"JSON-RPC trên stdio"| AS["Codex app-server process"]
     AS --> L["Lead Thread: cwd = shared workspace"]
     AS --> P1["Peer Thread: cwd = module A"]
     AS --> P2["Peer Thread: cwd = module B"]
-    L -. "Future: dispatch/review contract" .-> CO
-    P1 -. "Future: artifacts/results" .-> CO
-    P2 -. "Future: artifacts/results" .-> CO
+    L -. "LeadPlan / LeadReview JSON" .-> CO
+    P1 -. "PeerResult JSON" .-> CO
+    P2 -. "PeerResult JSON" .-> CO
 ```
 
 ## Trách nhiệm và hướng dữ liệu
@@ -26,7 +27,8 @@ flowchart TD
 | API | Validation, CORS localhost, endpoints, SSE | Nghiệp vụ suy luận của Lead |
 | WorkspaceRegistry | Đường dẫn tuyệt đối được allowlist trong config | Source code module |
 | TaskStore | Task status, threadId/turnId, events, pending approvals | Context chi tiết trong Codex |
-| SessionManager | Chuyển Task đến đúng `cwd`, lifecycle, interrupt | Tự suy luận kế hoạch |
+| SessionManager | Queue, giới hạn concurrency, chuyển Task đến đúng `cwd`, lifecycle, interrupt | Review và dispatch plan |
+| WorkflowEngine | LeadPlan validation, DAG scheduler, PeerResult handoff, LeadReview, Business Approval | LLM inference và shell execution |
 | CodexAdapter | Spawn app-server, JSONL, RPC request/notification, callback | Task orchestration |
 | Codex app-server | Agent loop, tool execution, conversation, runtime approval | Task/Peer workflow của ứng dụng |
 
@@ -38,7 +40,9 @@ flowchart TD
 - **Task**: công việc nghiệp vụ, có `agentRole`, `moduleId`, `status`, `prompt`, `threadId`, `turnId`.
 - **Session**: mapping Thread/Turn của Codex gắn với Task. Ban đầu một Task tạo Thread mới.
 - **Event**: sự kiện đã normalize có `taskId` và payload để audit/UI.
-- **Approval**: yêu cầu RPC từ app-server (command/file change); khác với Business Approval của Lead trong roadmap.
+- **Runtime Approval**: yêu cầu RPC từ app-server (command/file change).
+- **Business Approval**: quyết định của người dùng sau khi Lead chấp nhận toàn bộ Peer output.
+- **WorkflowRun**: kế hoạch Lead, danh sách PeerWork/attempt, reviewCount và trạng thái review/approval. Dữ liệu lưu bởi Backend.
 
 ## Chuỗi xử lý foundation
 
@@ -96,16 +100,19 @@ starting → failed
 3. Sử dụng `approvalPolicy: onRequest`, `sandboxPolicy: workspaceWrite` với `writableRoots` chỉ gồm workspace hoặc module tương ứng. Không bật `dangerFullAccess`, không tự accept mọi approval.
 4. Bản foundation chỉ xử lý approval command/file-change thông dụng. Các kiểu server request khác được từ chối an toàn, không tự duyệt.
 5. Không commit `config/workspace.local.json`, `.data/`, credentials hay log cá nhân.
-6. Đặt `cwd` và sandbox policy **không thay thế** kiểm soát quyền host; trước khi bật auto-dispatch phải bổ sung worktree isolation, kiểm tra symlink và quyền công cụ.
+6. Đặt `cwd` và sandbox policy **không thay thế** kiểm soát quyền host. P1 chỉ giới hạn một Peer cùng lúc/module, **không cách ly Git working tree**; phải dùng workspace tin cậy, lưu thay đổi trước khi chạy. Worktree isolation và kiểm tra symlink là yêu cầu P2 trước khi dùng rộng rãi.
 
 ## Kế hoạch tiếp theo
 
-- Thêm `LeadPlan` schema, dispatch queue, dependency, kết quả có cấu trúc.
-- Peer chạy trong module hoặc Git worktree được cấp riêng, ghi artifact và test evidence.
-- Lead review/return/retry dựa trên diff + test evidence; Business Approval có state riêng.
+- P1: đã thêm `LeadPlan`, DAG validation, dispatch theo module, `PeerResult`, `LeadReview` với số vòng rework hữu hạn và Business Approval.
+- P2: thêm Git worktree, artifact store, kiểm chứng diff/test evidence và resume thread an toàn.
 - Recovery: đối chiếu thread state khi restart thay vì retry mù để tránh chạy trùng.
 - Session history, observability, diff viewer và live control hoàn chỉnh.
 
 ## Tài liệu giao thức
 
 https://developers.openai.com/codex/app-server
+
+## Luồng P1
+
+Đọc `docs/WORKFLOW_P1.md` để xem contracts, dependency, các nhánh review và API. Các Agent được tạo thành **Task có Thread riêng**; Lead review nhận context từ JSON plan và PeerResult. P1 chưa tái sử dụng một Codex Thread duy nhất cho mọi review turn.
