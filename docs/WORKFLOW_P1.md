@@ -67,6 +67,7 @@ Output JSON được kiểm tra nghiêm ngặt; không parse prose pha JSON. N�
 - Khi Lead yêu cầu `rework`, chỉ Peer tương ứng chạy lại với feedback trước đó.
 - `maxReworks=2`: tổng tối đa **3 attempts/Peer**; sau đó workflow failed.
 - Bất kỳ lỗi runtime, invalid JSON hoặc review không đầy đủ đều khiến workflow failed. Không tự nhận completed.
+- Backend thu thập thêm Git status trước/sau, diff preview (read-only), các command execution events và xác minh đường dẫn file nằm trong module.
 - Workflow đang hoạt động khi backend restart được đánh dấu `interrupted`, **không tự dispatch lại**.
 
 ## API
@@ -83,8 +84,8 @@ Runtime Approval cho command/file-change sử dụng `/api/approvals/:id/decisio
 
 ## Hạn chế và điều kiện kiểm chứng
 
-- PeerResult là **self-report** của Agent. Backend chưa chạy xác minh độc lập diff, test hoặc output artifacts.
-- Lead review nhận dữ liệu qua JSON; không tái sử dụng cùng Codex Thread cho các lượt planning/review.
+- PeerResult là **self-report** của Agent. Backend bổ sung Git status/diff so với `HEAD`, kiểm tra đường dẫn artifact và trích tool command events; đây **không phải** xác minh độc lập test đúng hay thay đổi riêng của từng attempt. Diff có thể chứa thay đổi của Peer trước cùng repository.
+- Lead review nhận PeerResult **và PeerEvidence** qua JSON; không tái sử dụng cùng Codex Thread cho các lượt planning/review.
 - Các module là working directories thật, **không được tách worktree**. Chỉ nên thử ở repo đã commit sạch và trên máy đáng tin.
 - Không hỗ trợ auto-recovery, resume và rollback sau runtime failure; P2 xử lý.
 - Đã có mock executor để test DAG, giới hạn đồng thời, retry và approval. Test với Codex thật cần chạy trên máy đã đăng nhập.

@@ -105,6 +105,7 @@ starting → failed
 ## Kế hoạch tiếp theo
 
 - P1: đã thêm `LeadPlan`, DAG validation, dispatch theo module, `PeerResult`, `LeadReview` với số vòng rework hữu hạn và Business Approval.
+- P1: `PeerEvidence` thu thập Git status/diff so với `HEAD` và command events; không thay thế test verification độc lập.
 - P2: thêm Git worktree, artifact store, kiểm chứng diff/test evidence và resume thread an toàn.
 - Recovery: đối chiếu thread state khi restart thay vì retry mù để tránh chạy trùng.
 - Session history, observability, diff viewer và live control hoàn chỉnh.

@@ -43,6 +43,18 @@ function WorkflowCard({ workflow, onDecision, onSelect }: {
         <strong>Risks</strong>
         <pre>{JSON.stringify(peer.result.risks, null, 2)}</pre>
       </details>}
+      {peer.evidence && <details>
+        <summary>Git / Command evidence</summary>
+        <strong>Git status trước / sau</strong>
+        <pre>{peer.evidence.git.supported ? peer.evidence.git.statusBefore + "\\n--- AFTER ---\\n" +
+          peer.evidence.git.statusAfter : "Git unavailable"}</pre>
+        <strong>Diff stat & preview {peer.evidence.git.truncated ? "(truncated)" : ""}</strong>
+        <pre>{peer.evidence.git.diffStat + "\\n" + peer.evidence.git.diffPreview}</pre>
+        <strong>Artifact paths (đã kiểm tra)</strong>
+        <pre>{JSON.stringify(peer.evidence.files, null, 2)}</pre>
+        <strong>Tool command events</strong>
+        <pre>{JSON.stringify(peer.evidence.commands, null, 2)}</pre>
+      </details>}
       {peer.feedback && <p className="muted"><strong>Lead feedback:</strong> {peer.feedback}</p>}
       {peer.attempts.map((attempt) => <button key={attempt.taskId} className="link-button"
         onClick={() => onSelect(attempt.taskId)}>Xem Task attempt #{attempt.iteration}</button>)}

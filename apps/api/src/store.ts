@@ -56,6 +56,7 @@ export class TaskStore extends EventEmitter {
 
   list() { return [...this.state.tasks].reverse(); }
   events() { return this.state.events.slice(-150); }
+  eventsForTask(taskId: string) { return this.state.events.filter((event) => event.taskId === taskId); }
   approvals() { return [...this.state.approvals].reverse(); }
   workflows() { return [...this.state.workflows].reverse(); }
   get(id: string) { return this.state.tasks.find((task) => task.id === id); }

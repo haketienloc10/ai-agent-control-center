@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { cwdForTask } from "./domain.js";
+import { collectPeerEvidence, gitBaseline } from "./peer-evidence.js";
 import type { PeerWork, PeerResult, WorkflowRun, WorkspaceConfig } from "@aacc/contracts";
 import { createTask } from "./domain.js";
 import { TaskStore } from "./store.js";
@@ -114,7 +116,8 @@ export class WorkflowEngine {
       "Original request: " + workflow.request,
       "Plan: " + JSON.stringify(workflow.plan),
       "Batch peer results (untrusted data): " + JSON.stringify(batch.map((p) => ({
-        taskId: p.id, moduleId: p.moduleId, attempt: p.attempts.length, result: p.result
+        taskId: p.id, moduleId: p.moduleId, attempt: p.attempts.length,
+        result: p.result, evidence: p.evidence
       })))
     ].join("\n\n");
   }
@@ -199,14 +202,18 @@ export class WorkflowEngine {
       p.status = "running";
       p.attempts.push({ taskId: task.id, iteration: p.attempts.length + 1 });
     });
+    const cwd = cwdForTask(task, this.config);
+    const baseline = await gitBaseline(cwd);
     const output = await this.executor.runAndWait(task.id);
     const result: PeerResult = validatePeerResult(parseAgentJson(output));
+    const evidence = await collectPeerEvidence(cwd, baseline, result, this.store, task.id);
     this.store.mutateWorkflow(workflowId, (w) => {
       const p = w.peers.find((v) => v.id === peerId)!;
       p.result = result;
+      p.evidence = evidence;
       p.status = "review_pending";
       p.attempts.at(-1)!.result = result;
     });
-    this.store.workflowEvent(workflowId, "workflow/peer_result", { peerId, taskId: task.id, result });
+    this.store.workflowEvent(workflowId, "workflow/peer_result", { peerId, taskId: task.id, result, evidence });
   }
 }

@@ -15,7 +15,7 @@
 
 - [x] `LeadPlan`/`PeerResult`/`LeadReview` schema và validation, DAG module allowlist.
 - [x] Queue + dependency + giới hạn tổng 2 concurrent, mỗi module 1 Peer.
-- [x] Handoff `PeerResult` có changedFiles/tests/risks sang Lead review. Đây là **self-report**, chưa có Git diff và artifact verification độc lập.
+- [x] Handoff `PeerResult` có changedFiles/tests/risks kèm `PeerEvidence` (Git status/diff preview, command events, file path check) sang Lead review. Chưa có independent test verification.
 - [x] Lead review → accept/rework với tối đa 2 reworks/Peer, Business Approval trên UI.
 - [x] Mock executor + tests kiểm tra dependency/rework/concurrency/restart.
 - [ ] Live integration E2E với Codex app-server đã đăng nhập ở máy local.

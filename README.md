@@ -49,9 +49,9 @@ Tài liệu giao thức: https://developers.openai.com/codex/app-server
 - POST `/api/workflows` với `{ "title": "...", "request": "..." }`: tự chạy Lead lập kế hoạch.
 - Lead trả `LeadPlan` JSON: `summary`, `tasks[]` có `id`, `moduleId`, `dependsOn`, `instructions`.
 - Backend validation module/dependency DAG, chạy tối đa 2 Peer cùng lúc và chỉ **1 Peer/module**.
-- Peer trả `PeerResult` JSON gồm `summary`, `changedFiles`, `tests`, `risks` (bằng chứng do Agent báo cáo, chưa được Backend độc lập xác minh).
+- Peer trả `PeerResult` JSON gồm `summary`, `changedFiles`, `tests`, `risks`. Backend bổ sung `PeerEvidence`: Git status trước/sau, Git diff preview, kiểm tra artifact path và command execution events.
 - Lead review từng batch, chọn `accept` / `rework`; tối đa 2 lần làm lại/Peer.
 - Khi tất cả Peer được chấp nhận, workflow dừng tại `waiting_business_approval`; người dùng quyết định tại Dashboard.
 - POST `/api/workflows/:id/decision` với `{ "decision": "approve" }` hoặc `reject`.
 
-**Lưu ý:** P1 cho phép ghi trực tiếp vào source module ngoài repo. Sao lưu/commit code của bạn trước khi chạy, và dùng module riêng hoặc worktree thủ công nếu cần cách ly. Worktree tự động, kiểm tra diff độc lập và resume an toàn nằm ở P2. P1 không tự merge.
+**Lưu ý:** P1 cho phép ghi trực tiếp vào source module ngoài repo. Sao lưu/commit code của bạn trước khi chạy, và dùng module riêng hoặc worktree thủ công nếu cần cách ly. Worktree tự động, xác minh test độc lập và resume an toàn nằm ở P2. P1 không tự merge.

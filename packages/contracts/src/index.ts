@@ -33,6 +33,18 @@ export interface PeerResult {
   tests: Array<{ command: string; status: "passed" | "failed" | "not_run"; details?: string }>;
   risks: string[];
 }
+export interface PeerEvidence {
+  git: {
+    supported: boolean;
+    statusBefore: string;
+    statusAfter: string;
+    diffStat: string;
+    diffPreview: string;
+    truncated: boolean;
+  };
+  files: Array<{ path: string; exists: boolean; insideWorkspace: boolean }>;
+  commands: Array<{ command: string; exitCode?: number }>;
+}
 export interface LeadReview {
   summary: string;
   reviews: Array<{ taskId: string; decision: "accept" | "rework"; feedback: string }>;
@@ -43,7 +55,7 @@ export interface PeerAttempt {
 export interface PeerWork {
   id: string; moduleId: string; title: string; instructions: string; dependsOn: string[];
   status: "pending" | "running" | "review_pending" | "accepted" | "rework" | "failed";
-  attempts: PeerAttempt[]; result?: PeerResult; feedback?: string;
+  attempts: PeerAttempt[]; result?: PeerResult; evidence?: PeerEvidence; feedback?: string;
 }
 export type WorkflowStatus =
   | "planning" | "executing" | "reviewing" | "waiting_business_approval"
