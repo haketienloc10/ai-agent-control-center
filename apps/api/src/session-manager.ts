@@ -57,7 +57,17 @@ export class SessionManager implements AgentTaskExecutor {
 
   private drain(): void {
     while (this.active.size < this.concurrency && this.queue.length) {
-      const entry = this.queue.shift()!;
+      // Khoá ghi theo module áp dụng cho TẤT CẢ Task, kể cả các Workflow khác nhau.
+      const next = this.queue.findIndex((entry) => {
+        const candidate = this.store.get(entry.taskId);
+        if (!candidate || candidate.role === "lead") return true;
+        return ![...this.active].some((id) => {
+          const active = this.store.get(id);
+          return active?.role === "peer" && active.moduleId === candidate.moduleId;
+        });
+      });
+      if (next < 0) break;
+      const entry = this.queue.splice(next, 1)[0];
       const task = this.store.get(entry.taskId);
       if (!task) { entry.reject(new Error("Task not found")); continue; }
       this.active.add(entry.taskId);

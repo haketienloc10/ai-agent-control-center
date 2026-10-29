@@ -146,7 +146,11 @@ export class WorkflowEngine {
       });
       if (!batch.length) throw new Error("Workflow deadlock: no ready Peer tasks");
       this.store.workflowEvent(id, "workflow/dispatch", { peerIds: batch.map((p) => p.id) });
-      await Promise.all(batch.map((peer) => this.executePeer(id, peer.id)));
+      // Chờ tất cả Peer của batch settle trước khi kết thúc Workflow:
+      // tránh đánh dấu failed khi một Peer khác vẫn đang ghi file.
+      const results = await Promise.allSettled(batch.map((peer) => this.executePeer(id, peer.id)));
+      const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+      if (failure) throw failure.reason;
       this.store.mutateWorkflow(id, (w) => { w.status = "reviewing"; });
       const reviewed = this.store.getWorkflow(id)!;
       const reviewBatch = reviewed.peers.filter((p) => batch.some((b) => b.id === p.id));
