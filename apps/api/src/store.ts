@@ -17,7 +17,7 @@ export class TaskStore extends EventEmitter {
 
   constructor(dataDir: string) {
     super();
-    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     this.file = join(dataDir, "state.json");
     this.state = existsSync(this.file)
       ? JSON.parse(readFileSync(this.file, "utf8")) as Persisted
@@ -93,5 +93,19 @@ export class TaskStore extends EventEmitter {
     this.save();
     this.emit("change");
     return approval;
+  }
+
+  expireApprovals(taskId: string) {
+    let changed = false;
+    for (const approval of this.state.approvals) {
+      if (approval.taskId === taskId && approval.status === "pending") {
+        approval.status = "expired";
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.save();
+      this.emit("change");
+    }
   }
 }

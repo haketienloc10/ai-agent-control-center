@@ -41,7 +41,10 @@ export class SessionManager {
         this.store.update(taskId, { error: String(error) }, "failed");
       }
       this.store.event(taskId, "runtime/error", { message: String(error) });
-    }).finally(() => { this.active.delete(taskId); });
+    }).finally(() => {
+      this.expirePending(taskId);
+      this.active.delete(taskId);
+    });
     return this.store.get(taskId);
   }
 
@@ -59,7 +62,7 @@ export class SessionManager {
       : "Bạn là Peer Agent cho module " + task.moduleId +
         ". Chỉ sửa code trong module được giao; cung cấp bản tóm tắt, file thay đổi, test evidence, vấn đề tồn đọng.\n\nYêu cầu:\n" + task.prompt;
 
-    // Đăng ký listener trước turn/start để tránh mất sự kiện completion nhanh.
+    // Theo dõi trước khi gọi turn/start để không mất completion nếu Turn kết thúc rất nhanh.
     let finish!: (status: string) => void;
     const completed = new Promise<string>((resolve) => { finish = resolve; });
     const onComplete = (msg: RpcMessage) => {
@@ -67,7 +70,9 @@ export class SessionManager {
         finish((msg.params.turn as { status?: string } | undefined)?.status ?? "failed");
       }
     };
+    const onExit = () => finish("failed");
     this.codex.on("notification", onComplete);
+    this.codex.on("exit", onExit);
     try {
       const turn = await this.codex.request<TurnResult>("turn/start", {
         threadId: thread.thread.id,
@@ -77,15 +82,17 @@ export class SessionManager {
         sandboxPolicy: { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false }
       });
       if (!turn?.turn?.id) throw new Error("Codex turn/start did not return turn.id");
-      this.store.update(task.id, { turnId: turn.turn.id }, "running");
-      const status = await completed;
       const current = this.store.get(task.id);
-      if (!current) return;
+      if (current?.status === "starting") this.store.update(task.id, { turnId: turn.turn.id }, "running");
+      const status = await completed;
+      const currentAfter = this.store.get(task.id);
+      if (!currentAfter || !["running", "waiting_runtime_approval"].includes(currentAfter.status)) return;
       if (status === "completed") this.store.update(task.id, {}, "completed");
       else if (status === "interrupted") this.store.update(task.id, {}, "interrupted");
       else this.store.update(task.id, { error: "Codex turn status: " + status }, "failed");
     } finally {
       this.codex.off("notification", onComplete);
+      this.codex.off("exit", onExit);
     }
   }
 
@@ -123,8 +130,18 @@ export class SessionManager {
     this.approvalRequests.delete(approvalId);
     this.store.resolveApproval(approvalId, decision === "accept" ? "accepted" : "declined");
     const task = this.store.get(request.taskId);
-    if (task?.status === "waiting_runtime_approval") this.store.update(task.id, {}, "running");
+    const hasOtherPending = this.store.approvals().some((item) => item.taskId === request.taskId && item.status === "pending");
+    if (task?.status === "waiting_runtime_approval" && !hasOtherPending) {
+      this.store.update(task.id, {}, "running");
+    }
     return approval;
+  }
+
+  private expirePending(taskId: string) {
+    for (const [id, request] of this.approvalRequests) {
+      if (request.taskId === taskId) this.approvalRequests.delete(id);
+    }
+    this.store.expireApprovals(taskId);
   }
 
   async interrupt(taskId: string) {
