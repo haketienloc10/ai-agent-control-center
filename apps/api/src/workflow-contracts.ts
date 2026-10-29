@@ -70,7 +70,7 @@ export function validatePeerResult(value: unknown): PeerResult {
     }
     return {
       command: nonempty(t.command, "test.command", 1000),
-      status: t.status,
+      status: t.status as PeerResult["tests"][number]["status"],
       ...(t.details === undefined ? {} : { details: nonempty(t.details, "test.details", 3000) })
     };
   });
@@ -88,7 +88,7 @@ export function validateLeadReview(value: unknown, batchIds: string[]): LeadRevi
     if (!batchIds.includes(taskId) || seen.has(taskId)) throw new Error("Unexpected review taskId " + taskId);
     seen.add(taskId);
     if (r.decision !== "accept" && r.decision !== "rework") throw new Error("Invalid review decision " + taskId);
-    return { taskId, decision: r.decision, feedback: nonempty(r.feedback, "review.feedback", 4000) };
+    return { taskId, decision: r.decision as "accept" | "rework", feedback: nonempty(r.feedback, "review.feedback", 4000) };
   });
   return { summary: nonempty(data.summary, "review.summary"), reviews: normalized };
 }
