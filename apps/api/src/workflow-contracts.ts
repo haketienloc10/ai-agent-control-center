@@ -93,7 +93,16 @@ export function validatePeerResult(value: unknown): PeerResult {
 export function validateLeadReview(value: unknown, batchIds: string[]): LeadReview {
   const data = object(value);
   const reviews = array(data.reviews, "reviews");
-  if (reviews.length !== batchIds.length) throw new Error("LeadReview phải quyết định mỗi Peer trong batch");
+  if (reviews.length !== batchIds.length) {
+    const found = reviews.map((entry) => {
+      if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+        return (entry as Record<string, unknown>).taskId;
+      }
+      return undefined;
+    });
+    throw new Error("LeadReview phải quyết định mỗi Peer trong batch; expected taskId: " +
+      JSON.stringify(batchIds) + "; received: " + JSON.stringify(found));
+  }
   const seen = new Set<string>();
   const normalized = reviews.map((raw) => {
     const r = object(raw);

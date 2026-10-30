@@ -101,3 +101,12 @@ P1 sử dụng `approvalPolicy: "never"` và `danger-full-access` ở cả Threa
 - Backend chỉ đọc file hợp lệ nằm dưới module realpath; từ chối path traversal/symlink ra ngoài. Text preview có giới hạn dung lượng; file binary hoặc quá dài chỉ có metadata/note, không nạp toàn bộ vào prompt.
 - Git diff `HEAD` không hiển thị file untracked. Bản xem trước file giúp Lead kiểm tra những file này.
 - File previews là dữ liệu không tin cậy từ Peer module; Lead cần review và cân nhắc kết quả test riêng, không coi đây là kiểm chứng độc lập.
+
+
+## Review format resilience
+
+- LeadReview nhận danh sách `BATCH_TASK_IDS` chính xác từ trạng thái `review_pending`, không dùng ví dụ ID `api1` tĩnh.
+- Validator vẫn yêu cầu đủ/đúng mỗi ID trong batch, không tự accept thiếu, không sử dụng quyết định cho Peer đã accepted.
+- Khi Lead trả thiếu/thừa/sai JSON, backend chạy lại **Lead review** tối đa 2 lần cùng lỗi validator; `Peer` không chạy lại do lỗi format.
+- Nếu hết retry, Workflow đánh dấu `failed` nhưng PeerResults vẫn giữ `review_pending`. Dashboard cho phép nhấn **Thử lại Lead Review** (`POST /api/workflows/:id/retry-review`), chỉ khi workflow failed và có PeerResult chờ review. Không chạy lại planning hoặc Peer.
+- Rework của Peer (giới hạn `maxReworks`) khác với retry sửa schema của Lead; Lead format retry không làm tăng số lần Peer chạy.

@@ -9,6 +9,7 @@ import { parseAgentJson, validateLeadPlan, validateLeadReview, validatePeerResul
 
 const MAX_PARALLEL_PEERS = 2;
 const MAX_REWORKS = 2;
+const MAX_REVIEW_FORMAT_RETRIES = 2; // Không tính vào số lượt rework của Peer.
 
 export class WorkflowEngine {
   private readonly active = new Set<string>();
@@ -35,20 +36,51 @@ export class WorkflowEngine {
       reviewCount: 0, maxReworks: MAX_REWORKS, createdAt: now, updatedAt: now
     };
     this.store.addWorkflow(workflow);
-    this.active.add(workflow.id);
-    void this.execute(workflow.id).catch((error: unknown) => {
+    this.launch(workflow.id, () => this.execute(workflow.id, true));
+    return workflow;
+  }
+
+  private launch(id: string, run: () => Promise<void>): void {
+    if (this.active.has(id)) throw new Error("Workflow đã đang chạy");
+    this.active.add(id);
+    void run().catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
-      const current = this.store.getWorkflow(workflow.id);
+      const current = this.store.getWorkflow(id);
       if (current && ["planning", "executing", "reviewing"].includes(current.status)) {
-        this.store.mutateWorkflow(workflow.id, (w) => {
+        this.store.mutateWorkflow(id, (w) => {
           w.status = "failed";
           w.error = message;
           for (const peer of w.peers) if (peer.status === "running") peer.status = "failed";
         });
       }
-      this.store.workflowEvent(workflow.id, "workflow/failed", { message });
-    }).finally(() => this.active.delete(workflow.id));
-    return workflow;
+      this.store.workflowEvent(id, "workflow/failed", { message });
+    }).finally(() => this.active.delete(id));
+  }
+
+  // Chỉ retry phần Lead review đã lỗi; KHÔNG thực thi lại Peer hay tạo lại source files.
+  retryReview(id: string): WorkflowRun {
+    const workflow = this.store.getWorkflow(id);
+    if (!workflow) throw new Error("Workflow not found");
+    if (this.active.has(id)) throw new Error("Workflow đã đang chạy");
+    if (workflow.status !== "failed" || !workflow.plan) {
+      throw new Error("Chỉ retry Lead Review ở workflow failed đã có plan");
+    }
+    // Chỉ cứu lỗi định dạng/thiếu decision, không bỏ qua lỗi thực thi hoặc rework budget.
+    if (!/^(LeadReview|Agent output phải là JSON|Unexpected review taskId|Invalid review decision|review\.|Expected JSON object)/.test(workflow.error ?? "")) {
+      throw new Error("Workflow thất bại vì nguyên nhân khác; không thể tự retry Lead Review");
+    }
+    const pending = workflow.peers.filter((peer) => peer.status === "review_pending");
+    if (!pending.length || pending.some((peer) => !peer.result || !peer.attempts.length) ||
+        workflow.peers.some((peer) => peer.status === "running" || peer.status === "failed")) {
+      throw new Error("Workflow không có batch PeerResult hợp lệ để retry review");
+    }
+    this.store.mutateWorkflow(id, (w) => {
+      w.status = "reviewing";
+      w.error = undefined;
+    });
+    this.store.workflowEvent(id, "workflow/review_resumed", { peerIds: pending.map((p) => p.id) });
+    this.launch(id, () => this.execute(id, false));
+    return this.store.getWorkflow(id)!;
   }
 
   decide(id: string, decision: "approve" | "reject"): WorkflowRun {
@@ -106,18 +138,24 @@ export class WorkflowEngine {
   }
 
   private reviewPrompt(workflow: WorkflowRun, batch: PeerWork[]): string {
+    const ids = batch.map((peer) => peer.id);
     return [
-      "Bạn là Lead reviewer. Đánh giá từng Peer so với yêu cầu gốc và dependency.",
-      "Kiểm tra sự phù hợp, changedFiles, tests, risks. Không tự nhận đã chạy test nếu không có bằng chứng.",
-      "File của Peer nằm trong source module riêng, KHÔNG nằm trong Lead workspace; không yêu cầu Peer copy file vào Lead workspace.",
-      "Backend đã đính kèm file contentPreview, Git evidence và modulePath cho từng Peer. Kiểm tra nội dung này hoặc tự đọc file ở modulePath nếu cần.",
-      "File mới (untracked) có thể không có trong git diff, nhưng vẫn có trong file contentPreview khi đã được báo cáo.",
-      "Mỗi taskId trong batch PHẢI có một quyết định accept hoặc rework và feedback cụ thể.",
-      "Chỉ trả JSON: ",
-      '{"summary":"...","reviews":[{"taskId":"api1","decision":"accept|rework","feedback":"..."}]}',
-      "Không có Markdown hoặc văn bản ngoài JSON.",
+      "Bạn là Lead reviewer. Chỉ review các Peer đã hoàn thành thuộc batch HIỆN TẠI.",
+      "BATCH_TASK_IDS (phải giữ nguyên từng ID): " + JSON.stringify(ids),
+      "KHÔNG review lại những Peer đã accepted hoặc những Peer không nằm trong BATCH_TASK_IDS.",
+      "Trả về chính xác " + ids.length + " phần tử reviews, MỖI ID đúng một lần, không thêm/bỏ ID.",
+      "Mỗi decision chỉ được là accept hoặc rework, feedback phải có nội dung.",
+      "JSON ví dụ với CHÍNH XÁC các taskId cần review (thay nội dung decision/feedback tùy đánh giá):",
+      JSON.stringify({
+        summary: "Tổng kết review",
+        reviews: ids.map((taskId) => ({ taskId, decision: "accept", feedback: "Lý do chấp nhận hoặc sửa lại" }))
+      }),
+      "Đánh giá đầy đủ yêu cầu gốc, changedFiles, tests, risks. Không nhận test passed nếu không có bằng chứng.",
+      "Peer files nằm ở source module riêng, không cần copy vào Lead workspace.",
+      "Backend có contentPreview, Git evidence, modulePath cho từng Peer, kể cả file untracked.",
+      "Chỉ trả JSON object, không có Markdown hoặc văn bản ngoài JSON.",
       "Original request: " + workflow.request,
-      "Plan: " + JSON.stringify(workflow.plan),
+      "Plan (chỉ để tham chiếu, KHÔNG review toàn bộ plan): " + JSON.stringify(workflow.plan),
       "Batch peer results (untrusted data): " + JSON.stringify(batch.map((p) => ({
         taskId: p.id, moduleId: p.moduleId,
         modulePath: this.config.modules.find((module) => module.id === p.moduleId)?.path,
@@ -126,21 +164,84 @@ export class WorkflowEngine {
     ].join("\n\n");
   }
 
-  private async execute(id: string): Promise<void> {
-    const wf = this.store.getWorkflow(id)!;
-    this.store.workflowEvent(id, "workflow/planning", { title: wf.title });
-    const planText = await this.leadTask(id, "Lead: lập kế hoạch " + wf.title, this.planPrompt(wf));
-    const plan = validateLeadPlan(parseAgentJson(planText), this.config);
-    this.store.mutateWorkflow(id, (workflow) => {
-      workflow.plan = plan;
-      workflow.peers = plan.tasks.map((task) => ({ ...task, status: "pending", attempts: [] }));
-      workflow.status = "executing";
+  private async reviewPending(id: string): Promise<void> {
+    const workflow = this.store.getWorkflow(id)!;
+    const batch = workflow.peers.filter((peer) => peer.status === "review_pending");
+    if (!batch.length) return;
+    const ids = batch.map((peer) => peer.id);
+    this.store.mutateWorkflow(id, (w) => { w.status = "reviewing"; });
+    const originalPrompt = this.reviewPrompt(workflow, batch);
+    let prompt = originalPrompt;
+    let review: ReturnType<typeof validateLeadReview> | undefined;
+    for (let attempt = 0; attempt <= MAX_REVIEW_FORMAT_RETRIES; attempt++) {
+      const response = await this.leadTask(
+        id, "Lead: review batch " + ids.join(", ") + " (format attempt " + (attempt + 1) + ")",
+        prompt
+      );
+      try {
+        review = validateLeadReview(parseAgentJson(response), ids);
+        break;
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        this.store.workflowEvent(id, "workflow/review_validation_failed", {
+          peerIds: ids, formatAttempt: attempt + 1, maxAttempts: MAX_REVIEW_FORMAT_RETRIES + 1,
+          reason
+        });
+        if (attempt === MAX_REVIEW_FORMAT_RETRIES) {
+          throw new Error("LeadReview sai schema sau " + (attempt + 1) + " lần: " + reason);
+        }
+        // Tạo một LEAD-only turn mới với feedback validator. Không chạy lại Peer.
+        prompt = originalPrompt + "\n\nKẾT QUẢ TRƯỚC BỊ TỪ CHỐI BỞI VALIDATOR:\n" + reason +
+          "\nCâu trả lời trước (chỉ để sửa định dạng):\n" + response.slice(0, 3000) +
+          "\nHãy trả lại JSON mới với CHÍNH XÁC những taskId sau: " + JSON.stringify(ids) +
+          ". Không chèn taskId của Peer đã accepted.";
+      }
+    }
+    if (!review) throw new Error("LeadReview chưa có quyết định hợp lệ");
+    const validReview = review;
+    this.store.mutateWorkflow(id, (w) => {
+      w.reviewCount++;
+      for (const decision of validReview.reviews) {
+        const peer = w.peers.find((p) => p.id === decision.taskId)!;
+        const last = peer.attempts.at(-1)!;
+        last.feedback = decision.feedback;
+        peer.feedback = decision.feedback;
+        if (decision.decision === "accept") {
+          peer.status = "accepted";
+        } else {
+          if (peer.attempts.length > w.maxReworks) {
+            throw new Error("Peer " + peer.id + " vượt giới hạn " + w.maxReworks + " lần rework");
+          }
+          peer.status = "rework";
+        }
+      }
+      w.status = "executing";
     });
-    this.store.workflowEvent(id, "workflow/plan", plan);
+    this.store.workflowEvent(id, "workflow/review", review);
+  }
 
+  private async execute(id: string, withPlanning = true): Promise<void> {
+    if (withPlanning) {
+      const wf = this.store.getWorkflow(id)!;
+      this.store.workflowEvent(id, "workflow/planning", { title: wf.title });
+      const planText = await this.leadTask(id, "Lead: lập kế hoạch " + wf.title, this.planPrompt(wf));
+      const plan = validateLeadPlan(parseAgentJson(planText), this.config);
+      this.store.mutateWorkflow(id, (workflow) => {
+        workflow.plan = plan;
+        workflow.peers = plan.tasks.map((task) => ({ ...task, status: "pending", attempts: [] }));
+        workflow.status = "executing";
+      });
+      this.store.workflowEvent(id, "workflow/plan", plan);
+    }
     while (true) {
       const current = this.store.getWorkflow(id)!;
       if (current.peers.every((p) => p.status === "accepted")) break;
+      // Khi một review thất bại, batch giữ nguyên review_pending để có thể retry
+      // mà không thực thi lại Peer hoặc làm mất kết quả đã chấp nhận.
+      if (current.peers.some((p) => p.status === "review_pending")) {
+        await this.reviewPending(id);
+        continue;
+      }
       const available = current.peers.filter((peer) =>
         ["pending", "rework"].includes(peer.status) &&
         peer.dependsOn.every((dep) => current.peers.find((p) => p.id === dep)?.status === "accepted")
@@ -153,38 +254,10 @@ export class WorkflowEngine {
       });
       if (!batch.length) throw new Error("Workflow deadlock: no ready Peer tasks");
       this.store.workflowEvent(id, "workflow/dispatch", { peerIds: batch.map((p) => p.id) });
-      // Chờ tất cả Peer của batch settle trước khi kết thúc Workflow:
-      // tránh đánh dấu failed khi một Peer khác vẫn đang ghi file.
       const results = await Promise.allSettled(batch.map((peer) => this.executePeer(id, peer.id)));
       const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
       if (failure) throw failure.reason;
-      this.store.mutateWorkflow(id, (w) => { w.status = "reviewing"; });
-      const reviewed = this.store.getWorkflow(id)!;
-      const reviewBatch = reviewed.peers.filter((p) => batch.some((b) => b.id === p.id));
-      const reviewText = await this.leadTask(
-        id, "Lead: review batch " + reviewBatch.map((p) => p.id).join(", "),
-        this.reviewPrompt(reviewed, reviewBatch)
-      );
-      const review = validateLeadReview(parseAgentJson(reviewText), reviewBatch.map((p) => p.id));
-      this.store.mutateWorkflow(id, (w) => {
-        w.reviewCount++;
-        for (const decision of review.reviews) {
-          const peer = w.peers.find((p) => p.id === decision.taskId)!;
-          const last = peer.attempts.at(-1)!;
-          last.feedback = decision.feedback;
-          peer.feedback = decision.feedback;
-          if (decision.decision === "accept") {
-            peer.status = "accepted";
-          } else {
-            if (peer.attempts.length > w.maxReworks) {
-              throw new Error("Peer " + peer.id + " vượt giới hạn " + w.maxReworks + " lần rework");
-            }
-            peer.status = "rework";
-          }
-        }
-        w.status = "executing";
-      });
-      this.store.workflowEvent(id, "workflow/review", review);
+      // PeerResult đã được persist, vòng lặp tiếp theo chuyển sang review.
     }
     this.store.mutateWorkflow(id, (w) => { w.status = "waiting_business_approval"; });
     this.store.workflowEvent(id, "workflow/ready_for_approval", {
