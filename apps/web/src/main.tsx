@@ -16,11 +16,12 @@ async function api<T>(path: string, method: "GET" | "POST" = "GET", body?: unkno
 }
 const empty: Snapshot = { tasks: [], approvals: [], events: [], modules: [], workflows: [], activities: [] };
 
-function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onSelect }: {
+function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onRetryIntegration, onSelect }: {
   workflow: WorkflowRun;
   onDecision: (id: string, decision: "approve" | "reject") => void;
   onRetryReview: (id: string) => void;
   onManualVerify: (id: string, criterionIds: string[]) => void;
+  onRetryIntegration: (id: string) => void;
   onSelect: (id: string) => void;
 }) {
   const [verifiedCriteria, setVerifiedCriteria] = useState<string[]>([]);
@@ -90,6 +91,14 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onS
         onClick={() => onSelect(attempt.taskId)}>Xem Task attempt #{attempt.iteration}</button>)}
     </div>)}</div>
     {workflow.error && <p className="error-text">{workflow.error}</p>}
+    {workflow.status === "failed" && workflow.peers.length > 0 &&
+      workflow.peers.every((p) => p.status === "accepted") &&
+      workflow.error?.startsWith("IntegrationReview sai schema") &&
+      <div className="actions">
+        <button className="primary" onClick={() => onRetryIntegration(workflow.id)}>
+          Thử lại Final Integration Review (không chạy lại Peer)
+        </button>
+      </div>}
     {workflow.status === "failed" && workflow.peers.some((p) => p.status === "review_pending") &&
       <div className="actions">
         <button className="primary" onClick={() => onRetryReview(workflow.id)}>
@@ -217,6 +226,7 @@ function App() {
         onDecision={(id, decision) => void runAction("/workflows/" + id + "/decision", { decision })}
         onRetryReview={(id) => void runAction("/workflows/" + id + "/retry-review")}
         onManualVerify={(id, criterionIds) => void runAction("/workflows/" + id + "/confirm-verification", { criterionIds })}
+        onRetryIntegration={(id) => void runAction("/workflows/" + id + "/retry-integration")}
         onSelect={setSelectedTask} />)}
     </section>
     <section className="columns">

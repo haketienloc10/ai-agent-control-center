@@ -74,6 +74,11 @@ const server = createServer(async (req, res) => {
       json(res, 202, workflows.retryReview(reviewRetry[1]));
       return;
     }
+    const integrationRetry = /^\/api\/workflows\/([^/]+)\/retry-integration$/.exec(url.pathname);
+    if (req.method === "POST" && integrationRetry) {
+      json(res, 202, workflows.retryIntegration(integrationRetry[1]));
+      return;
+    }
     const manualVerification = /^\/api\/workflows\/([^/]+)\/confirm-verification$/.exec(url.pathname);
     if (req.method === "POST" && manualVerification) {
       const body = await readJson(req) as Record<string, unknown>;

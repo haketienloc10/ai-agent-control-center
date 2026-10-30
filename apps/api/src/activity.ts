@@ -166,6 +166,14 @@ export function projectActivity(entries: ActivityEntry[], event: ActivityEvent):
     add("workflow", title, string(data.summary), verdict === "pass" ? "completed" : "info");
     return true;
   }
+  if (kind === "workflow/integration_review_resumed") {
+    add("workflow", "Đang thử lại Final Integration Review", "Giữ nguyên kết quả các Peer", "running");
+    return true;
+  }
+  if (kind === "workflow/plan_validation_failed") {
+    add("workflow", "Lead đang điều chỉnh kế hoạch", string(data.reason), "info");
+    return true;
+  }
   if (kind === "workflow/integration_validation_failed") {
     add("workflow", "Lead đang điều chỉnh báo cáo kiểm tra cuối", string(data.reason), "info");
     return true;

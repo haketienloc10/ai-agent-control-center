@@ -22,7 +22,8 @@ async function until(store: TaskStore, workflowId: string, statuses: string[]): 
   });
 }
 
-function setup(mode: "integration-rework" | "manual-verification" | "web-rework" | "rework-forever") {
+function setup(mode: "integration-rework" | "manual-verification" | "web-rework" | "rework-forever",
+  invalidPlanOnce = false) {
   const dir = mkdtempSync(join(tmpdir(), "aacc-integration-"));
   const api = join(dir, "api");
   const web = join(dir, "web");
@@ -39,6 +40,7 @@ function setup(mode: "integration-rework" | "manual-verification" | "web-rework"
   const peerRuns: string[] = [];
   const integrationPrompts: string[] = [];
   let integrations = 0;
+  let planCalls = 0;
   const executor: AgentTaskExecutor = {
     async runAndWait(taskId: string): Promise<string> {
       const task = store.get(taskId)!;
@@ -46,6 +48,7 @@ function setup(mode: "integration-rework" | "manual-verification" | "web-rework"
       store.update(taskId, {}, "running");
       let output: unknown;
       if (task.title.startsWith("Lead: lập kế hoạch")) {
+        planCalls++;
         output = {
           summary: "Implement task board",
           acceptanceCriteria: [
@@ -57,6 +60,10 @@ function setup(mode: "integration-rework" | "manual-verification" | "web-rework"
             { id: "web1", moduleId: "web", title: "UI", instructions: "Implement UI", dependsOn: ["api1"] }
           ]
         };
+        if (invalidPlanOnce && planCalls === 1) {
+          // Simulate a Lead response that omitted required acceptance criteria.
+          delete (output as Record<string, unknown>).acceptanceCriteria;
+        }
       } else if (task.role === "peer") {
         peerRuns.push(task.moduleId!);
         output = { summary: "Worked on " + task.moduleId, changedFiles: [], tests: [
@@ -106,7 +113,8 @@ function setup(mode: "integration-rework" | "manual-verification" | "web-rework"
       return text;
     }
   };
-  return { dir, store, peerRuns, integrationPrompts, engine: new WorkflowEngine(config, store, executor) };
+  return { dir, store, peerRuns, integrationPrompts, get planCalls() { return planCalls; },
+    engine: new WorkflowEngine(config, store, executor) };
 }
 
 test("Final review phát hiện API mismatch, rework API và downstream Web, sau đó mới Business Approval", async () => {
@@ -198,6 +206,61 @@ test("Final Integration Review không tạo rework loop vô hạn", async () => 
     assert.equal(result.peers[0].attempts.length, 1);
     assert.equal(result.peers[1].attempts.length, 3);
     assert.throws(() => ctx.engine.decide(workflow.id, "approve"));
+  } finally {
+    rmSync(ctx.dir, { recursive: true, force: true });
+  }
+});
+
+test("Lead tự sửa LeadPlan thiếu Acceptance Criteria, không dispatch Peer trước khi plan hợp lệ", async () => {
+  const ctx = setup("manual-verification", true);
+  try {
+    const workflow = ctx.engine.create({ title: "Plan format", request: "Add task board" });
+    const result = await until(ctx.store, workflow.id, ["waiting_manual_verification", "failed"]);
+    assert.equal(result.status, "waiting_manual_verification", result.error);
+    assert.equal(ctx.planCalls, 2);
+    assert.equal(result.plan?.acceptanceCriteria.length, 2);
+    assert.deepEqual(ctx.peerRuns, ["api", "web"]);
+    assert.ok(ctx.store.events().some((evt) => evt.kind === "workflow/plan_validation_failed"));
+  } finally {
+    rmSync(ctx.dir, { recursive: true, force: true });
+  }
+});
+
+test("Retry Final Integration chỉ chạy Lead, không ghi lại source từ các Peer đã accepted", async () => {
+  const ctx = setup("manual-verification");
+  try {
+    const now = new Date().toISOString();
+    ctx.store.addWorkflow({
+      id: "wf-recover", title: "Recover", request: "Task board",
+      status: "failed", error: "IntegrationReview sai schema sau 3 lần: missing checks",
+      plan: {
+        summary: "Mock plan",
+        acceptanceCriteria: [
+          { id: "ac-api", description: "API", verification: "Inspect API" },
+          { id: "ac-ui", description: "Web", verification: "Browser check" }
+        ],
+        tasks: [
+          { id: "api1", title: "API", moduleId: "api", instructions: "Build", dependsOn: [] },
+          { id: "web1", title: "Web", moduleId: "web", instructions: "Build", dependsOn: ["api1"] }
+        ]
+      },
+      peers: [
+        { id: "api1", title: "API", moduleId: "api", instructions: "Build", dependsOn: [],
+          status: "accepted", attempts: [{ iteration: 1, taskId: "old-api" }],
+          result: { summary: "API complete", changedFiles: [], tests: [], risks: [] } },
+        { id: "web1", title: "Web", moduleId: "web", instructions: "Build", dependsOn: ["api1"],
+          status: "accepted", attempts: [{ iteration: 1, taskId: "old-web" }],
+          result: { summary: "Web complete", changedFiles: [], tests: [], risks: [] } }
+      ],
+      leadTaskIds: [], reviewCount: 2, maxReworks: 2, createdAt: now, updatedAt: now
+    });
+    assert.equal(ctx.engine.retryIntegration("wf-recover").status, "integration_reviewing");
+    const final = await until(ctx.store, "wf-recover", ["waiting_manual_verification", "failed"]);
+    assert.equal(final.status, "waiting_manual_verification", final.error);
+    assert.deepEqual(ctx.peerRuns, []);
+    assert.equal(final.integrationReviewCount, 1);
+    assert.throws(() => ctx.engine.retryIntegration("wf-recover"));
+    assert.ok(ctx.store.events().some((evt) => evt.kind === "workflow/integration_review_resumed"));
   } finally {
     rmSync(ctx.dir, { recursive: true, force: true });
   }

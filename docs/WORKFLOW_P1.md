@@ -122,3 +122,9 @@ P1 sử dụng `approvalPolicy: "never"` và `danger-full-access` ở cả Threa
 7. Tất cả quyết định của reviewer là đánh giá của Agent dựa trên evidence, **không phải test E2E tự động độc lập**. Không tuyên bố integration verified nếu chưa chạy các kiểm tra có ý nghĩa.
 
 Lưu ý: Workflow cũ đã `waiting_business_approval` không tự động bị xem xét lại. Các workflow mới chạy qua bước review cuối; workflow đang `integration_reviewing` khi Backend restart được đánh dấu interrupted, không tự chạy lại.
+
+### Phục hồi khi reviewer trả sai JSON
+
+- Lead Planning và Final Integration Review đều có tối đa 2 lần sửa định dạng khi parse/validate thất bại. Chỉ chạy lại **Lead** ở các lượt này.
+- Nếu Final Integration Review vẫn `failed` do sai JSON/schema nhưng mọi Peer vẫn `accepted`, có thể gọi `POST /api/workflows/:id/retry-integration`. Backend giữ nguyên source và PeerResult, chỉ gọi lại Final Integration Reviewer, rồi tiếp tục gate.
+- Các lỗi runtime, vượt rework budget và lỗi khác **không** được phép dùng endpoint này.

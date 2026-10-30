@@ -84,6 +84,26 @@ export class WorkflowEngine {
     return this.store.getWorkflow(id)!;
   }
 
+  // Recovery an toàn: chỉ retry Final Integration Review khi JSON schema thất bại.
+  // Các Peer đã accepted được giữ nguyên; source modules không bị thực thi lại.
+  retryIntegration(id: string): WorkflowRun {
+    const workflow = this.store.getWorkflow(id);
+    if (!workflow) throw new Error("Workflow not found");
+    if (this.active.has(id)) throw new Error("Workflow đã đang chạy");
+    if (workflow.status !== "failed" || !workflow.plan ||
+        !workflow.peers.length || !workflow.peers.every((p) => p.status === "accepted") ||
+        !(workflow.error ?? "").startsWith("IntegrationReview sai schema")) {
+      throw new Error("Chỉ retry được Final Integration Review lỗi schema với tất cả Peer accepted");
+    }
+    this.store.mutateWorkflow(id, (w) => {
+      w.status = "integration_reviewing";
+      w.error = undefined;
+    });
+    this.store.workflowEvent(id, "workflow/integration_review_resumed", {});
+    this.launch(id, () => this.execute(id, false));
+    return this.store.getWorkflow(id)!;
+  }
+
   decide(id: string, decision: "approve" | "reject"): WorkflowRun {
     const current = this.store.getWorkflow(id);
     if (!current || (current.status !== "waiting_business_approval" &&
@@ -361,11 +381,32 @@ export class WorkflowEngine {
     if (withPlanning) {
       const wf = this.store.getWorkflow(id)!;
       this.store.workflowEvent(id, "workflow/planning", { title: wf.title });
-      const planText = await this.leadTask(id, "Lead: lập kế hoạch " + wf.title, this.planPrompt(wf));
-      const plan = validateLeadPlan(parseAgentJson(planText), this.config);
+      const originalPrompt = this.planPrompt(wf);
+      let prompt = originalPrompt;
+      let plan: ReturnType<typeof validateLeadPlan> | undefined;
+      for (let attempt = 0; attempt <= MAX_REVIEW_FORMAT_RETRIES; attempt++) {
+        const planText = await this.leadTask(
+          id, "Lead: lập kế hoạch " + wf.title + " (format attempt " + (attempt + 1) + ")", prompt
+        );
+        try {
+          plan = validateLeadPlan(parseAgentJson(planText), this.config);
+          break;
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          this.store.workflowEvent(id, "workflow/plan_validation_failed", { formatAttempt: attempt + 1, reason });
+          if (attempt === MAX_REVIEW_FORMAT_RETRIES) {
+            throw new Error("LeadPlan sai schema sau " + (attempt + 1) + " lần: " + reason);
+          }
+          prompt = originalPrompt + "\n\nVALIDATION ERROR: " + reason +
+            "\nTrả lại LeadPlan JSON đầy đủ, bao gồm acceptanceCriteria và DAG hợp lệ." +
+            "\nCâu trả lời trước: " + planText.slice(0, 2000);
+        }
+      }
+      if (!plan) throw new Error("Không nhận được LeadPlan hợp lệ");
+      const validPlan = plan;
       this.store.mutateWorkflow(id, (workflow) => {
-        workflow.plan = plan;
-        workflow.peers = plan.tasks.map((task) => ({ ...task, status: "pending", attempts: [] }));
+        workflow.plan = validPlan;
+        workflow.peers = validPlan.tasks.map((task) => ({ ...task, status: "pending", attempts: [] }));
         workflow.status = "executing";
       });
       this.store.workflowEvent(id, "workflow/plan", plan);
