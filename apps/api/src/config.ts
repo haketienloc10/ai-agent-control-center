@@ -26,7 +26,15 @@ export function loadWorkspaceConfig(file = process.env.WORKSPACE_CONFIG ?? defau
       throw new Error("Module không hợp lệ tại index " + index);
     }
     ids.add(m.id);
-    return { id: m.id, label: m.label, path: directory(m.path, "modules[" + index + "].path") };
+    if (m.testCommand !== undefined &&
+        (!Array.isArray(m.testCommand) || !m.testCommand.length || m.testCommand.length > 12 ||
+          !m.testCommand.every((part) => typeof part === "string" && part.length > 0 && part.length <= 250))) {
+      throw new Error("modules[" + index + "].testCommand phải là argv không rỗng");
+    }
+    return {
+      id: m.id, label: m.label, path: directory(m.path, "modules[" + index + "].path"),
+      ...(m.testCommand ? { testCommand: m.testCommand } : {})
+    };
   });
   return { lead, modules };
 }

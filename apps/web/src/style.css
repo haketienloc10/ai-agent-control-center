@@ -101,3 +101,13 @@ footer { color: #8191a2; font-size: 12px; margin-top: 18px; }
 .manual-check input { width: 18px; height: 18px; flex: 0 0 18px; margin-top: 2px; }
 .manual-check span { display: grid; gap: 5px; }
 .manual-verification .primary:disabled { opacity: .48; cursor: not-allowed; }
+
+.artifact-viewer { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin: 10px 0; }
+.artifact-viewer a { color: #97beff; font-size: 12px; }
+.artifact-viewer pre { flex: 0 0 100%; }
+.artifact-diff { max-height: 440px; white-space: pre; }
+.independent-test { border-top: 1px solid #324154; padding-top: 10px; font-size: 12px; }
+.independent-test p { margin: 8px 0; }
+.worktree-path { overflow-wrap: anywhere; width: 100%; color: #a3bfe4; }
+.recovery-detail { width: 100%; overflow-wrap: anywhere; }
+.recovery-followup { flex-basis: 100%; display: grid; gap: 8px; border-top: 1px solid #304052; padding: 9px 0; }
