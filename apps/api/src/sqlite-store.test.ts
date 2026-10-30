@@ -27,6 +27,8 @@ test("P2 SQLite persists snapshot and journal; SQLite is authoritative over lega
     const row = db.prepare("SELECT COUNT(*) AS total FROM event_journal").get()!;
     assert.equal(Number(row.total), 1);
     db.close();
+    restarted.close();
+    store.close();
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -41,6 +43,9 @@ test("P2 migrates legacy P1 JSON state and journal exactly once", () => {
     }));
     const store = new TaskStore(dir);
     assert.equal(store.journal().length, 1);
-    assert.equal(new TaskStore(dir).journal().length, 1);
+    const restarted = new TaskStore(dir);
+    assert.equal(restarted.journal().length, 1);
+    restarted.close();
+    store.close();
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

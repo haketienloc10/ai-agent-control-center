@@ -92,7 +92,11 @@ export class SessionManager implements AgentTaskExecutor {
         if (!candidate || candidate.role === "lead") return true;
         return ![...this.active].some((id) => {
           const active = this.store.get(id);
-          return active?.role === "peer" && active.moduleId === candidate.moduleId;
+          if (active?.role !== "peer") return false;
+          if (active.moduleId === candidate.moduleId) return true;
+          if (!this.worktrees) return false;
+          try { return this.worktrees.sameRepository(active.moduleId, candidate.moduleId); }
+          catch { return false; }
         });
       });
       if (next < 0) break;

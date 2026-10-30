@@ -38,6 +38,12 @@ test("P2: detached worktrees per workflow/module, original source stays untouche
     assert.equal(a1.cwd, a2.cwd);
     assert.notEqual(a1.root, b1.root);
     assert.equal(a1.moduleRelative, "api");
+    const webTask = createTask({ role: "peer", title: "web", prompt: "build", moduleId: "web" }, config);
+    webTask.workflowId = "workflow-a";
+    const webLocation = manager.ensure(webTask);
+    assert.equal(webLocation.root, a1.root, "modules in same repo share worktree");
+    assert.notEqual(webLocation.cwd, a1.cwd);
+    assert.equal(manager.sameRepository("api", "web"), true);
     writeFileSync(join(a1.cwd, "created.ts"), "export const x = 1;\n");
     const patch = manager.patch(a1);
     assert.match(patch, /created.ts/);

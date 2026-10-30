@@ -253,6 +253,12 @@ export class WorkflowEngine {
       );
       try {
         review = validateLeadReview(parseAgentJson(response), ids);
+        for (const decision of review.reviews) {
+          const peer = batch.find((p) => p.id === decision.taskId);
+          if (decision.decision === "accept" && peer?.evidence?.verifiedTest?.status === "failed") {
+            throw new Error("Lead cannot accept " + peer.id + ": independent test failed");
+          }
+        }
         break;
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
@@ -360,6 +366,9 @@ export class WorkflowEngine {
       );
       try {
         report = validateIntegrationReview(parseAgentJson(response), criterionIds, peerIds, contractIds);
+        if (report.verdict === "pass" && current.peers.some((p) => p.evidence?.verifiedTest?.status === "failed")) {
+          throw new Error("Final Review cannot pass: independent test failed");
+        }
         break;
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);

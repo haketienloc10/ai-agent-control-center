@@ -2,7 +2,7 @@
 
 Dashboard **cá nhân, chạy trên máy local** để thay thế việc quản lý nhiều terminal Codex. Mục tiêu là giữ nguyên mô hình làm việc hiện có: **Lead Agent trong workspace chung → giao việc cho Peer ở các source module bên ngoài → nhận kết quả → Lead review / yêu cầu sửa → người dùng quyết định**.
 
-> Trạng thái: P1 **Lead-controlled dispatch**, dùng Codex **YOLO mode** cho máy local cá nhân; chưa phải production, cần kiểm tra với Codex CLI đã đăng nhập trên máy thực.
+> Trạng thái: P2 **Isolation & Recovery** trên nhánh tính năng. Codex **YOLO mode** vẫn là mặc định theo lựa chọn P1; có tùy chọn bật sandbox. Chưa phải production hoặc E2E verified trên máy người dùng.
 
 ## Bắt đầu
 
@@ -27,6 +27,7 @@ Nếu chưa cài/đăng nhập Codex, API vẫn có thể khởi chạy nhưng *
 - `docs/ARCHITECTURE.md`: module boundaries, data flow, lifecycle và security.
 - `docs/ROADMAP.md`: các giai đoạn thực hiện, acceptance criteria.
 - `docs/WORKFLOW_P1.md`: hợp đồng JSON, luồng triển khai P1, API, giới hạn.
+- `docs/P2.md`: worktree, SQLite, artifact, recovery và security mode.
 - `AGENTS.md`: quy tắc dành cho contributor/Agent.
 - `apps/api`: Backend, WorkflowEngine, Task Store, SessionManager và Codex JSON-RPC adapter.
 - `apps/web`: Dashboard có timeline hoạt động dễ đọc và tab kỹ thuật, SSE, Run/Interrupt/Approval.
@@ -77,3 +78,15 @@ Không có claim rằng test/browser đã được chạy nếu không có bằn
 Mỗi dependency xuyên module trong LeadPlan phải được phân loại: **integrationContracts** (có artifact/API được bàn giao, nơi sử dụng và cách kiểm chứng) hoặc **orderingOnlyDependencies** (chỉ yêu cầu thứ tự, có lý do). Một dependency không đồng nghĩa với tích hợp; tuy nhiên Lead không được tự lờ đi một contract đã cam kết.
 
 Final Integration Review duy nhất đánh giá đồng thời **Product Acceptance** (`checks`) và **Integration Acceptance** (`contractChecks`), đều có evidence. PASS chỉ khi cả hai nhóm đều passed. Nếu UI chạy bằng mock/fallback trong khi plan cam kết Web dùng API, reviewer phải đánh dấu contract failed và yêu cầu rework; nếu chưa kiểm chứng, yêu cầu người dùng xác nhận contract trước Business Approval. Đây vẫn là review dựa vào bằng chứng do Agent báo cáo, không đảm bảo chứng thực kỹ thuật độc lập.
+
+## P2 — Worktree, SQLite, Recovery và Artifact Viewer
+
+Peer phải chạy trong Git repository có ít nhất 1 commit và working tree sạch. P2 tạo detached worktree riêng cho workflow, theo từng Git repo. Nếu hai module cùng Git repository, chúng dùng chung worktree trong một workflow và được serialize khi ghi.
+
+- File thay đổi của Peer không tự ghi vào source repo; Dashboard hiển thị patch và nút tải artifact. P2 **không tự merge**.
+- Trạng thái được lưu trong `.data/state.sqlite` (WAL); `.data/state.json` được giữ làm mirror tương thích dữ liệu cũ. Backend có event journal phân trang.
+- Khi restart, Task đang chạy thành `interrupted`; Codex Thread được đối chiếu read-only. Không có hành vi retry tác vụ cũ tự động.
+- Module có thể cấu hình `testCommand`, ví dụ `["npm","test"]` trong `config/workspace.local.json`, để Backend kiểm thử riêng.
+- `CODEX_SECURITY_MODE=sandbox npm run dev:api` để dùng sandbox cho Codex. Nếu không đặt, YOLO được giữ lại và không thể coi là cô lập quyền truy cập file/network.
+
+Xem [docs/P2.md](docs/P2.md) để biết quy trình áp dụng patch thủ công và các giới hạn bảo mật.

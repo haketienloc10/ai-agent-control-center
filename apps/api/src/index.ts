@@ -9,10 +9,12 @@ import { WorktreeManager } from "./worktree-manager.js";
 import { ArtifactStore } from "./artifacts.js";
 import { P2Services } from "./p2-services.js";
 import { RecoveryManager } from "./recovery.js";
+import { SingleInstanceLock } from "./single-instance.js";
 import { WorkflowEngine } from "./workflow-engine.js";
 
 const config = loadWorkspaceConfig();
 const dataDir = process.env.APP_DATA_DIR ?? fileURLToPath(new URL("../../../.data", import.meta.url));
+const instanceLock = new SingleInstanceLock(dataDir);
 const store = new TaskStore(dataDir);
 const runtime = new CodexClient();
 const worktrees = new WorktreeManager(config, dataDir);
@@ -164,5 +166,5 @@ server.listen(port, "127.0.0.1", () => {
   void recovery.reconcileAll().catch((error: unknown) =>
     console.error("Startup reconciliation failed:", error));
 });
-process.on("SIGINT", () => { runtime.stop(); server.close(); });
-process.on("SIGTERM", () => { runtime.stop(); server.close(); });
+process.on("SIGINT", () => { runtime.stop(); server.close(); store.close(); instanceLock.release(); });
+process.on("SIGTERM", () => { runtime.stop(); server.close(); store.close(); instanceLock.release(); });

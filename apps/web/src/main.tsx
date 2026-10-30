@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import type { AgentRole, Snapshot, Task, WorkflowRun } from "@aacc/contracts";
 import "./style.css";
 import { ActivityPanel } from "./ActivityPanel.js";
+import { ArtifactViewer } from "./ArtifactViewer.js";
 
 async function api<T>(path: string, method: "GET" | "POST" = "GET", body?: unknown): Promise<T> {
   const response = await fetch("/api" + path, {
@@ -114,6 +115,16 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onR
         <strong>Tool command events</strong>
         <pre>{JSON.stringify(peer.evidence.commands, null, 2)}</pre>
       </details>}
+      {peer.evidence?.patchArtifactId && <ArtifactViewer id={peer.evidence.patchArtifactId}/>}
+      {peer.evidence?.verifiedTest && <div className="independent-test">
+        <strong>Independent test runner:</strong>{" "}
+        <span className={"status " + (peer.evidence.verifiedTest.status === "passed" ? "accepted" :
+          peer.evidence.verifiedTest.status === "failed" ? "failed" : "")}>
+          {peer.evidence.verifiedTest.status}
+        </span>
+        <p>{peer.evidence.verifiedTest.command || "Chưa cấu hình testCommand cho module"}</p>
+        {peer.evidence.verifiedTest.output && <pre>{peer.evidence.verifiedTest.output}</pre>}
+      </div>}
       {peer.feedback && <p className="muted"><strong>Lead feedback:</strong> {peer.feedback}</p>}
       {peer.attempts.map((attempt) => <button key={attempt.taskId} className="link-button"
         onClick={() => onSelect(attempt.taskId)}>Xem Task attempt #{attempt.iteration}</button>)}
@@ -191,6 +202,7 @@ function App() {
   const [wfRequest, setWfRequest] = useState("");
   const [error, setError] = useState("");
   const [selectedTask, setSelectedTask] = useState("");
+  const [followupPrompt, setFollowupPrompt] = useState("");
 
   const refresh = async () => {
     try { setSnapshot(await api<Snapshot>("/snapshot")); }
@@ -235,7 +247,7 @@ function App() {
   return <main>
     <header>
       <div>
-        <p className="eyebrow">PERSONAL AI WORKSPACE · P1</p>
+        <p className="eyebrow">PERSONAL AI WORKSPACE · P2</p>
         <h1>AI Agent Control Center</h1>
         <p>Lead lập kế hoạch, phân công Peer tại source modules, review và chuyển kết quả cho bạn duyệt.</p>
       </div>
@@ -257,7 +269,7 @@ function App() {
       </article>
       <article className="panel">
         <h2>Workspace & Modules</h2>
-        <p className="muted">Đường dẫn cố định từ config local; Peer không tự chọn thư mục ngoài allowlist.</p>
+        <p className="muted">P2 dùng Git worktree tách khỏi source gốc. Module phải nằm trong Git repo đã commit sạch; thay đổi được xuất thành patch, không tự merge.</p>
         <div className="module"><strong>Lead Workspace</strong><span>config/workspace.local.json → lead.cwd</span></div>
         {snapshot.modules.map((m) => <div className="module" key={m.id}>
           <strong>{m.label}</strong><code>{m.path}</code>
@@ -324,6 +336,22 @@ function App() {
               <button onClick={() => void runAction("/tasks/" + task.id + "/run")}>Run</button>}
             {["running", "waiting_runtime_approval"].includes(task.status) &&
               <button onClick={() => void runAction("/tasks/" + task.id + "/interrupt")}>Interrupt</button>}
+            {task.executionCwd && <small className="worktree-path">Worktree: {task.executionCwd}</small>}
+            {task.status === "interrupted" && <button type="button" onClick={() =>
+              void runAction("/tasks/" + task.id + "/reconcile")}>Reconcile</button>}
+            {task.reconciliation && <small className="recovery-detail">
+              Recovery: {task.reconciliation.status} — {task.reconciliation.detail}</small>}
+            {task.reconciliation?.status === "completed" && selectedTask === task.id &&
+              <div className="recovery-followup">
+                <label>Follow-up mới trên Thread cũ (không chạy lại prompt trước)
+                  <textarea rows={2} value={followupPrompt} onChange={(event) => setFollowupPrompt(event.target.value)}
+                    placeholder="Tiếp tục kiểm tra, không lặp các thay đổi đã hoàn thành…" />
+                </label>
+                <button disabled={!followupPrompt.trim()} onClick={() => {
+                  void runAction("/tasks/" + task.id + "/continue", { prompt: followupPrompt });
+                  setFollowupPrompt("");
+                }}>Chạy follow-up có chủ đích</button>
+              </div>}
             {task.error && <small className="error-text">{task.error}</small>}
           </div>)}</div>}
     </section>

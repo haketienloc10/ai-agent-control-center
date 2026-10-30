@@ -87,6 +87,12 @@ export class TaskStore extends EventEmitter {
     renameSync(temp, this.file);
   }
 
+  close() {
+    if (this.streamFlush) { clearTimeout(this.streamFlush); this.streamFlush = undefined; }
+    this.save();
+    this.db.close();
+  }
+
   private flushStreamSoon() {
     if (this.streamFlush) return;
     this.streamFlush = setTimeout(() => {
@@ -128,10 +134,16 @@ export class TaskStore extends EventEmitter {
     if (!task) throw new Error("Task not found");
     if (status) { assertTransition(task.status, status); task.status = status; }
     Object.assign(task, patch, { updatedAt: new Date().toISOString() });
-    if (status) projectActivity(this.state.activities, {
-      id: randomUUID(), taskId: id, kind: "task/status", data: { status, error: patch.error },
-      createdAt: task.updatedAt
-    });
+    if (status) {
+      const event: ActivityEvent = {
+        id: randomUUID(), taskId: id, kind: "task/status",
+        data: { status, error: patch.error }, createdAt: task.updatedAt
+      };
+      projectActivity(this.state.activities, event);
+      this.state.events.push(event);
+      this.state.events = this.state.events.slice(-1000);
+      this.pendingJournal.push(event);
+    }
     this.save(); this.emit("change");
     return task;
   }
