@@ -23,6 +23,9 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onS
   onManualVerify: (id: string, criterionIds: string[]) => void;
   onSelect: (id: string) => void;
 }) {
+  const [verifiedCriteria, setVerifiedCriteria] = useState<string[]>([]);
+  useEffect(() => { setVerifiedCriteria([]); }, [workflow.integrationReviewCount, workflow.status]);
+  const unverifiedChecks = workflow.finalReview?.checks.filter((check) => check.status === "unverified") ?? [];
   return <div className="workflow">
     <div className="panel-heading">
       <div><strong>{workflow.title}</strong><p>{workflow.request}</p></div>
@@ -97,11 +100,22 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onS
       <div className="manual-verification">
         <p><strong>Cần bạn kiểm tra thủ công:</strong> các tiêu chí chưa được xác minh bằng bằng chứng thực tế.</p>
         <p className="muted">Chỉ xác nhận sau khi bạn tự thử nghiệm các chức năng liên quan. Đây không phải xác nhận test tự động đã chạy.</p>
+        {unverifiedChecks.map((check) => {
+          const criterion = workflow.plan?.acceptanceCriteria.find((c) => c.id === check.criterionId);
+          return <label key={check.criterionId} className="manual-check">
+            <input type="checkbox" checked={verifiedCriteria.includes(check.criterionId)}
+              onChange={(event) => setVerifiedCriteria((previous) =>
+                event.target.checked ? [...previous, check.criterionId] : previous.filter((id) => id !== check.criterionId))} />
+            <span><strong>{criterion?.description ?? check.criterionId}</strong>
+              <small>Cách kiểm tra: {criterion?.verification ?? "Thử nghiệm thủ công"}</small>
+            </span>
+          </label>;
+        })}
         <div className="actions">
           <button onClick={() => onDecision(workflow.id, "reject")}>Từ chối kết quả</button>
-          <button className="primary" onClick={() => onManualVerify(workflow.id,
-            workflow.finalReview!.checks.filter((c) => c.status === "unverified").map((c) => c.criterionId))}>
-            Tôi đã kiểm tra các mục chưa xác minh
+          <button className="primary" disabled={unverifiedChecks.some((c) => !verifiedCriteria.includes(c.criterionId))}
+            onClick={() => onManualVerify(workflow.id, unverifiedChecks.map((c) => c.criterionId))}>
+            Xác nhận đã kiểm tra các tiêu chí
           </button>
         </div>
       </div>}

@@ -94,3 +94,10 @@ footer { color: #8191a2; font-size: 12px; margin-top: 18px; }
 .integration-check p { width: 100%; margin: 0; }
 .manual-verification { border: 1px solid #7c602c; border-radius: 9px; padding: 13px; background: #2c271e; }
 .manual-verification .actions { flex-wrap: wrap; }
+
+.status.integration_reviewing { background: #335483; }
+.status.waiting_manual_verification { background: #775324; }
+.manual-check { display: flex; align-items: flex-start; gap: 10px; margin: 9px 0; padding: 10px; border: 1px solid #65532d; border-radius: 8px; cursor: pointer; }
+.manual-check input { width: 18px; height: 18px; flex: 0 0 18px; margin-top: 2px; }
+.manual-check span { display: grid; gap: 5px; }
+.manual-verification .primary:disabled { opacity: .48; cursor: not-allowed; }

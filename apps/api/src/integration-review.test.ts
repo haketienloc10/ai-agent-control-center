@@ -22,7 +22,7 @@ async function until(store: TaskStore, workflowId: string, statuses: string[]): 
   });
 }
 
-function setup(mode: "integration-rework" | "manual-verification" | "web-rework") {
+function setup(mode: "integration-rework" | "manual-verification" | "web-rework" | "rework-forever") {
   const dir = mkdtempSync(join(tmpdir(), "aacc-integration-"));
   const api = join(dir, "api");
   const web = join(dir, "web");
@@ -77,7 +77,7 @@ function setup(mode: "integration-rework" | "manual-verification" | "web-rework"
               { criterionId: "ac-ui", status: "unverified", evidence: "Browser interaction not run" }
             ], rework: []
           };
-        } else if (integrations === 1) {
+        } else if (integrations === 1 || mode === "rework-forever") {
           output = {
             summary: "Modules are not integrated", verdict: "rework",
             checks: [
@@ -183,6 +183,21 @@ test("Restart lúc integration review phải giữ an toàn và không auto disp
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
     });
     assert.equal(new TaskStore(join(ctx.dir, "state")).getWorkflow("pending")?.status, "interrupted");
+  } finally {
+    rmSync(ctx.dir, { recursive: true, force: true });
+  }
+});
+
+test("Final Integration Review không tạo rework loop vô hạn", async () => {
+  const ctx = setup("rework-forever");
+  try {
+    const workflow = ctx.engine.create({ title: "Limit", request: "Check integration until limit" });
+    const result = await until(ctx.store, workflow.id, ["waiting_business_approval", "failed"]);
+    assert.equal(result.status, "failed");
+    assert.match(result.error ?? "", /giới hạn rework/);
+    assert.equal(result.peers[0].attempts.length, 1);
+    assert.equal(result.peers[1].attempts.length, 3);
+    assert.throws(() => ctx.engine.decide(workflow.id, "approve"));
   } finally {
     rmSync(ctx.dir, { recursive: true, force: true });
   }
