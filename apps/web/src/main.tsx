@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { AgentRole, Snapshot, Task, WorkflowRun } from "@aacc/contracts";
 import "./style.css";
+import { ActivityPanel } from "./ActivityPanel.js";
 
 async function api<T>(path: string, method: "GET" | "POST" = "GET", body?: unknown): Promise<T> {
   const response = await fetch("/api" + path, {
@@ -13,7 +14,7 @@ async function api<T>(path: string, method: "GET" | "POST" = "GET", body?: unkno
   if (!response.ok) throw new Error(data.error || "API request failed");
   return data as T;
 }
-const empty: Snapshot = { tasks: [], approvals: [], events: [], modules: [], workflows: [] };
+const empty: Snapshot = { tasks: [], approvals: [], events: [], modules: [], workflows: [], activities: [] };
 
 function WorkflowCard({ workflow, onDecision, onSelect }: {
   workflow: WorkflowRun;
@@ -119,10 +120,6 @@ function App() {
       await refresh();
     } catch (err) { setError(String(err)); }
   };
-  const visibleEvents = useMemo(() =>
-    snapshot.events.filter((event) => !selectedTask || event.taskId === selectedTask).slice(-50).reverse()
-  , [snapshot.events, selectedTask]);
-
   return <main>
     <header>
       <div>
@@ -215,16 +212,15 @@ function App() {
             {task.error && <small className="error-text">{task.error}</small>}
           </div>)}</div>}
     </section>
-    <section className="panel">
-      <div className="panel-heading"><h2>Activity</h2><button onClick={() => setSelectedTask("")}>Tất cả</button></div>
-      <div className="events">
-        {visibleEvents.map((event) => <div key={event.id} className="event">
-          <small>{new Date(event.createdAt).toLocaleTimeString()} · {event.taskId.slice(0, 34)}</small>
-          <strong>{event.kind}</strong>
-          <pre>{JSON.stringify(event.data, null, 2)}</pre>
-        </div>)}
-      </div>
-    </section>
+    <ActivityPanel
+      activities={snapshot.activities ?? []}
+      events={snapshot.events}
+      tasks={snapshot.tasks}
+      workflows={snapshot.workflows}
+      modules={snapshot.modules}
+      selectedTask={selectedTask}
+      onSelectTask={setSelectedTask}
+    />
     <footer>P1 — Lead/Peer automatic workflow. Chưa có Git worktree, recovery/resume sau restart hoặc merge tự động.</footer>
   </main>;
 }

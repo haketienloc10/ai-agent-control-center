@@ -29,7 +29,7 @@ Nếu chưa cài/đăng nhập Codex, API vẫn có thể khởi chạy nhưng *
 - `docs/WORKFLOW_P1.md`: hợp đồng JSON, luồng triển khai P1, API, giới hạn.
 - `AGENTS.md`: quy tắc dành cho contributor/Agent.
 - `apps/api`: Backend, WorkflowEngine, Task Store, SessionManager và Codex JSON-RPC adapter.
-- `apps/web`: Dashboard tối thiểu đọc dữ liệu và SSE, gửi lệnh Run/Interrupt/Approval.
+- `apps/web`: Dashboard có timeline hoạt động dễ đọc và tab kỹ thuật, SSE, Run/Interrupt/Approval.
 - `packages/contracts`: kiểu dữ liệu dùng chung.
 
 ## Kiểm tra
@@ -61,3 +61,7 @@ Tài liệu giao thức: https://developers.openai.com/codex/app-server
 Nhánh này dùng `approvalPolicy: "never"` và `sandbox: "danger-full-access"` / `sandboxPolicy.type: "dangerFullAccess"` cho mọi Thread và Turn. Tương đương `codex --yolo`. **Codex không hỏi cấp quyền từng lệnh, có quyền filesystem/network theo tài khoản chạy Backend**, kể cả bên ngoài source module; `cwd` chỉ định tuyến công việc chứ không chặn truy cập. Hãy sao lưu/commit các source modules và chỉ chạy với workspace tin cậy. Backend chưa có authentication và chỉ bind `127.0.0.1`.
 
 **Business Approval** ở cuối workflow vẫn cần bạn bấm duyệt; khác với Runtime Approval vốn đã bỏ qua trong YOLO mode.
+
+## Nhật ký hoạt động dễ đọc
+
+Dashboard mặc định hiển thị **Activity Timeline** (Lead/Peer, thời gian, hành động, trạng thái, nội dung). Token stream `item/agentMessage/delta` được gom theo `itemId` thành một message; `commandExecution`, `fileChange` và các sự kiện Workflow có nhãn dễ hiểu. Chế độ **Kỹ thuật** vẫn cho xem event JSON khi debug; raw token delta không còn được lưu từng mẩu. Backend lưu timeline trong `.data/state.json`, có migration từ event journal cũ và giới hạn lịch sử. Streaming được flush định kỳ 250ms để tránh ghi đĩa/liên tục gọi SSE từng token.

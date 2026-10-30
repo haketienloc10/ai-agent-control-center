@@ -21,6 +21,18 @@ export interface RuntimeApproval {
 export interface ActivityEvent {
   id: string; taskId: string; kind: string; data: unknown; createdAt: string;
 }
+export interface ActivityEntry {
+  id: string;
+  taskId: string;
+  type: "message" | "command" | "file" | "tool" | "workflow" | "status" | "error";
+  title: string;
+  detail: string;
+  status: "info" | "running" | "completed" | "failed";
+  source: string;
+  itemId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
 export interface LeadPlan {
   summary: string;
   tasks: Array<{
@@ -68,5 +80,5 @@ export interface WorkflowRun {
 }
 export interface Snapshot {
   tasks: Task[]; approvals: RuntimeApproval[]; events: ActivityEvent[];
-  modules: ModuleConfig[]; workflows: WorkflowRun[];
+  modules: ModuleConfig[]; workflows: WorkflowRun[]; activities: ActivityEntry[];
 }
