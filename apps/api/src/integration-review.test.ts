@@ -26,7 +26,7 @@ async function until(store: TaskStore, workflowId: string, statuses: string[]): 
 function setup(mode: "integration-rework" | "manual-verification" | "manual-contract" |
   "web-rework" | "rework-forever" | "web-fallback" | "remediation-retry" |
   "collect-evidence" | "independent-test" | "verification-blocked" | "verification-limit" |
-  "verification-retry",
+  "verification-retry" | "verify-unconfigured",
   invalidPlanOnce = false) {
   const dir = mkdtempSync(join(tmpdir(), "aacc-integration-"));
   const api = join(dir, "api");
@@ -101,7 +101,8 @@ function setup(mode: "integration-rework" | "manual-verification" | "manual-cont
             }], rework: []
           };
         } else if (mode === "manual-verification" || mode === "collect-evidence" ||
-          mode === "independent-test" || mode === "verification-blocked" ||
+          mode === "independent-test" || mode === "verify-unconfigured" ||
+          mode === "verification-blocked" ||
           mode === "verification-limit" || mode === "verification-retry") {
           output = {
             summary: "Needs more evidence", verdict:
@@ -139,7 +140,7 @@ function setup(mode: "integration-rework" | "manual-verification" | "manual-cont
         }
       } else if (task.title.startsWith("Lead: quyết định xử lý kết quả chưa xác minh")) {
         const choice = mode === "collect-evidence" || mode === "verification-limit"
-          ? "collect_evidence" : mode === "independent-test" ? "run_verification"
+          ? "collect_evidence" : mode === "independent-test" || mode === "verify-unconfigured" ? "run_verification"
           : mode === "verification-blocked" ? "blocked" : "request_human";
         output = invalidVerificationRemaining-- > 0
           ? { decision: "accept", reason: "bad", instructions: "bad", taskIds: [] }
@@ -476,5 +477,20 @@ test("UNVERIFIED: malformed Lead schema retries Lead-only and keeps Reviewer rep
     assert.equal(recovered.reviewerTaskIds?.length, 1);
     assert.deepEqual(ctx.peerRuns, ["api", "web"]);
     assert.equal(recovered.lastVerificationDecision?.decision, "request_human");
+  } finally { rmSync(ctx.dir, { recursive: true, force: true }); }
+});
+
+test("UNVERIFIED: requested verification without configured runner blocks, never asks Human automatically", async () => {
+  const ctx = setup("verify-unconfigured");
+  try {
+    const started = ctx.engine.create({ title: "Missing testCommand", request: "Check UI" });
+    const result = await until(ctx.store, started.id, ["blocked", "failed"]);
+    assert.equal(result.status, "blocked", result.error);
+    assert.match(result.blocker ?? "", /testCommand/);
+    assert.equal(result.integrationReviewCount, 1);
+    assert.equal(result.verificationRounds ?? 0, 0);
+    assert.equal(result.lastVerificationDecision?.decision, "run_verification");
+    assert.throws(() => ctx.engine.confirmManualVerification(started.id, ["ac-ui"]));
+    assert.throws(() => ctx.engine.decide(started.id, "approve"));
   } finally { rmSync(ctx.dir, { recursive: true, force: true }); }
 });

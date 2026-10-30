@@ -248,10 +248,16 @@ export class WorkflowEngine {
       "collect_evidence có thể sử dụng giới hạn Peer rework sẵn có; không yêu cầu sửa vô hạn.",
       "taskIds: Peer IDs của collect_evidence/run_verification; request_human/blocked phải là mảng rỗng.",
       "Chỉ trả JSON object theo schema:",
-      JSON.stringify({
-        decision: "request_human", reason: "Lý do cụ thể không thể xác minh tự động",
-        instructions: "Các bước kiểm tra cụ thể cho người dùng", taskIds: []
-      }),
+      JSON.stringify(automatedAllowed && peerIds.length
+        ? {
+            decision: "collect_evidence", reason: "Thiếu bằng chứng từ Peer",
+            instructions: "Bổ sung test/evidence cho tiêu chí chưa xác minh",
+            taskIds: [peerIds[0]]
+          }
+        : {
+            decision: "request_human", reason: "Không thể tự xác minh thêm",
+            instructions: "Các bước kiểm tra cụ thể cho người dùng", taskIds: []
+          }),
       "ALLOWED_PEER_IDS: " + JSON.stringify(peerIds),
       "Configured verification commands: " + JSON.stringify(this.config.modules.map((m) => ({
         moduleId: m.id, configured: !!m.testCommand?.length
