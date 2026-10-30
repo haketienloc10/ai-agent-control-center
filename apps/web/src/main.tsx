@@ -145,10 +145,13 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onR
     {workflow.error && <p className="error-text">{workflow.error}</p>}
     {workflow.status === "failed" && workflow.peers.length > 0 &&
       workflow.peers.every((p) => p.status === "accepted") &&
-      workflow.error?.startsWith("IntegrationReview sai schema") &&
+      (workflow.error?.startsWith("IntegrationReview sai schema") ||
+        workflow.error?.startsWith("LeadRemediation sai schema")) &&
       <div className="actions">
         <button className="primary" onClick={() => onRetryIntegration(workflow.id)}>
-          Thử lại Final Integration Review (không chạy lại Peer)
+          {workflow.error?.startsWith("LeadRemediation sai schema")
+            ? "Thử lại quyết định Lead (không chạy lại Reviewer/Peer)"
+            : "Thử lại Final Reviewer (fresh session, không chạy lại Peer)"}
         </button>
       </div>}
     {workflow.status === "failed" && workflow.peers.some((p) => p.status === "review_pending") &&
@@ -360,7 +363,7 @@ function App() {
               void runAction("/tasks/" + task.id + "/reconcile")}>Reconcile</button>}
             {task.reconciliation && <small className="recovery-detail">
               Recovery: {task.reconciliation.status} — {task.reconciliation.detail}</small>}
-            {task.reconciliation?.status === "completed" && selectedTask === task.id &&
+            {task.role !== "reviewer" && task.reconciliation?.status === "completed" && selectedTask === task.id &&
               <div className="recovery-followup">
                 <label>Follow-up mới trên Thread cũ (không chạy lại prompt trước)
                   <textarea rows={2} value={followupPrompt} onChange={(event) => setFollowupPrompt(event.target.value)}

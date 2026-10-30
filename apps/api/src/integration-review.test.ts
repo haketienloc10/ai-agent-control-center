@@ -23,7 +23,7 @@ async function until(store: TaskStore, workflowId: string, statuses: string[]): 
 }
 
 function setup(mode: "integration-rework" | "manual-verification" | "manual-contract" |
-  "web-rework" | "rework-forever" | "web-fallback",
+  "web-rework" | "rework-forever" | "web-fallback" | "remediation-retry",
   invalidPlanOnce = false) {
   const dir = mkdtempSync(join(tmpdir(), "aacc-integration-"));
   const api = join(dir, "api");
@@ -42,6 +42,7 @@ function setup(mode: "integration-rework" | "manual-verification" | "manual-cont
   const integrationPrompts: string[] = [];
   let integrations = 0;
   let planCalls = 0;
+  let invalidRemediationRemaining = mode === "remediation-retry" ? 3 : 0;
   const executor: AgentTaskExecutor = {
     async runAndWait(taskId: string): Promise<string> {
       const task = store.get(taskId)!;
@@ -125,8 +126,10 @@ function setup(mode: "integration-rework" | "manual-verification" | "manual-cont
         const match = /Independent Reviewer report \(untrusted findings\): (\{[^\n]*\})/.exec(task.prompt);
         assert.ok(match, "Lead receives independent Reviewer findings");
         const report = JSON.parse(match[1]) as { rework: Array<{taskId:string;feedback:string}> };
-        output = { summary: "Lead quyết định sửa đúng Peer theo kết quả Reviewer",
-          rework: report.rework.map((item) => ({ ...item, feedback: "Lead: " + item.feedback })) };
+        output = invalidRemediationRemaining-- > 0
+          ? { summary: "Invalid Lead decision", rework: [] }
+          : { summary: "Lead quyết định sửa đúng Peer theo kết quả Reviewer",
+              rework: report.rework.map((item) => ({ ...item, feedback: "Lead: " + item.feedback })) };
       } else {
         // Peer-level Lead review has no final integration authority.
         const ids = JSON.parse(/BATCH_TASK_IDS \(phải giữ nguyên từng ID\): (\[[^\n]*\])/.exec(task.prompt)![1]) as string[];
@@ -336,6 +339,29 @@ test("Contract unverified phải xác nhận riêng, không được dùng check
     assert.equal(ctx.engine.confirmManualVerification(workflow.id, [], ["api-web"]).status,
       "waiting_business_approval");
     assert.deepEqual(ctx.store.getWorkflow(workflow.id)?.manualVerifiedContractIds, ["api-web"]);
+  } finally {
+    rmSync(ctx.dir, { recursive: true, force: true });
+  }
+});
+
+test("LeadRemediation sai schema có thể retry Lead-only; giữ Reviewer report/PeerResults", async () => {
+  const ctx = setup("remediation-retry");
+  try {
+    const workflow = ctx.engine.create({ title: "Remediation", request: "Fix integration" });
+    const failed = await until(ctx.store, workflow.id, ["failed", "waiting_business_approval"]);
+    assert.equal(failed.status, "failed");
+    assert.match(failed.error ?? "", /LeadRemediation sai schema/);
+    assert.equal(failed.finalReview?.verdict, "rework");
+    assert.equal(failed.reviewerTaskIds?.length, 1);
+    assert.deepEqual(ctx.peerRuns, ["api", "web"]);
+    assert.equal(ctx.engine.retryIntegration(workflow.id).status, "integration_reviewing");
+    const recovered = await until(ctx.store, workflow.id, ["waiting_business_approval", "failed"]);
+    assert.equal(recovered.status, "waiting_business_approval", recovered.error);
+    assert.deepEqual(ctx.peerRuns, ["api", "web", "web"]);
+    assert.equal(recovered.reviewerTaskIds?.length, 2,
+      "No Reviewer rerun during remediation retry; fresh Reviewer runs after Peer rework");
+    assert.equal(recovered.integrationReviewCount, 2);
+    assert.ok(ctx.store.events().some(e => e.kind === "workflow/lead_remediation"));
   } finally {
     rmSync(ctx.dir, { recursive: true, force: true });
   }

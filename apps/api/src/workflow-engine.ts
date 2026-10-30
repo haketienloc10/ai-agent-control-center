@@ -93,17 +93,21 @@ export class WorkflowEngine {
     const workflow = this.store.getWorkflow(id);
     if (!workflow) throw new Error("Workflow not found");
     if (this.active.has(id)) throw new Error("Workflow đã đang chạy");
+    const error = workflow.error ?? "";
+    const retryRemediation = error.startsWith("LeadRemediation sai schema");
     if (workflow.status !== "failed" || !workflow.plan ||
         !workflow.peers.length || !workflow.peers.every((p) => p.status === "accepted") ||
-        !(workflow.error ?? "").startsWith("IntegrationReview sai schema")) {
-      throw new Error("Chỉ retry được Final Integration Review lỗi schema với tất cả Peer accepted");
+        (!error.startsWith("IntegrationReview sai schema") && !retryRemediation) ||
+        (retryRemediation && workflow.finalReview?.verdict !== "rework")) {
+      throw new Error("Chỉ retry được Final Review hoặc LeadRemediation lỗi schema khi mọi Peer đã accepted");
     }
     this.store.mutateWorkflow(id, (w) => {
       w.status = "integration_reviewing";
       w.error = undefined;
     });
-    this.store.workflowEvent(id, "workflow/integration_review_resumed", {});
-    this.launch(id, () => this.execute(id, false));
+    this.store.workflowEvent(id, "workflow/integration_review_resumed", { retryRemediation });
+    this.launch(id, () => retryRemediation
+      ? this.resumeLeadRemediation(id) : this.execute(id, false));
     return this.store.getWorkflow(id)!;
   }
 
@@ -356,6 +360,56 @@ export class WorkflowEngine {
     this.store.workflowEvent(id, "workflow/review", review);
   }
 
+  private applyIntegrationOutcome(id: string, report: IntegrationReview,
+    remediation?: LeadRemediation): void {
+    this.store.mutateWorkflow(id, (workflow) => {
+      workflow.lastRemediation = remediation;
+      if (report.verdict === "rework") {
+        if (!remediation) throw new Error("Reviewer failed: Lead remediation decision required");
+        // Lead's decision (not reviewer's suggestion) drives rework and dependent invalidation.
+        const affected = new Set(remediation.rework.map((action) => action.taskId));
+        let changed = true;
+        while (changed) {
+          changed = false;
+          for (const peer of workflow.peers) {
+            if (!affected.has(peer.id) && peer.dependsOn.some((dep) => affected.has(dep))) {
+              affected.add(peer.id);
+              changed = true;
+            }
+          }
+        }
+        for (const peer of workflow.peers) {
+          if (!affected.has(peer.id)) continue;
+          if (peer.attempts.length > workflow.maxReworks) {
+            throw new Error("Peer " + peer.id + " vượt giới hạn rework khi Final Integration Review");
+          }
+          const decision = remediation.rework.find((action) => action.taskId === peer.id);
+          peer.status = "rework";
+          peer.feedback = decision?.feedback ??
+            "Upstream dependency thay đổi; kiểm tra và tích hợp lại.";
+        }
+        workflow.status = "executing";
+      } else {
+        workflow.status = report.verdict === "manual_verification"
+          ? "waiting_manual_verification" : "waiting_business_approval";
+      }
+    });
+    if (remediation) this.store.workflowEvent(id, "workflow/lead_remediation", remediation);
+    if (report.verdict === "pass") {
+      this.store.workflowEvent(id, "workflow/ready_for_approval", { integrationPassed: true });
+    }
+  }
+
+  private async resumeLeadRemediation(id: string): Promise<void> {
+    const report = this.store.getWorkflow(id)?.finalReview;
+    if (!report || report.verdict !== "rework") {
+      throw new Error("Thiếu báo cáo Final Reviewer để tiếp tục LeadRemediation");
+    }
+    const remediation = await this.leadRemediation(id, report);
+    this.applyIntegrationOutcome(id, report, remediation);
+    await this.execute(id, false);
+  }
+
   private integrationPrompt(workflow: WorkflowRun): string {
     const criteria = workflow.plan?.acceptanceCriteria ?? [];
     const contracts = workflow.plan?.integrationContracts ?? [];
@@ -444,52 +498,18 @@ export class WorkflowEngine {
     }
     if (!report) throw new Error("Không nhận được IntegrationReview");
     const reviewed = report;
-    // Reviewer reports findings. Lead alone determines which Peers must rework.
-    // Do not let the independent Reviewer dispatch or override Peer state.
-    const remediation = reviewed.verdict === "rework"
-      ? await this.leadRemediation(id, reviewed) : undefined;
+    // Persist Reviewer verdict BEFORE asking Lead, enabling targeted Lead-only schema retry.
     this.store.mutateWorkflow(id, (workflow) => {
       workflow.integrationReviewCount = (workflow.integrationReviewCount ?? 0) + 1;
       workflow.finalReview = reviewed;
-      workflow.lastRemediation = remediation;
+      workflow.lastRemediation = undefined;
       workflow.manualVerifiedCriterionIds = undefined;
       workflow.manualVerifiedContractIds = undefined;
-      if (reviewed.verdict === "rework") {
-        // Khi sửa Peer upstream, downstream đã accepted phải làm lại để tránh
-        // giữ trạng thái accepted trên API contract cũ.
-        const affected = new Set(remediation!.rework.map((r) => r.taskId));
-        let expanded = true;
-        while (expanded) {
-          expanded = false;
-          for (const peer of workflow.peers) {
-            if (!affected.has(peer.id) && peer.dependsOn.some((dep) => affected.has(dep))) {
-              affected.add(peer.id);
-              expanded = true;
-            }
-          }
-        }
-        for (const peer of workflow.peers) {
-          if (!affected.has(peer.id)) continue;
-          if (peer.attempts.length > workflow.maxReworks) {
-            throw new Error("Peer " + peer.id + " vượt giới hạn rework khi Final Integration Review");
-          }
-          const requested = remediation!.rework.find((r) => r.taskId === peer.id);
-          peer.status = "rework";
-          peer.feedback = requested?.feedback ??
-            "Upstream dependency thay đổi sau Final Integration Review; kiểm tra và tích hợp lại.";
-        }
-        workflow.status = "executing";
-      } else if (reviewed.verdict === "manual_verification") {
-        workflow.status = "waiting_manual_verification";
-      } else {
-        workflow.status = "waiting_business_approval";
-      }
     });
     this.store.workflowEvent(id, "workflow/integration_review", reviewed);
-    if (remediation) this.store.workflowEvent(id, "workflow/lead_remediation", remediation);
-    if (reviewed.verdict === "pass") {
-      this.store.workflowEvent(id, "workflow/ready_for_approval", { integrationPassed: true });
-    }
+    const remediation = reviewed.verdict === "rework"
+      ? await this.leadRemediation(id, reviewed) : undefined;
+    this.applyIntegrationOutcome(id, reviewed, remediation);
     return reviewed.verdict;
   }
 

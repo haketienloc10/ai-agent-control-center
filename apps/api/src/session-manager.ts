@@ -7,10 +7,8 @@ import type { Task, WorkspaceConfig } from "@aacc/contracts";
 
 // Personal local workspace: equivalent to codex --yolo (no runtime approvals/sandbox).
 // WARNING: cwd / module registry are routing hints, NOT filesystem boundaries in YOLO mode.
-type ApprovalPolicy = "untrusted" | "on-request" | "granular" | "never";
 // Preserve user's YOLO preference. Sandbox mode is an explicit opt-in.
 const SAFE_MODE = process.env.CODEX_SECURITY_MODE === "sandbox";
-const APPROVAL_POLICY: ApprovalPolicy = SAFE_MODE ? "on-request" : "never";
 // Lead and Reviewer only coordinate/read. Only Peer gets write privileges.
 const permission = (role: Task["role"], cwd: string) => role === "peer" ? {
   approvalPolicy: SAFE_MODE ? "on-request" : "never",

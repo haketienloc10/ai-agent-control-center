@@ -65,3 +65,9 @@ sequenceDiagram
 Mock runtime test xác nhận reviewer luôn có Thread ID riêng, không chứa Lead instructions, sandbox read-only. Mock Workflow test kiểm tra quyết định Lead sau độc lập Reviewer findings, downstream rework và Business Approval.
 
 **Chưa kiểm chứng live** với Codex phiên bản thực trên máy người dùng. Reviewer read-only có thể không chạy được test browser cần ghi temp/cache; khi không đủ bằng chứng phải đánh dấu `unverified`, tránh báo pass.
+
+## Retry quyết định khắc phục
+
+Khi Reviewer báo `rework`, Backend lưu báo cáo trước khi gọi Lead. Nếu Lead trả `LeadRemediation` không hợp lệ sau ba lượt, workflow chuyển `failed` nhưng giữ `finalReview`. Nút retry gọi `POST /api/workflows/:id/retry-integration`, chỉ gọi lại Lead với báo cáo Reviewer đã lưu, **không chạy lại Reviewer hay Peer**. Khi Lead đã giao sửa, các Peer liên quan chạy và một Final Reviewer fresh Thread đánh giá kết quả mới.
+
+Reviewer `interrupted` không được `thread/resume` qua Recovery follow-up vì điều đó phá tính fresh-session. Cần retry toàn bộ Final Review qua workflow khi phù hợp.
