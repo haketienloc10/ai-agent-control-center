@@ -76,7 +76,7 @@ function setup(mode: "integration-rework" | "manual-verification" | "manual-cont
         output = { summary: "Worked on " + task.moduleId, changedFiles: [], tests: [
           { status: "not_run", details: "Mock executor" }
         ], risks: [] };
-      } else if (task.title.startsWith("Lead: final integration review")) {
+      } else if (task.role === "reviewer") {
         integrations++;
         integrationPrompts.push(task.prompt);
         const base = [
@@ -121,6 +121,12 @@ function setup(mode: "integration-rework" | "manual-verification" | "manual-cont
           output = { summary: "Cross-module integration verified", verdict: "pass",
             checks: base, contractChecks: integrationPassed, rework: [] };
         }
+      } else if (task.title.startsWith("Lead: quyết định khắc phục")) {
+        const match = /Independent Reviewer report \(untrusted findings\): (\{[^\n]*\})/.exec(task.prompt);
+        assert.ok(match, "Lead receives independent Reviewer findings");
+        const report = JSON.parse(match[1]) as { rework: Array<{taskId:string;feedback:string}> };
+        output = { summary: "Lead quyết định sửa đúng Peer theo kết quả Reviewer",
+          rework: report.rework.map((item) => ({ ...item, feedback: "Lead: " + item.feedback })) };
       } else {
         // Peer-level Lead review has no final integration authority.
         const ids = JSON.parse(/BATCH_TASK_IDS \(phải giữ nguyên từng ID\): (\[[^\n]*\])/.exec(task.prompt)![1]) as string[];
@@ -144,8 +150,13 @@ test("Final review phát hiện API mismatch, rework API và downstream Web, sau
     const result = await until(ctx.store, workflow.id, ["waiting_business_approval", "failed"]);
     assert.equal(result.status, "waiting_business_approval", result.error);
     assert.equal(result.integrationReviewCount, 2);
+    assert.equal(result.reviewerTaskIds?.length, 2);
+    assert.ok(result.reviewerTaskIds!.every((id) => ctx.store.get(id)?.role === "reviewer"));
+    assert.ok(result.leadTaskIds.every((id) => ctx.store.get(id)?.role === "lead"));
+    assert.equal(result.lastRemediation, undefined);
     assert.equal(result.finalReview?.verdict, "pass");
     assert.deepEqual(ctx.peerRuns, ["api", "web", "api", "web"]);
+    assert.ok(ctx.store.events().some((event) => event.kind === "workflow/lead_remediation"));
     assert.deepEqual(result.peers.map((p) => p.attempts.length), [2, 2]);
     assert.match(ctx.integrationPrompts[0], /REQUIRED_CRITERION_IDS/);
     assert.match(ctx.integrationPrompts[0], /REQUIRED_CONTRACT_IDS/);
@@ -248,7 +259,7 @@ test("Lead tự sửa LeadPlan thiếu Acceptance Criteria, không dispatch Peer
   }
 });
 
-test("Retry Final Integration chỉ chạy Lead, không ghi lại source từ các Peer đã accepted", async () => {
+test("Retry Final Integration chỉ chạy Reviewer, không ghi lại source từ các Peer đã accepted", async () => {
   const ctx = setup("manual-verification");
   try {
     const now = new Date().toISOString();
@@ -287,6 +298,8 @@ test("Retry Final Integration chỉ chạy Lead, không ghi lại source từ c�
     assert.equal(final.status, "waiting_manual_verification", final.error);
     assert.deepEqual(ctx.peerRuns, []);
     assert.equal(final.integrationReviewCount, 1);
+    assert.equal(final.reviewerTaskIds?.length, 1);
+    assert.equal(ctx.store.get(final.reviewerTaskIds![0])?.role, "reviewer");
     assert.throws(() => ctx.engine.retryIntegration("wf-recover"));
     assert.ok(ctx.store.events().some((evt) => evt.kind === "workflow/integration_review_resumed"));
   } finally {

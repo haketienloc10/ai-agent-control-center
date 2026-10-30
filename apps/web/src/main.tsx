@@ -39,7 +39,15 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onR
       <div><strong>{workflow.title}</strong><p>{workflow.request}</p></div>
       <span className={"status " + workflow.status}>{workflow.status.replaceAll("_", " ")}</span>
     </div>
-    <p className="muted">Lead reviews: {workflow.reviewCount} · Final integration reviews: {workflow.integrationReviewCount ?? 0} · Max reworks / Peer: {workflow.maxReworks}</p>
+    <p className="muted">Lead reviews: {workflow.reviewCount} · Independent Final Reviews: {workflow.integrationReviewCount ?? 0} · Max reworks / Peer: {workflow.maxReworks}</p>
+    {(workflow.reviewerTaskIds ?? []).length > 0 && <details className="acceptance-details">
+      <summary>Final Reviewer · Fresh Codex Sessions ({workflow.reviewerTaskIds!.length})</summary>
+      <p className="muted">Reviewer là role riêng, mỗi lượt có Codex Thread mới, không sử dụng session Lead.</p>
+      {workflow.reviewerTaskIds!.map((taskId, i) =>
+        <button type="button" className="link-button" key={taskId}
+          onClick={() => onSelect(taskId)}>Xem Final Reviewer session #{i + 1}</button>
+      )}
+    </details>}
     {workflow.plan?.acceptanceCriteria && <details className="acceptance-details">
       <summary>Acceptance Criteria ({workflow.plan.acceptanceCriteria.length})</summary>
       <ol>{workflow.plan.acceptanceCriteria.map((criterion) => <li key={criterion.id}>
@@ -58,7 +66,7 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onR
       </div>)}
     </details>}
     {workflow.finalReview && <div className="integration-report">
-      <h3>Final Integration Review</h3>
+      <h3>Final Integration Review · Independent Reviewer</h3>
       <p>{workflow.finalReview.summary}</p>
       <h3>Product Acceptance</h3>
       {workflow.finalReview.checks.map((check) => {
@@ -83,8 +91,13 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onR
         </div>;
       })}
       {workflow.finalReview.rework.map((item) => <p key={item.taskId} className="error-text">
-        Cần sửa {item.taskId}: {item.feedback}
+        Reviewer đề xuất sửa {item.taskId}: {item.feedback}
       </p>)}
+      {workflow.lastRemediation && <div className="independent-test">
+        <strong>Lead quyết định khắc phục:</strong> {workflow.lastRemediation.summary}
+        {workflow.lastRemediation.rework.map((action) =>
+          <p key={action.taskId}>Giao lại {action.taskId}: {action.feedback}</p>)}
+      </div>}
     </div>}
     {workflow.plan && <p><strong>Lead Plan:</strong> {workflow.plan.summary}</p>}
     <div className="peers">{workflow.peers.map((peer) => <div key={peer.id} className="peer">
@@ -370,7 +383,7 @@ function App() {
       selectedTask={selectedTask}
       onSelectTask={setSelectedTask}
     />
-    <footer>P1 — Lead/Peer automatic workflow. Chưa có Git worktree, recovery/resume sau restart hoặc merge tự động.</footer>
+    <footer>P2 — Lead điều phối · Peer triển khai · Final Reviewer độc lập trong fresh session · Bạn duyệt.</footer>
   </main>;
 }
 

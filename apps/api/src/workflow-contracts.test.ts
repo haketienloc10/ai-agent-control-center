@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseAgentJson, validateIntegrationReview, validateLeadPlan, validateLeadReview, validatePeerResult } from "./workflow-contracts.js";
+import { parseAgentJson, validateIntegrationReview, validateLeadRemediation, validateLeadPlan, validateLeadReview, validatePeerResult } from "./workflow-contracts.js";
 import type { WorkspaceConfig } from "@aacc/contracts";
 const config: WorkspaceConfig = {
   lead: { cwd: "/tmp/lead", instructions: "" },
@@ -123,4 +123,21 @@ test("Không thể pass Integration Acceptance khi hợp đồng fail hoặc ch�
     contractChecks: [{ ...contracts[0], status: "failed", evidence: "Web only runs mock" }],
     rework: [{ taskId: "web1", feedback: "Use API artifact" }]
   }, ["ac1"], ["api1", "web1"], ["contract-api-web"]).verdict, "rework");
+});
+
+test("Lead remediation chỉ chọn Peer hợp lệ, có chỉ dẫn và không được chọn 0 Peer", () => {
+  const ids = ["api1", "web1"];
+  assert.throws(() => validateLeadRemediation({ summary: "Skip failure", rework: [] }, ids), /ít nhất một/);
+  assert.throws(() => validateLeadRemediation({
+    summary: "Invalid", rework: [{ taskId: "unknown", feedback: "Fix" }]
+  }, ids), /taskId/);
+  assert.throws(() => validateLeadRemediation({
+    summary: "Duplicate", rework: [
+      { taskId: "api1", feedback: "Fix" }, { taskId: "api1", feedback: "Fix again" }
+    ]
+  }, ids), /taskId/);
+  assert.deepEqual(validateLeadRemediation({
+    summary: "Fix integration",
+    rework: [{ taskId: "web1", feedback: "Kết nối API thực tế thay vì fallback" }]
+  }, ids).rework.map((x) => x.taskId), ["web1"]);
 });

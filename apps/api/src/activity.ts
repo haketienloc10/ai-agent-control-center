@@ -155,8 +155,23 @@ export function projectActivity(entries: ActivityEntry[], event: ActivityEvent):
     add("workflow", "Lead đã đánh giá kết quả", accepted + " chấp nhận · " + (reviews.length - accepted) + " cần sửa lại", "completed");
     return true;
   }
+  if (kind === "workflow/reviewer_started") {
+    add("workflow", "Final Reviewer mở Codex Session độc lập",
+      "Task reviewer: " + string(data.taskId), "running");
+    return true;
+  }
+  if (kind === "workflow/lead_remediation") {
+    add("workflow", "Lead quyết định giao Peer khắc phục",
+      string(data.summary), "completed");
+    return true;
+  }
+  if (kind === "workflow/remediation_validation_failed") {
+    add("workflow", "Lead đang sửa quyết định khắc phục",
+      string(data.reason), "info");
+    return true;
+  }
   if (kind === "workflow/integration_review_started") {
-    add("workflow", "Lead đang kiểm tra tích hợp tổng thể", "Đối chiếu acceptance criteria và kết quả các module", "running");
+    add("workflow", "Final Reviewer đang kiểm tra tích hợp tổng thể", "Đối chiếu acceptance criteria và kết quả các module", "running");
     return true;
   }
   if (kind === "workflow/integration_review") {
@@ -175,7 +190,7 @@ export function projectActivity(entries: ActivityEntry[], event: ActivityEvent):
     return true;
   }
   if (kind === "workflow/integration_validation_failed") {
-    add("workflow", "Lead đang điều chỉnh báo cáo kiểm tra cuối", string(data.reason), "info");
+    add("workflow", "Final Reviewer đang điều chỉnh báo cáo", string(data.reason), "info");
     return true;
   }
   if (kind === "workflow/manual_verification_confirmed") {

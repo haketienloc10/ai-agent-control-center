@@ -1,10 +1,11 @@
-export type AgentRole = "lead" | "peer";
+export type AgentRole = "lead" | "peer" | "reviewer";
 export type TaskStatus =
   | "queued" | "starting" | "running" | "waiting_runtime_approval"
   | "completed" | "failed" | "interrupted";
 export interface ModuleConfig { id: string; label: string; path: string; testCommand?: string[] }
 export interface WorkspaceConfig {
   lead: { cwd: string; instructions: string };
+  reviewer?: { cwd: string; instructions: string };
   modules: ModuleConfig[];
 }
 export interface Task {
@@ -116,6 +117,10 @@ export interface LeadReview {
   summary: string;
   reviews: Array<{ taskId: string; decision: "accept" | "rework"; feedback: string }>;
 }
+export interface LeadRemediation {
+  summary: string;
+  rework: Array<{ taskId: string; feedback: string }>;
+}
 export interface PeerAttempt {
   taskId: string; iteration: number; result?: PeerResult; feedback?: string;
 }
@@ -131,6 +136,8 @@ export type WorkflowStatus =
 export interface WorkflowRun {
   id: string; title: string; request: string; status: WorkflowStatus;
   plan?: LeadPlan; peers: PeerWork[]; leadTaskIds: string[];
+  reviewerTaskIds?: string[];
+  lastRemediation?: LeadRemediation;
   reviewCount: number; integrationReviewCount?: number;
   finalReview?: IntegrationReview;
   manualVerifiedCriterionIds?: string[];

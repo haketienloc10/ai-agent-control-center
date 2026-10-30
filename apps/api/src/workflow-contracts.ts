@@ -1,4 +1,4 @@
-import type { IntegrationReview, LeadPlan, LeadReview, PeerResult, WorkspaceConfig } from "@aacc/contracts";
+import type { IntegrationReview, LeadPlan, LeadReview, LeadRemediation, PeerResult, WorkspaceConfig } from "@aacc/contracts";
 
 const object = (value: unknown): Record<string, unknown> => {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected JSON object");
@@ -247,4 +247,25 @@ export function validateIntegrationReview(value: unknown, criterionIds: string[]
   }
   return { summary: nonempty(data.summary, "integration.summary", 5000),
     verdict: data.verdict, checks, contractChecks, rework };
+}
+
+/** Lead makes the repair decision after independent Reviewer reports failed criteria.
+ * No silently accepting failed findings; every action must point to an existing Peer. */
+export function validateLeadRemediation(value: unknown, peerIds: string[]): LeadRemediation {
+  const data = object(value);
+  const actions = array(data.rework, "LeadRemediation.rework");
+  if (!actions.length || actions.length > peerIds.length) {
+    throw new Error("LeadRemediation phải chọn ít nhất một Peer để sửa");
+  }
+  const seen = new Set<string>();
+  const rework = actions.map((raw) => {
+    const action = object(raw);
+    const taskId = nonempty(action.taskId, "remediation.taskId", 48);
+    if (!peerIds.includes(taskId) || seen.has(taskId)) {
+      throw new Error("LeadRemediation taskId không hợp lệ: " + taskId);
+    }
+    seen.add(taskId);
+    return { taskId, feedback: nonempty(action.feedback, "remediation.feedback", 4000) };
+  });
+  return { summary: nonempty(data.summary, "remediation.summary", 5000), rework };
 }

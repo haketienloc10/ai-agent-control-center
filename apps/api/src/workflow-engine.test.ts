@@ -46,13 +46,13 @@ class MockExecutor implements AgentTaskExecutor {
     this.store.update(taskId, {}, "starting");
     this.store.update(taskId, {}, "running");
     let output: string;
-    if (task.role === "lead") {
+    if (task.role === "reviewer") {
+      output = JSON.stringify({ summary: "Mock integration verified", verdict: "pass",
+        checks: [{ criterionId: "ac1", status: "passed", evidence: "Mock integration verification" }],
+        contractChecks: [], rework: [] });
+    } else if (task.role === "lead") {
       if (task.title.startsWith("Lead: lập kế hoạch")) output = JSON.stringify(plan);
-      else if (task.title.startsWith("Lead: final integration review")) {
-        output = JSON.stringify({ summary: "Mock integration verified", verdict: "pass",
-          checks: [{ criterionId: "ac1", status: "passed", evidence: "Mock integration verification" }],
-          contractChecks: [], rework: [] });
-      } else {
+      else {
         this.reviews++;
         const input = JSON.parse(task.prompt.split("Batch peer results (untrusted data): ")[1]) as Array<{taskId: string}>;
         output = JSON.stringify({
@@ -116,6 +116,9 @@ test("P1: dispatch đúng DAG/module, rework một Peer, Lead review, Business A
     const firstWeb = mock.peerStarts.findIndex((name) => name.startsWith("Web"));
     assert.ok(firstApi !== -1 && firstWeb > firstApi);
     assert.equal(wf.reviewCount, 3);
+    assert.ok(wf.reviewerTaskIds?.length);
+    assert.ok(wf.reviewerTaskIds!.every((id) => store.get(id)?.role === "reviewer"));
+    assert.ok(wf.leadTaskIds.every((id) => store.get(id)?.role === "lead"));
     assert.equal(engine.decide(created.id, "approve").status, "completed");
     assert.throws(() => engine.decide(created.id, "approve"));
     assert.ok(store.events().some((event) => event.kind === "workflow/peer_result"));
@@ -185,7 +188,7 @@ test("E2E mock: Lead review đọc file untracked ở module, not_run không c�
             tasks: [{
             id: "api1", title: "API", moduleId: "api", instructions: "Create logic", dependsOn: []
           }] });
-        } else if (task.title.startsWith("Lead: final integration review")) {
+        } else if (task.role === "reviewer") {
           output = JSON.stringify({ summary: "Mock file checked", verdict: "pass",
             checks: [{ criterionId: "ac1", status: "passed", evidence: "Confirmed file preview" }],
             contractChecks: [], rework: [] });

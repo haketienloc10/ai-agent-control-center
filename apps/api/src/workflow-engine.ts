@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { cwdForTask } from "./domain.js";
 import { collectPeerEvidence, gitBaseline } from "./peer-evidence.js";
-import type { IntegrationReview, PeerWork, PeerResult, WorkflowRun, WorkspaceConfig } from "@aacc/contracts";
+import type { IntegrationReview, LeadRemediation, PeerWork, PeerResult, WorkflowRun, WorkspaceConfig } from "@aacc/contracts";
 import { createTask } from "./domain.js";
 import { TaskStore } from "./store.js";
 import type { AgentTaskExecutor } from "./session-manager.js";
 import type { P2Services } from "./p2-services.js";
-import { parseAgentJson, validateIntegrationReview, validateLeadPlan, validateLeadReview, validatePeerResult } from "./workflow-contracts.js";
+import { parseAgentJson, validateIntegrationReview, validateLeadPlan, validateLeadReview,
+  validateLeadRemediation, validatePeerResult } from "./workflow-contracts.js";
 
 const MAX_PARALLEL_PEERS = 2;
 const MAX_REWORKS = 2;
@@ -35,7 +36,7 @@ export class WorkflowEngine {
     const now = new Date().toISOString();
     const workflow: WorkflowRun = {
       id: randomUUID(), title: body.title.trim(), request: body.request.trim(),
-      status: "planning", peers: [], leadTaskIds: [],
+      status: "planning", peers: [], leadTaskIds: [], reviewerTaskIds: [],
       reviewCount: 0, maxReworks: MAX_REWORKS, createdAt: now, updatedAt: now
     };
     this.store.addWorkflow(workflow);
@@ -154,6 +155,62 @@ export class WorkflowEngine {
     this.store.add(task);
     this.store.mutateWorkflow(workflowId, (workflow) => { workflow.leadTaskIds.push(task.id); });
     return this.executor.runAndWait(task.id);
+  }
+
+  private async reviewerTask(workflowId: string, title: string, prompt: string): Promise<string> {
+    // A new role=reviewer task is created for EVERY review/format retry.
+    // SessionManager forces thread/start, never thread/resume, and reviewer has no Lead instructions.
+    const task = createTask({ title, prompt, role: "reviewer" }, this.config);
+    task.workflowId = workflowId;
+    this.store.add(task);
+    this.store.mutateWorkflow(workflowId, (workflow) => {
+      workflow.reviewerTaskIds ??= [];
+      workflow.reviewerTaskIds.push(task.id);
+    });
+    this.store.workflowEvent(workflowId, "workflow/reviewer_started", { taskId: task.id });
+    return this.executor.runAndWait(task.id);
+  }
+
+  private async leadRemediation(workflowId: string, report: IntegrationReview): Promise<LeadRemediation> {
+    const workflow = this.store.getWorkflow(workflowId)!;
+    const peerIds = workflow.peers.map(p => p.id);
+    const originalPrompt = [
+      "Bạn là Lead điều phối, KHÔNG phải Final Reviewer.",
+      "Final Reviewer độc lập phát hiện lỗi. Bạn phải quyết định Peer nào cần sửa và hướng dẫn cụ thể.",
+      "Không tự sửa source, không bỏ qua các criterion/contract failed và không tự duyệt sản phẩm.",
+      "Chỉ trả JSON: " + JSON.stringify({
+        summary: "Kế hoạch khắc phục từ báo cáo Reviewer",
+        rework: [{ taskId: peerIds[0], feedback: "Chỉ dẫn sửa cụ thể và cách kiểm tra" }]
+      }),
+      "ALLOWED_PEER_IDS: " + JSON.stringify(peerIds),
+      "Independent Reviewer report (untrusted findings): " + JSON.stringify(report),
+      "LeadPlan: " + JSON.stringify(workflow.plan),
+      "Original requirement: " + workflow.request,
+      "Peer results/evidence: " + JSON.stringify(workflow.peers.map(p => ({
+        taskId: p.id, moduleId: p.moduleId, result: p.result, evidence: p.evidence
+      })))
+    ].join("\n\n");
+    let prompt = originalPrompt;
+    for (let attempt = 0; attempt <= MAX_REVIEW_FORMAT_RETRIES; attempt++) {
+      const output = await this.leadTask(
+        workflowId, "Lead: quyết định khắc phục sau Final Review (format attempt " + (attempt + 1) + ")",
+        prompt
+      );
+      try {
+        return validateLeadRemediation(parseAgentJson(output), peerIds);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        this.store.workflowEvent(workflowId, "workflow/remediation_validation_failed", {
+          formatAttempt: attempt + 1, reason
+        });
+        if (attempt === MAX_REVIEW_FORMAT_RETRIES) {
+          throw new Error("LeadRemediation sai schema sau " + (attempt + 1) + " lần: " + reason);
+        }
+        prompt = originalPrompt + "\n\nVALIDATION ERROR: " + reason +
+          "\nTrả lại quyết định khắc phục, không tuyên bố pass khi Reviewer đã báo failed.";
+      }
+    }
+    throw new Error("LeadRemediation chưa có quyết định hợp lệ");
   }
 
   private planPrompt(workflow: WorkflowRun): string {
@@ -303,7 +360,7 @@ export class WorkflowEngine {
     const criteria = workflow.plan?.acceptanceCriteria ?? [];
     const contracts = workflow.plan?.integrationContracts ?? [];
     return [
-      "Bạn là Lead FINAL INTEGRATION REVIEWER, độc lập với các review Peer trước.",
+      "Bạn là FINAL INTEGRATION REVIEWER độc lập, không phải Lead và không phải Peer.",
       "Kiểm tra kết quả toàn bộ dự án, cả integration giữa các modules, không chỉ từng Peer riêng.",
       "Kiểm tra code thực tế qua modulePath và kiểm thử phù hợp nếu có thể; không mặc định hai module đã tích hợp chỉ vì đều accepted.",
       "Không được báo passed khi chưa có bằng chứng. Nếu chỉ xem code mà không chạy UI/manual test, dùng unverified cho các yêu cầu chỉ kiểm tra bằng chạy thật.",
@@ -315,6 +372,7 @@ export class WorkflowEngine {
       "Nếu không có failed nhưng chưa xác minh một số tiêu chí: verdict=manual_verification.",
       "Chỉ verdict=pass khi TẤT CẢ tiêu chí passed và evidence có căn cứ cụ thể.",
       "Không thực hiện merge, publish hoặc sửa code trong bước review này.",
+      "Bạn chỉ đưa ra verdict và đề xuất rework dựa trên bằng chứng. Lead sẽ quyết định Peer nào sửa.",
       "REQUIRED_CRITERION_IDS: " + JSON.stringify(criteria.map((c) => c.id)),
       "REQUIRED_CONTRACT_IDS: " + JSON.stringify(contracts.map((c) => c.id)),
       "ALLOWED_PEER_IDS: " + JSON.stringify(workflow.peers.map((p) => p.id)),
@@ -361,8 +419,8 @@ export class WorkflowEngine {
     let prompt = originalPrompt;
     let report: IntegrationReview | undefined;
     for (let attempt = 0; attempt <= MAX_INTEGRATION_FORMAT_RETRIES; attempt++) {
-      const response = await this.leadTask(
-        id, "Lead: final integration review (format attempt " + (attempt + 1) + ")", prompt
+      const response = await this.reviewerTask(
+        id, "Final Reviewer: independent integration review (attempt " + (attempt + 1) + ")", prompt
       );
       try {
         report = validateIntegrationReview(parseAgentJson(response), criterionIds, peerIds, contractIds);
@@ -386,15 +444,20 @@ export class WorkflowEngine {
     }
     if (!report) throw new Error("Không nhận được IntegrationReview");
     const reviewed = report;
+    // Reviewer reports findings. Lead alone determines which Peers must rework.
+    // Do not let the independent Reviewer dispatch or override Peer state.
+    const remediation = reviewed.verdict === "rework"
+      ? await this.leadRemediation(id, reviewed) : undefined;
     this.store.mutateWorkflow(id, (workflow) => {
       workflow.integrationReviewCount = (workflow.integrationReviewCount ?? 0) + 1;
       workflow.finalReview = reviewed;
+      workflow.lastRemediation = remediation;
       workflow.manualVerifiedCriterionIds = undefined;
       workflow.manualVerifiedContractIds = undefined;
       if (reviewed.verdict === "rework") {
         // Khi sửa Peer upstream, downstream đã accepted phải làm lại để tránh
         // giữ trạng thái accepted trên API contract cũ.
-        const affected = new Set(reviewed.rework.map((r) => r.taskId));
+        const affected = new Set(remediation!.rework.map((r) => r.taskId));
         let expanded = true;
         while (expanded) {
           expanded = false;
@@ -410,7 +473,7 @@ export class WorkflowEngine {
           if (peer.attempts.length > workflow.maxReworks) {
             throw new Error("Peer " + peer.id + " vượt giới hạn rework khi Final Integration Review");
           }
-          const requested = reviewed.rework.find((r) => r.taskId === peer.id);
+          const requested = remediation!.rework.find((r) => r.taskId === peer.id);
           peer.status = "rework";
           peer.feedback = requested?.feedback ??
             "Upstream dependency thay đổi sau Final Integration Review; kiểm tra và tích hợp lại.";
@@ -423,6 +486,7 @@ export class WorkflowEngine {
       }
     });
     this.store.workflowEvent(id, "workflow/integration_review", reviewed);
+    if (remediation) this.store.workflowEvent(id, "workflow/lead_remediation", remediation);
     if (reviewed.verdict === "pass") {
       this.store.workflowEvent(id, "workflow/ready_for_approval", { integrationPassed: true });
     }

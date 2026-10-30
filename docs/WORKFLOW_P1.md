@@ -114,7 +114,7 @@ P1 sử dụng `approvalPolicy: "never"` và `danger-full-access` ở cả Threa
 ## Final Integration Review + Acceptance Criteria
 
 1. LeadPlan phải có `acceptanceCriteria` (1-12 tiêu chí, mỗi tiêu chí: `id,description,verification`) dựa trên yêu cầu gốc; không yêu cầu người dùng nhập schema.
-2. Sau khi từng Peer được chấp nhận, Backend gọi Lead Final Integration Reviewer với yêu cầu gốc, các tiêu chí, modulePath, kết quả, file preview, Git/command evidence của **mọi** Peer.
+2. Sau khi từng Peer được chấp nhận, Backend gọi Final Reviewer Agent độc lập trong fresh Codex Thread với yêu cầu gốc, các tiêu chí, modulePath, kết quả, file preview, Git/command evidence của **mọi** Peer.
 3. `IntegrationReview` phải quyết định từng criterion ID đúng một lần, với `status=passed|failed|unverified` và `evidence` không rỗng; `verdict=pass|rework|manual_verification`.
 4. `pass` chỉ được phép khi tất cả tiêu chí `passed`. `rework` cần criterion `failed` và Peer ID + feedback hợp lệ. Nếu không có failed nhưng còn unverified thì phải `manual_verification`.
 5. Khi `rework`, Backend chạy lại Peer được chỉ định; các Peer downstream phụ thuộc vào Peer đó cũng bị chuyển về `rework` vì contract upstream có thể thay đổi. Tuân thủ giới hạn tối đa 2 rework/Peer.
@@ -125,7 +125,7 @@ Lưu ý: Workflow cũ đã `waiting_business_approval` không tự động bị 
 
 ### Phục hồi khi reviewer trả sai JSON
 
-- Lead Planning và Final Integration Review đều có tối đa 2 lần sửa định dạng khi parse/validate thất bại. Chỉ chạy lại **Lead** ở các lượt này.
+- Lead Planning và Final Integration Review đều có tối đa 2 lần sửa định dạng khi parse/validate thất bại. Lead Plan được sửa bởi Lead; báo cáo Final Review được sửa bởi **Reviewer riêng trên Codex Thread mới** mỗi lượt.
 - Nếu Final Integration Review vẫn `failed` do sai JSON/schema nhưng mọi Peer vẫn `accepted`, có thể gọi `POST /api/workflows/:id/retry-integration`. Backend giữ nguyên source và PeerResult, chỉ gọi lại Final Integration Reviewer, rồi tiếp tục gate.
 - Các lỗi runtime, vượt rework budget và lỗi khác **không** được phép dùng endpoint này.
 
@@ -159,3 +159,7 @@ Lưu ý: Workflow cũ đã `waiting_business_approval` không tự động bị 
 - Các workflow cũ đã lưu trước schema này vẫn đọc được; new plan bắt buộc khai báo đủ. Final Reviewer legacy dùng `integrationContracts ?? []`.
 
 **Giới hạn:** Evidence không chứng minh độc lập consumer đã gọi API trừ khi có kiểm thử thật. Các hợp đồng do Lead lập (LLM) có thể thiếu/không phù hợp, nên các yêu cầu lớn vẫn cần con người đánh giá kế hoạch.
+
+### Agent roles (cập nhật)
+
+Lead là orchestrator và decision maker cho Peer. Final Integration Review thuộc `reviewer` riêng, không thuộc Lead; mỗi review bắt đầu fresh session `thread/start`. Khi reviewer báo failed/rework, Lead phải tạo `LeadRemediation` có task IDs và hướng dẫn khắc phục hợp lệ. Xem `docs/AGENT_ROLES.md`.

@@ -11,10 +11,18 @@ type ApprovalPolicy = "untrusted" | "on-request" | "granular" | "never";
 // Preserve user's YOLO preference. Sandbox mode is an explicit opt-in.
 const SAFE_MODE = process.env.CODEX_SECURITY_MODE === "sandbox";
 const APPROVAL_POLICY: ApprovalPolicy = SAFE_MODE ? "on-request" : "never";
-const THREAD_SANDBOX = SAFE_MODE ? "workspace-write" : "danger-full-access";
-const turnSandbox = (cwd: string) => SAFE_MODE
-  ? { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false }
-  : { type: "dangerFullAccess" };
+// Lead and Reviewer only coordinate/read. Only Peer gets write privileges.
+const permission = (role: Task["role"], cwd: string) => role === "peer" ? {
+  approvalPolicy: SAFE_MODE ? "on-request" : "never",
+  sandbox: SAFE_MODE ? "workspace-write" : "danger-full-access",
+  sandboxPolicy: SAFE_MODE
+    ? { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false }
+    : { type: "dangerFullAccess" }
+} : {
+  approvalPolicy: "never",
+  sandbox: "read-only",
+  sandboxPolicy: { type: "readOnly" }
+};
 
 interface ThreadResult { thread: { id: string } }
 interface TurnResult { turn: { id: string; status: string } }
@@ -89,7 +97,7 @@ export class SessionManager implements AgentTaskExecutor {
       // Khoá ghi theo module áp dụng cho TẤT CẢ Task, kể cả các Workflow khác nhau.
       const next = this.queue.findIndex((entry) => {
         const candidate = this.store.get(entry.taskId);
-        if (!candidate || candidate.role === "lead") return true;
+        if (!candidate || candidate.role !== "peer") return true;
         return ![...this.active].some((id) => {
           const active = this.store.get(id);
           if (active?.role !== "peer") return false;
@@ -125,18 +133,30 @@ export class SessionManager implements AgentTaskExecutor {
   private async execute(task: Task): Promise<string> {
     const cwd = await this.prepare(task.id);
     await this.codex.start();
+    // Reviewer MUST always get a fresh Thread; no Lead/Peer conversational history.
+    if (task.role === "reviewer" && task.threadId) {
+      throw new Error("Reviewer cannot reuse a previous Codex Thread");
+    }
+    const policy = permission(task.role, cwd);
     const thread = task.threadId
       ? await this.codex.request<ThreadResult>("thread/resume", {
           threadId: task.threadId, excludeTurns: true
         })
       : await this.codex.request<ThreadResult>("thread/start", {
-          cwd, approvalPolicy: APPROVAL_POLICY, sandbox: THREAD_SANDBOX
+          cwd, approvalPolicy: policy.approvalPolicy, sandbox: policy.sandbox
         });
     if (!thread?.thread?.id) throw new Error("Codex thread/start did not return thread.id");
     this.store.update(task.id, { threadId: thread.thread.id });
 
     const prompt = task.role === "lead"
-      ? this.config.lead.instructions + "\n\nYêu cầu:\n" + task.prompt
+      ? "Bạn là Lead điều phối. Chỉ lập kế hoạch, review PeerResult, quyết định accept/rework, gỡ blocker bằng hướng dẫn. " +
+        "Không tự sửa code hoặc đóng vai Final Reviewer.\n" +
+        this.config.lead.instructions + "\n\nYêu cầu:\n" + task.prompt
+      : task.role === "reviewer"
+      ? "Bạn là Final Integration Reviewer ĐỘC LẬP trong fresh Codex Thread. " +
+        "Chỉ đọc và xác minh sản phẩm, test evidence và integration contracts. " +
+        "Không điều phối Peer, không sửa source, không dùng kết luận Lead làm bằng chứng thay cho kiểm tra.\n" +
+        (this.config.reviewer?.instructions ?? "") + "\n\nYêu cầu:\n" + task.prompt
       : "Bạn là Peer Agent cho module " + task.moduleId +
         ". Chỉ thao tác trong worktree hiện tại. Không ghi vào source module gốc; P2 chỉ xuất patch sau duyệt. " +
         "Tuân thủ yêu cầu output và báo cáo test trung thực.\n\nYêu cầu:\n" + task.prompt;
@@ -165,8 +185,8 @@ export class SessionManager implements AgentTaskExecutor {
       const turn = await this.codex.request<TurnResult>("turn/start", {
         threadId: thread.thread.id,
         input: [{ type: "text", text: prompt }],
-        cwd, approvalPolicy: APPROVAL_POLICY,
-        sandboxPolicy: turnSandbox(cwd)
+        cwd, approvalPolicy: policy.approvalPolicy,
+        sandboxPolicy: policy.sandboxPolicy
       });
       if (!turn?.turn?.id) throw new Error("Codex turn/start did not return turn.id");
       if (this.store.get(task.id)?.status === "starting") {
