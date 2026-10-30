@@ -4,6 +4,10 @@ import { cwdForTask } from "./domain.js";
 import { TaskStore } from "./store.js";
 import type { Task, WorkspaceConfig } from "@aacc/contracts";
 
+// Codex app-server validates this wire enum using kebab-case, not "onRequest".
+type ApprovalPolicy = "untrusted" | "on-request" | "granular" | "never";
+const APPROVAL_POLICY: ApprovalPolicy = "on-request";
+
 interface ThreadResult { thread: { id: string } }
 interface TurnResult { turn: { id: string; status: string } }
 interface QueueEntry {
@@ -93,7 +97,7 @@ export class SessionManager implements AgentTaskExecutor {
     await this.codex.start();
     const cwd = cwdForTask(task, this.config);
     const thread = await this.codex.request<ThreadResult>("thread/start", {
-      cwd, approvalPolicy: "onRequest", sandbox: "workspaceWrite"
+      cwd, approvalPolicy: APPROVAL_POLICY, sandbox: "workspaceWrite"
     });
     if (!thread?.thread?.id) throw new Error("Codex thread/start did not return thread.id");
     this.store.update(task.id, { threadId: thread.thread.id });
@@ -127,7 +131,7 @@ export class SessionManager implements AgentTaskExecutor {
       const turn = await this.codex.request<TurnResult>("turn/start", {
         threadId: thread.thread.id,
         input: [{ type: "text", text: prompt }],
-        cwd, approvalPolicy: "onRequest",
+        cwd, approvalPolicy: APPROVAL_POLICY,
         sandboxPolicy: { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false }
       });
       if (!turn?.turn?.id) throw new Error("Codex turn/start did not return turn.id");

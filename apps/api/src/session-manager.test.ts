@@ -25,6 +25,8 @@ test("SessionManager serialize Peer của cùng module, kể cả khi enqueue đ
     'const line=buf.slice(0,i);buf=buf.slice(i+1);if(!line)continue;',
     'const m=JSON.parse(line);',
     'if(m.method==="initialize")console.log(JSON.stringify({id:m.id,result:{}}));',
+    'if((m.method==="thread/start"||m.method==="turn/start") && m.params.approvalPolicy!=="on-request"){',
+    'console.log(JSON.stringify({id:m.id,error:{code:-32602,message:"Invalid approvalPolicy"}}));continue;}',
     'if(m.method==="thread/start"){const threadId="t"+(++id);',
     'console.log(JSON.stringify({id:m.id,result:{thread:{id:threadId}}}));}',
     'if(m.method==="turn/start"){const threadId=m.params.threadId;',

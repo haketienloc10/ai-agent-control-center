@@ -97,7 +97,7 @@ starting → failed
 
 1. Chỉ bind API vào `127.0.0.1` trong MVP; chưa có auth, không đặt public.
 2. `cwd` đến từ config allowlist, không nhận từ request; dùng `realpath` để kiểm tra tồn tại.
-3. Sử dụng `approvalPolicy: onRequest`, `sandboxPolicy: workspaceWrite` với `writableRoots` chỉ gồm workspace hoặc module tương ứng. Không bật `dangerFullAccess`, không tự accept mọi approval.
+3. Sử dụng `approvalPolicy: on-request`, `sandboxPolicy: workspaceWrite` với `writableRoots` chỉ gồm workspace hoặc module tương ứng. Không bật `dangerFullAccess`, không tự accept mọi approval.
 4. Bản foundation chỉ xử lý approval command/file-change thông dụng. Các kiểu server request khác được từ chối an toàn, không tự duyệt.
 5. Không commit `config/workspace.local.json`, `.data/`, credentials hay log cá nhân.
 6. Đặt `cwd` và sandbox policy **không thay thế** kiểm soát quyền host. P1 chỉ giới hạn một Peer cùng lúc/module, **không cách ly Git working tree**; phải dùng workspace tin cậy, lưu thay đổi trước khi chạy. Worktree isolation và kiểm tra symlink là yêu cầu P2 trước khi dùng rộng rãi.
@@ -117,3 +117,9 @@ https://developers.openai.com/codex/app-server
 ## Luồng P1
 
 Đọc `docs/WORKFLOW_P1.md` để xem contracts, dependency, các nhánh review và API. Các Agent được tạo thành **Task có Thread riêng**; Lead review nhận context từ JSON plan và PeerResult. P1 chưa tái sử dụng một Codex Thread duy nhất cho mọi review turn.
+
+## Codex app-server approvalPolicy compatibility
+
+Trong JSON-RPC `thread/start` và `turn/start`, giá trị `approvalPolicy` phải là `"on-request"` theo giao thức mà Codex CLI local đang trả về, **không phải** `"onRequest"` (dễ nhầm với cách viết ở một số ví dụ / layer khác). Unit test mock app-server từ chối giá trị khác để ngăn lỗi tái xuất hiện.
+
+`sandbox: "workspaceWrite"` (thread) và `sandboxPolicy: {type:"workspaceWrite", ...}` (turn) là trường khác, **không** đổi thành `workspace-write` trong JSON-RPC.
