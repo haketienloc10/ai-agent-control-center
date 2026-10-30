@@ -130,8 +130,9 @@ function App() {
         <h1>AI Agent Control Center</h1>
         <p>Lead lập kế hoạch, phân công Peer tại source modules, review và chuyển kết quả cho bạn duyệt.</p>
       </div>
-      <span className="tag">Local · Codex app-server</span>
+      <span className="tag">Local · Codex YOLO</span>
     </header>
+    <p className="error" role="status">YOLO mode: Codex được quyền chạy lệnh và sửa file không cần Runtime Approval, kể cả ngoài module. Chỉ chạy trên máy cá nhân với repo tin cậy; Business Approval cuối workflow vẫn được giữ.</p>
     {error && <aside className="error" role="alert">{error} <button onClick={() => setError("")}>Đóng</button></aside>}
     <section className="columns">
       <article className="panel">
@@ -182,7 +183,7 @@ function App() {
         </form>
       </article>
       <article className="panel">
-        <h2>Runtime Approvals</h2>
+        <h2>Runtime Approvals (bỏ qua khi YOLO)</h2>
         {snapshot.approvals.filter((a) => a.status === "pending").length === 0 &&
           <p className="muted">Không có yêu cầu chờ duyệt.</p>}
         {snapshot.approvals.filter((a) => a.status === "pending").map((approval) =>

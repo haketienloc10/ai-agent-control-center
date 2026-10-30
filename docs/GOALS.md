@@ -11,7 +11,7 @@ AI Agent Control Center thay đổi **cách điều khiển và quan sát** quy 
 1. Quản lý Lead, Peer, Task, Codex Thread/Turn và đường dẫn module trong một giao diện.
 2. Hiển thị trạng thái, lịch sử hoạt động và kết quả theo thời gian thực. Trong YOLO mode không có runtime approval; Business Approval cuối workflow vẫn được giữ.
 3. Định tuyến filesystem: Lead khởi chạy với `cwd` của workspace chung, Peer với `cwd` module được đăng ký; đây không phải rào chắn bảo mật trong YOLO mode.
-4. Giữ quyền kiểm soát của con người với các thao tác nhạy cảm, các quyết định chấp nhận kết quả và merge.
+4. Trong YOLO mode, Runtime Approval được bỏ qua theo lựa chọn của người dùng; người dùng vẫn quyết định chấp nhận kết quả và merge ở cấp Business Approval.
 5. Có lớp `AgentRuntime` tách khỏi nghiệp vụ để sau này hỗ trợ Claude Code khi cần.
 
 ## Success criteria của foundation
