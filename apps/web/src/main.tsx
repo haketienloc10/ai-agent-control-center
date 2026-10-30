@@ -20,13 +20,19 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onR
   workflow: WorkflowRun;
   onDecision: (id: string, decision: "approve" | "reject") => void;
   onRetryReview: (id: string) => void;
-  onManualVerify: (id: string, criterionIds: string[]) => void;
+  onManualVerify: (id: string, criterionIds: string[], contractIds: string[]) => void;
   onRetryIntegration: (id: string) => void;
   onSelect: (id: string) => void;
 }) {
   const [verifiedCriteria, setVerifiedCriteria] = useState<string[]>([]);
-  useEffect(() => { setVerifiedCriteria([]); }, [workflow.integrationReviewCount, workflow.status]);
+  const [verifiedContracts, setVerifiedContracts] = useState<string[]>([]);
+  useEffect(() => {
+    setVerifiedCriteria([]);
+    setVerifiedContracts([]);
+  }, [workflow.integrationReviewCount, workflow.status]);
   const unverifiedChecks = workflow.finalReview?.checks.filter((check) => check.status === "unverified") ?? [];
+  const unverifiedContracts = (workflow.finalReview?.contractChecks ?? [])
+    .filter((check) => check.status === "unverified");
   return <div className="workflow">
     <div className="panel-heading">
       <div><strong>{workflow.title}</strong><p>{workflow.request}</p></div>
@@ -40,9 +46,20 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onR
         <p className="muted">Cách xác minh: {criterion.verification}</p>
       </li>)}</ol>
     </details>}
+    {workflow.plan && <details className="acceptance-details">
+      <summary>Integration Contracts ({(workflow.plan.integrationContracts ?? []).length}) ·
+        {(workflow.plan.orderingOnlyDependencies ?? []).length} phụ thuộc chỉ theo thứ tự</summary>
+      {(workflow.plan.integrationContracts ?? []).length === 0 && <p className="muted">Không có hợp đồng bàn giao xuyên module.</p>}
+      {(workflow.plan.integrationContracts ?? []).map((contract) => <div key={contract.id} className="integration-check">
+        <strong>{contract.producerTaskId} → {contract.consumerTaskId}: {contract.deliverable}</strong>
+        <p className="muted">Cách sử dụng: {contract.consumerUsage}</p>
+        <p className="muted">Cách kiểm tra: {contract.verification}</p>
+      </div>)}
+    </details>}
     {workflow.finalReview && <div className="integration-report">
       <h3>Final Integration Review</h3>
       <p>{workflow.finalReview.summary}</p>
+      <h3>Product Acceptance</h3>
       {workflow.finalReview.checks.map((check) => {
         const criterion = workflow.plan?.acceptanceCriteria.find((c) => c.id === check.criterionId);
         return <div key={check.criterionId} className="integration-check">
@@ -51,6 +68,17 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onR
           </span>
           <strong>{criterion?.description ?? check.criterionId}</strong>
           <p className="muted">{check.evidence}</p>
+        </div>;
+      })}
+      {(workflow.finalReview.contractChecks ?? []).length > 0 && <h3>Integration Acceptance</h3>}
+      {(workflow.finalReview.contractChecks ?? []).map((check) => {
+        const contract = workflow.plan?.integrationContracts?.find((c) => c.id === check.contractId);
+        return <div key={check.contractId} className="integration-check">
+          <span className={"status " + (check.status === "passed" ? "accepted" : check.status === "failed" ? "failed" : "waiting_business_approval")}>
+            {check.status === "passed" ? "Đạt" : check.status === "failed" ? "Chưa đạt" : "Chưa xác minh"}
+          </span>
+          <strong>{contract ? contract.producerTaskId + " → " + contract.consumerTaskId : check.contractId}</strong>
+          <p className="muted">{contract?.deliverable} · {check.evidence}</p>
         </div>;
       })}
       {workflow.finalReview.rework.map((item) => <p key={item.taskId} className="error-text">
@@ -120,10 +148,27 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onR
             </span>
           </label>;
         })}
+        {unverifiedContracts.map((check) => {
+          const contract = workflow.plan?.integrationContracts?.find((c) => c.id === check.contractId);
+          return <label key={check.contractId} className="manual-check">
+            <input type="checkbox" checked={verifiedContracts.includes(check.contractId)}
+              onChange={(event) => setVerifiedContracts((previous) => event.target.checked
+                ? [...previous, check.contractId] : previous.filter((id) => id !== check.contractId))} />
+            <span><strong>Tích hợp: {contract?.producerTaskId} → {contract?.consumerTaskId}</strong>
+              <small>{contract?.verification ?? "Xác minh hợp đồng tích hợp"}</small>
+              <small>{check.evidence}</small>
+            </span>
+          </label>;
+        })}
         <div className="actions">
           <button onClick={() => onDecision(workflow.id, "reject")}>Từ chối kết quả</button>
-          <button className="primary" disabled={unverifiedChecks.some((c) => !verifiedCriteria.includes(c.criterionId))}
-            onClick={() => onManualVerify(workflow.id, unverifiedChecks.map((c) => c.criterionId))}>
+          <button className="primary" disabled={
+            unverifiedChecks.some((c) => !verifiedCriteria.includes(c.criterionId)) ||
+            unverifiedContracts.some((c) => !verifiedContracts.includes(c.contractId))
+          }
+            onClick={() => onManualVerify(workflow.id,
+              unverifiedChecks.map((c) => c.criterionId),
+              unverifiedContracts.map((c) => c.contractId))}>
             Xác nhận đã kiểm tra các tiêu chí
           </button>
         </div>
@@ -225,7 +270,7 @@ function App() {
       {snapshot.workflows.map((workflow) => <WorkflowCard key={workflow.id} workflow={workflow}
         onDecision={(id, decision) => void runAction("/workflows/" + id + "/decision", { decision })}
         onRetryReview={(id) => void runAction("/workflows/" + id + "/retry-review")}
-        onManualVerify={(id, criterionIds) => void runAction("/workflows/" + id + "/confirm-verification", { criterionIds })}
+        onManualVerify={(id, criterionIds, contractIds) => void runAction("/workflows/" + id + "/confirm-verification", { criterionIds, contractIds })}
         onRetryIntegration={(id) => void runAction("/workflows/" + id + "/retry-integration")}
         onSelect={setSelectedTask} />)}
     </section>

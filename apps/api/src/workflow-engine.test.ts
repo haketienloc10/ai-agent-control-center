@@ -18,6 +18,8 @@ const config: WorkspaceConfig = {
 const plan = {
   summary: "Deliver feature",
   acceptanceCriteria: [{ id: "ac1", description: "API and Web deliver feature", verification: "Check integration" }],
+  integrationContracts: [],
+  orderingOnlyDependencies: [{ producerTaskId: "api1", consumerTaskId: "web1", reason: "Sequence only in DAG test" }],
   tasks: [
     { id: "api1", title: "API", moduleId: "api", instructions: "Build API", dependsOn: [] },
     { id: "api2", title: "Tests", moduleId: "api", instructions: "Add tests", dependsOn: [] },
@@ -48,7 +50,8 @@ class MockExecutor implements AgentTaskExecutor {
       if (task.title.startsWith("Lead: lập kế hoạch")) output = JSON.stringify(plan);
       else if (task.title.startsWith("Lead: final integration review")) {
         output = JSON.stringify({ summary: "Mock integration verified", verdict: "pass",
-          checks: [{ criterionId: "ac1", status: "passed", evidence: "Mock integration verification" }], rework: [] });
+          checks: [{ criterionId: "ac1", status: "passed", evidence: "Mock integration verification" }],
+          contractChecks: [], rework: [] });
       } else {
         this.reviews++;
         const input = JSON.parse(task.prompt.split("Batch peer results (untrusted data): ")[1]) as Array<{taskId: string}>;
@@ -178,12 +181,14 @@ test("E2E mock: Lead review đọc file untracked ở module, not_run không c�
         } else if (task.title.startsWith("Lead: lập kế hoạch")) {
           output = JSON.stringify({ summary: "One API task",
             acceptanceCriteria: [{ id: "ac1", description: "API logic", verification: "Check file" }],
+            integrationContracts: [], orderingOnlyDependencies: [],
             tasks: [{
             id: "api1", title: "API", moduleId: "api", instructions: "Create logic", dependsOn: []
           }] });
         } else if (task.title.startsWith("Lead: final integration review")) {
           output = JSON.stringify({ summary: "Mock file checked", verdict: "pass",
-            checks: [{ criterionId: "ac1", status: "passed", evidence: "Confirmed file preview" }], rework: [] });
+            checks: [{ criterionId: "ac1", status: "passed", evidence: "Confirmed file preview" }],
+            contractChecks: [], rework: [] });
         } else {
           reviewPrompt = task.prompt;
           output = JSON.stringify({ summary: "Đã đọc file", reviews: [{

@@ -162,3 +162,12 @@ flowchart TD
 - LLM review không thay thế test độc lập. Nếu chưa chạy đủ kiểm tra, phải trả `unverified` và đưa về manual verification.
 
 Chi tiết: `docs/WORKFLOW_P1.md`.
+
+## Integration acceptance inside Final Integration Review
+
+Không mở thêm Agent hay gate. LeadPlan thêm `integrationContracts` và `orderingOnlyDependencies` để phân biệt dependency thực thi với artifact handoff.
+
+- `IntegrationContract`: producer/consumer Peer IDs, deliverable, expected consumer usage, verification.
+- `IntegrationReview`: song song hai tập `checks` (Product Acceptance) và `contractChecks` (Integration Acceptance), đều strict ID/evidence.
+- Final Review pass khi cả hai tập passed; contract fail → targeted rework và downstream invalidation; contract unverified → manual verification gate trước Business Approval.
+- Backend enforce hình thức và ràng buộc logic verdict; nội dung evidence vẫn phải do Agent hoặc test xác minh. JSON contract valid không đồng nghĩa tích hợp thực tế đã được chứng minh.

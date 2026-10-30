@@ -128,3 +128,34 @@ Lưu ý: Workflow cũ đã `waiting_business_approval` không tự động bị 
 - Lead Planning và Final Integration Review đều có tối đa 2 lần sửa định dạng khi parse/validate thất bại. Chỉ chạy lại **Lead** ở các lượt này.
 - Nếu Final Integration Review vẫn `failed` do sai JSON/schema nhưng mọi Peer vẫn `accepted`, có thể gọi `POST /api/workflows/:id/retry-integration`. Backend giữ nguyên source và PeerResult, chỉ gọi lại Final Integration Reviewer, rồi tiếp tục gate.
 - Các lỗi runtime, vượt rework budget và lỗi khác **không** được phép dùng endpoint này.
+
+## Integration Contract Verification — thuộc Final Integration Review, không phải Agent mới
+
+**Khai báo trong LeadPlan**:
+
+```json
+{
+  "integrationContracts": [
+    {
+      "id": "api-web",
+      "producerTaskId": "api1",
+      "consumerTaskId": "web1",
+      "deliverable": "task-board-api.js exports API",
+      "consumerUsage": "Peer Web imports/uses API functions for add/move/count",
+      "verification": "Inspect actual usage in Web and run integrated operation"
+    }
+  ],
+  "orderingOnlyDependencies": []
+}
+```
+
+- Với **mỗi cạnh `dependsOn` xuyên module**, Lead phải chọn đúng một: `integrationContracts` (handoff thực) hoặc `orderingOnlyDependencies` (chỉ theo thứ tự, kèm `reason`). Không cần tạo contract cho những bước độc lập hoặc dependency nội bộ cùng module.
+- Validator buộc contract có ID duy nhất, `producerTaskId` và `consumerTaskId` tồn tại, khác module, có cạnh `dependsOn` thật, không khai báo trùng/thiếu cạnh; artifact, nơi consumer sử dụng và cách xác minh đều không được trống.
+- Peer prompt chứa hợp đồng liên quan tới nhiệm vụ để producer biết phải bàn giao gì và consumer biết phải tích hợp kết quả nào.
+- Final Integration Reviewer chạy **một lần quality gate** cho cả `acceptanceCriteria` và `integrationContracts`; `contractChecks` phải chứa đúng một `{contractId,status,evidence}` cho mỗi contract.
+- `verdict=pass` chỉ hợp lệ khi **mọi** `checks` và `contractChecks` là `passed`. Nếu một contract failed, verdict phải là `rework` với Peer cần sửa. Nếu contract unverified, verdict phải là `manual_verification` khi không có lỗi failed.
+- UI trình bày contracts, bằng chứng review và checkbox xác minh riêng cho các contract chưa kiểm chứng. Backend bắt buộc tập `criterionIds` **và** `contractIds` đúng, không suy đoán rằng công việc đã hoàn tất.
+- Nếu kế hoạch mới không cần tích hợp giữa module, có thể dùng `integrationContracts: []`; không ép xây API cho demo HTML độc lập. Việc Lead chọn `orderingOnlyDependencies` là lựa chọn kiến trúc và nên được review, không phải bảo đảm kỹ thuật rằng không cần integration.
+- Các workflow cũ đã lưu trước schema này vẫn đọc được; new plan bắt buộc khai báo đủ. Final Reviewer legacy dùng `integrationContracts ?? []`.
+
+**Giới hạn:** Evidence không chứng minh độc lập consumer đã gọi API trừ khi có kiểm thử thật. Các hợp đồng do Lead lập (LLM) có thể thiếu/không phù hợp, nên các yêu cầu lớn vẫn cần con người đánh giá kế hoạch.

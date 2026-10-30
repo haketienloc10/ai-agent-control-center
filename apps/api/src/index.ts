@@ -82,10 +82,13 @@ const server = createServer(async (req, res) => {
     const manualVerification = /^\/api\/workflows\/([^/]+)\/confirm-verification$/.exec(url.pathname);
     if (req.method === "POST" && manualVerification) {
       const body = await readJson(req) as Record<string, unknown>;
-      if (!Array.isArray(body?.criterionIds) || !body.criterionIds.every((id) => typeof id === "string")) {
-        throw new Error("criterionIds phải là danh sách IDs được xác minh thủ công");
+      if (!Array.isArray(body?.criterionIds) || !body.criterionIds.every((id) => typeof id === "string") ||
+          (body.contractIds !== undefined && (!Array.isArray(body.contractIds) ||
+            !body.contractIds.every((id) => typeof id === "string")))) {
+        throw new Error("criterionIds và contractIds phải là danh sách IDs được xác minh thủ công");
       }
-      json(res, 200, workflows.confirmManualVerification(manualVerification[1], body.criterionIds));
+      json(res, 200, workflows.confirmManualVerification(manualVerification[1],
+        body.criterionIds as string[], (body.contractIds ?? []) as string[]));
       return;
     }
     const workflowDecision = /^\/api\/workflows\/([^/]+)\/decision$/.exec(url.pathname);

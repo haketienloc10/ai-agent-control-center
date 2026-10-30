@@ -38,8 +38,26 @@ export interface AcceptanceCriterion {
   description: string;
   verification: string;
 }
+export interface IntegrationContract {
+  id: string;
+  producerTaskId: string;
+  consumerTaskId: string;
+  deliverable: string;
+  consumerUsage: string;
+  verification: string;
+}
+export interface OrderingDependency {
+  producerTaskId: string;
+  consumerTaskId: string;
+  reason: string;
+}
 export interface IntegrationCheck {
   criterionId: string;
+  status: "passed" | "failed" | "unverified";
+  evidence: string;
+}
+export interface ContractCheck {
+  contractId: string;
   status: "passed" | "failed" | "unverified";
   evidence: string;
 }
@@ -47,11 +65,14 @@ export interface IntegrationReview {
   summary: string;
   verdict: "pass" | "rework" | "manual_verification";
   checks: IntegrationCheck[];
+  contractChecks: ContractCheck[];
   rework: Array<{ taskId: string; feedback: string }>;
 }
 export interface LeadPlan {
   summary: string;
   acceptanceCriteria: AcceptanceCriterion[];
+  integrationContracts: IntegrationContract[];
+  orderingOnlyDependencies: OrderingDependency[];
   tasks: Array<{
     id: string; title: string; moduleId: string;
     instructions: string; dependsOn: string[];
@@ -101,7 +122,9 @@ export interface WorkflowRun {
   id: string; title: string; request: string; status: WorkflowStatus;
   plan?: LeadPlan; peers: PeerWork[]; leadTaskIds: string[];
   reviewCount: number; integrationReviewCount?: number;
-  finalReview?: IntegrationReview; manualVerifiedCriterionIds?: string[];
+  finalReview?: IntegrationReview;
+  manualVerifiedCriterionIds?: string[];
+  manualVerifiedContractIds?: string[];
   maxReworks: number; error?: string;
   createdAt: string; updatedAt: string;
 }
