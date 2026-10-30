@@ -16,10 +16,11 @@ async function api<T>(path: string, method: "GET" | "POST" = "GET", body?: unkno
 }
 const empty: Snapshot = { tasks: [], approvals: [], events: [], modules: [], workflows: [], activities: [] };
 
-function WorkflowCard({ workflow, onDecision, onRetryReview, onSelect }: {
+function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onSelect }: {
   workflow: WorkflowRun;
   onDecision: (id: string, decision: "approve" | "reject") => void;
   onRetryReview: (id: string) => void;
+  onManualVerify: (id: string, criterionIds: string[]) => void;
   onSelect: (id: string) => void;
 }) {
   return <div className="workflow">
@@ -27,7 +28,31 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onSelect }: {
       <div><strong>{workflow.title}</strong><p>{workflow.request}</p></div>
       <span className={"status " + workflow.status}>{workflow.status.replaceAll("_", " ")}</span>
     </div>
-    <p className="muted">Lead reviews: {workflow.reviewCount} · Max reworks / Peer: {workflow.maxReworks}</p>
+    <p className="muted">Lead reviews: {workflow.reviewCount} · Final integration reviews: {workflow.integrationReviewCount ?? 0} · Max reworks / Peer: {workflow.maxReworks}</p>
+    {workflow.plan?.acceptanceCriteria && <details className="acceptance-details">
+      <summary>Acceptance Criteria ({workflow.plan.acceptanceCriteria.length})</summary>
+      <ol>{workflow.plan.acceptanceCriteria.map((criterion) => <li key={criterion.id}>
+        <strong>{criterion.description}</strong>
+        <p className="muted">Cách xác minh: {criterion.verification}</p>
+      </li>)}</ol>
+    </details>}
+    {workflow.finalReview && <div className="integration-report">
+      <h3>Final Integration Review</h3>
+      <p>{workflow.finalReview.summary}</p>
+      {workflow.finalReview.checks.map((check) => {
+        const criterion = workflow.plan?.acceptanceCriteria.find((c) => c.id === check.criterionId);
+        return <div key={check.criterionId} className="integration-check">
+          <span className={"status " + (check.status === "passed" ? "accepted" : check.status === "failed" ? "failed" : "waiting_business_approval")}>
+            {check.status === "passed" ? "Đạt" : check.status === "failed" ? "Chưa đạt" : "Chưa xác minh"}
+          </span>
+          <strong>{criterion?.description ?? check.criterionId}</strong>
+          <p className="muted">{check.evidence}</p>
+        </div>;
+      })}
+      {workflow.finalReview.rework.map((item) => <p key={item.taskId} className="error-text">
+        Cần sửa {item.taskId}: {item.feedback}
+      </p>)}
+    </div>}
     {workflow.plan && <p><strong>Lead Plan:</strong> {workflow.plan.summary}</p>}
     <div className="peers">{workflow.peers.map((peer) => <div key={peer.id} className="peer">
       <div className="panel-heading">
@@ -67,6 +92,18 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onSelect }: {
         <button className="primary" onClick={() => onRetryReview(workflow.id)}>
           Thử lại Lead Review (không chạy lại Peer)
         </button>
+      </div>}
+    {workflow.status === "waiting_manual_verification" && workflow.finalReview &&
+      <div className="manual-verification">
+        <p><strong>Cần bạn kiểm tra thủ công:</strong> các tiêu chí chưa được xác minh bằng bằng chứng thực tế.</p>
+        <p className="muted">Chỉ xác nhận sau khi bạn tự thử nghiệm các chức năng liên quan. Đây không phải xác nhận test tự động đã chạy.</p>
+        <div className="actions">
+          <button onClick={() => onDecision(workflow.id, "reject")}>Từ chối kết quả</button>
+          <button className="primary" onClick={() => onManualVerify(workflow.id,
+            workflow.finalReview!.checks.filter((c) => c.status === "unverified").map((c) => c.criterionId))}>
+            Tôi đã kiểm tra các mục chưa xác minh
+          </button>
+        </div>
       </div>}
     {workflow.status === "waiting_business_approval" &&
       <div className="actions">
@@ -165,6 +202,7 @@ function App() {
       {snapshot.workflows.map((workflow) => <WorkflowCard key={workflow.id} workflow={workflow}
         onDecision={(id, decision) => void runAction("/workflows/" + id + "/decision", { decision })}
         onRetryReview={(id) => void runAction("/workflows/" + id + "/retry-review")}
+        onManualVerify={(id, criterionIds) => void runAction("/workflows/" + id + "/confirm-verification", { criterionIds })}
         onSelect={setSelectedTask} />)}
     </section>
     <section className="columns">

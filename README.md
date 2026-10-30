@@ -65,3 +65,9 @@ Nhánh này dùng `approvalPolicy: "never"` và `sandbox: "danger-full-access"` 
 ## Nhật ký hoạt động dễ đọc
 
 Dashboard mặc định hiển thị **Activity Timeline** (Lead/Peer, thời gian, hành động, trạng thái, nội dung). Token stream `item/agentMessage/delta` được gom theo `itemId` thành một message; `commandExecution`, `fileChange` và các sự kiện Workflow có nhãn dễ hiểu. Chế độ **Kỹ thuật** vẫn cho xem event JSON khi debug; raw token delta không còn được lưu từng mẩu. Backend lưu timeline trong `.data/state.json`, có migration từ event journal cũ và giới hạn lịch sử. Streaming được flush định kỳ 250ms để tránh ghi đĩa/liên tục gọi SSE từng token.
+
+## Final Integration Review + Acceptance Criteria
+
+Sau khi tất cả Peer được Lead accept, Workflow **chưa** tự chuyển sang Business Approval: Lead chạy Final Integration Review, đối chiếu `acceptanceCriteria` của kế hoạch, kiểm tra việc kết nối giữa source modules và kết quả test/evidence. Final reviewer trả `pass`, `rework` hoặc `manual_verification`. Khi `rework`, Backend dispatch Peer được chỉ định và invalidate các Peer phụ thuộc upstream đã thay đổi. Khi `manual_verification`, UI hiển thị từng tiêu chí chưa được xác minh để người dùng tự kiểm tra và xác nhận, trước khi duyệt kết quả cuối.
+
+Không có claim rằng test/browser đã được chạy nếu không có bằng chứng; review của LLM không thay thế E2E tự động. Xem `docs/WORKFLOW_P1.md`.

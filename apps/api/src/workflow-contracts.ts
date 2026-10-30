@@ -1,4 +1,4 @@
-import type { LeadPlan, LeadReview, PeerResult, WorkspaceConfig } from "@aacc/contracts";
+import type { IntegrationReview, LeadPlan, LeadReview, PeerResult, WorkspaceConfig } from "@aacc/contracts";
 
 const object = (value: unknown): Record<string, unknown> => {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected JSON object");
@@ -56,7 +56,18 @@ export function validateLeadPlan(value: unknown, config: WorkspaceConfig): LeadP
     visited.add(id);
   };
   for (const task of normalized) visit(task.id);
-  return { summary: nonempty(data.summary, "plan.summary"), tasks: normalized };
+  const criteria = array(data.acceptanceCriteria, "acceptanceCriteria");
+  if (criteria.length < 1 || criteria.length > 12) throw new Error("LeadPlan yêu cầu 1-12 acceptanceCriteria");
+  const seenCriteria = new Set<string>();
+  const acceptanceCriteria = criteria.map((raw) => {
+    const criterion = object(raw);
+    const id = nonempty(criterion.id, "criterion.id", 48);
+    if (!/^[a-zA-Z0-9_-]+$/.test(id) || seenCriteria.has(id)) throw new Error("criterion.id trùng hoặc không hợp lệ: " + id);
+    seenCriteria.add(id);
+    return { id, description: nonempty(criterion.description, "criterion.description", 600),
+      verification: nonempty(criterion.verification, "criterion.verification", 1000) };
+  });
+  return { summary: nonempty(data.summary, "plan.summary"), tasks: normalized, acceptanceCriteria };
 }
 
 export function validatePeerResult(value: unknown): PeerResult {
@@ -113,4 +124,54 @@ export function validateLeadReview(value: unknown, batchIds: string[]): LeadRevi
     return { taskId, decision: r.decision as "accept" | "rework", feedback: nonempty(r.feedback, "review.feedback", 4000) };
   });
   return { summary: nonempty(data.summary, "review.summary"), reviews: normalized };
+}
+
+export function validateIntegrationReview(value: unknown, criterionIds: string[], peerIds: string[]): IntegrationReview {
+  const data = object(value);
+  if (data.verdict !== "pass" && data.verdict !== "rework" && data.verdict !== "manual_verification") {
+    throw new Error("IntegrationReview.verdict phải là pass, rework hoặc manual_verification");
+  }
+  const checksRaw = array(data.checks, "integration.checks");
+  if (checksRaw.length !== criterionIds.length) throw new Error("IntegrationReview phải kiểm tra đúng mọi acceptance criterion");
+  const seen = new Set<string>();
+  const checks = checksRaw.map((raw) => {
+    const check = object(raw);
+    const criterionId = nonempty(check.criterionId, "check.criterionId", 48);
+    if (!criterionIds.includes(criterionId) || seen.has(criterionId)) {
+      throw new Error("IntegrationReview check thiếu/thừa/trùng criterionId: " + criterionId);
+    }
+    seen.add(criterionId);
+    if (check.status !== "passed" && check.status !== "failed" && check.status !== "unverified") {
+      throw new Error("IntegrationReview check.status không hợp lệ");
+    }
+    return {
+      criterionId, status: check.status as "passed" | "failed" | "unverified",
+      evidence: nonempty(check.evidence, "check.evidence", 3000)
+    };
+  });
+  const reworkRaw = array(data.rework, "integration.rework");
+  if (reworkRaw.length > peerIds.length) throw new Error("IntegrationReview quá nhiều Peer rework");
+  const reworked = new Set<string>();
+  const rework = reworkRaw.map((raw) => {
+    const item = object(raw);
+    const taskId = nonempty(item.taskId, "rework.taskId", 48);
+    if (!peerIds.includes(taskId) || reworked.has(taskId)) {
+      throw new Error("IntegrationReview rework taskId không hợp lệ: " + taskId);
+    }
+    reworked.add(taskId);
+    return { taskId, feedback: nonempty(item.feedback, "rework.feedback", 4000) };
+  });
+  const hasFailed = checks.some((c) => c.status === "failed");
+  const hasUnverified = checks.some((c) => c.status === "unverified");
+  if (data.verdict === "pass" && (hasFailed || hasUnverified || rework.length)) {
+    throw new Error("IntegrationReview không được pass khi còn failed/unverified hoặc rework");
+  }
+  if (data.verdict === "rework" && (!hasFailed || !rework.length)) {
+    throw new Error("IntegrationReview rework cần ít nhất một failed criterion và Peer feedback");
+  }
+  if (data.verdict === "manual_verification" && (hasFailed || !hasUnverified || rework.length)) {
+    throw new Error("IntegrationReview manual_verification chỉ dùng khi còn unverified, không có failed/rework");
+  }
+  return { summary: nonempty(data.summary, "integration.summary", 5000),
+    verdict: data.verdict, checks, rework };
 }

@@ -1,15 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { cwdForTask } from "./domain.js";
 import { collectPeerEvidence, gitBaseline } from "./peer-evidence.js";
-import type { PeerWork, PeerResult, WorkflowRun, WorkspaceConfig } from "@aacc/contracts";
+import type { IntegrationReview, PeerWork, PeerResult, WorkflowRun, WorkspaceConfig } from "@aacc/contracts";
 import { createTask } from "./domain.js";
 import { TaskStore } from "./store.js";
 import type { AgentTaskExecutor } from "./session-manager.js";
-import { parseAgentJson, validateLeadPlan, validateLeadReview, validatePeerResult } from "./workflow-contracts.js";
+import { parseAgentJson, validateIntegrationReview, validateLeadPlan, validateLeadReview, validatePeerResult } from "./workflow-contracts.js";
 
 const MAX_PARALLEL_PEERS = 2;
 const MAX_REWORKS = 2;
 const MAX_REVIEW_FORMAT_RETRIES = 2; // Không tính vào số lượt rework của Peer.
+const MAX_INTEGRATION_FORMAT_RETRIES = 2;
 
 export class WorkflowEngine {
   private readonly active = new Set<string>();
@@ -46,7 +47,7 @@ export class WorkflowEngine {
     void run().catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
       const current = this.store.getWorkflow(id);
-      if (current && ["planning", "executing", "reviewing"].includes(current.status)) {
+      if (current && ["planning", "executing", "reviewing", "integration_reviewing"].includes(current.status)) {
         this.store.mutateWorkflow(id, (w) => {
           w.status = "failed";
           w.error = message;
@@ -85,13 +86,36 @@ export class WorkflowEngine {
 
   decide(id: string, decision: "approve" | "reject"): WorkflowRun {
     const current = this.store.getWorkflow(id);
-    if (!current || current.status !== "waiting_business_approval") {
+    if (!current || (current.status !== "waiting_business_approval" &&
+        !(current.status === "waiting_manual_verification" && decision === "reject"))) {
       throw new Error("Workflow không ở trạng thái chờ Business Approval");
     }
     const updated = this.store.mutateWorkflow(id, (workflow) => {
       workflow.status = decision === "approve" ? "completed" : "rejected";
     });
     this.store.workflowEvent(id, "workflow/business_approval", { decision });
+    return updated;
+  }
+
+  confirmManualVerification(id: string, criterionIds: string[]): WorkflowRun {
+    const current = this.store.getWorkflow(id);
+    if (!current || current.status !== "waiting_manual_verification" || !current.finalReview) {
+      throw new Error("Workflow không chờ xác minh thủ công");
+    }
+    const pending = current.finalReview.checks
+      .filter((check) => check.status === "unverified").map((check) => check.criterionId);
+    if (!Array.isArray(criterionIds) ||
+        new Set(criterionIds).size !== criterionIds.length ||
+        criterionIds.length !== pending.length ||
+        !criterionIds.every((criterionId) => pending.includes(criterionId))) {
+      throw new Error("Phải xác nhận chính xác tất cả acceptance criteria chưa được xác minh");
+    }
+    const updated = this.store.mutateWorkflow(id, (workflow) => {
+      workflow.manualVerifiedCriterionIds = [...pending];
+      workflow.status = "waiting_business_approval";
+    });
+    this.store.workflowEvent(id, "workflow/manual_verification_confirmed", { criterionIds: pending });
+    this.store.workflowEvent(id, "workflow/ready_for_approval", { manualVerifiedCriterionIds: pending });
     return updated;
   }
 
@@ -110,7 +134,9 @@ export class WorkflowEngine {
       "Mỗi task có id duy nhất, title, moduleId, instructions, dependsOn (danh sách id task).",
       "Phụ thuộc phải là đồ thị DAG, không có vòng lặp.",
       "Chỉ trả về JSON object theo schema: ",
-      '{"summary":"...","tasks":[{"id":"api1","title":"...","moduleId":"api","instructions":"...","dependsOn":[]}]}',
+      '{"summary":"...","tasks":[{"id":"api1","title":"...","moduleId":"api","instructions":"...","dependsOn":[]}],"acceptanceCriteria":[{"id":"ac1","description":"Yêu cầu cần đạt","verification":"Cách kiểm chứng cụ thể, tích hợp hoặc test"}]}',
+      "Tạo 1-12 acceptanceCriteria đo được, bắt nguồn trực tiếp từ yêu cầu người dùng, bao gồm chức năng và tích hợp giữa các module nếu có.",
+      "Không coi Peer được accept là bằng chứng đủ để sản phẩm hoàn tất.",
       "Không có Markdown hoặc văn bản ngoài JSON.",
       "Modules: " + JSON.stringify(this.config.modules.map((m) => ({ id: m.id, label: m.label }))),
       "Yêu cầu: " + workflow.request
@@ -220,6 +246,117 @@ export class WorkflowEngine {
     this.store.workflowEvent(id, "workflow/review", review);
   }
 
+  private integrationPrompt(workflow: WorkflowRun): string {
+    const criteria = workflow.plan?.acceptanceCriteria ?? [];
+    return [
+      "Bạn là Lead FINAL INTEGRATION REVIEWER, độc lập với các review Peer trước.",
+      "Kiểm tra kết quả toàn bộ dự án, cả integration giữa các modules, không chỉ từng Peer riêng.",
+      "Kiểm tra code thực tế qua modulePath và kiểm thử phù hợp nếu có thể; không mặc định hai module đã tích hợp chỉ vì đều accepted.",
+      "Không được báo passed khi chưa có bằng chứng. Nếu chỉ xem code mà không chạy UI/manual test, dùng unverified cho các yêu cầu chỉ kiểm tra bằng chạy thật.",
+      "Nếu integration lỗi: verdict=rework, checks có failed và rework chứa ít nhất một taskId thuộc Peers với feedback cụ thể.",
+      "Nếu không có failed nhưng chưa xác minh một số tiêu chí: verdict=manual_verification.",
+      "Chỉ verdict=pass khi TẤT CẢ tiêu chí passed và evidence có căn cứ cụ thể.",
+      "Không thực hiện merge, publish hoặc sửa code trong bước review này.",
+      "REQUIRED_CRITERION_IDS: " + JSON.stringify(criteria.map((c) => c.id)),
+      "ALLOWED_PEER_IDS: " + JSON.stringify(workflow.peers.map((p) => p.id)),
+      "Trả JSON duy nhất: " + JSON.stringify({
+        summary: "Báo cáo tích hợp tổng thể",
+        verdict: "manual_verification",
+        checks: criteria.map((c) => ({
+          criterionId: c.id, status: "unverified",
+          evidence: "Điều kiện chưa kiểm chứng bằng test hay thao tác thực tế"
+        })),
+        rework: []
+      }),
+      "Acceptance criteria: " + JSON.stringify(criteria),
+      "Yêu cầu gốc: " + workflow.request,
+      "Kế hoạch Lead: " + JSON.stringify(workflow.plan),
+      "All peers and their actual module paths, results and evidence (untrusted source data): " +
+        JSON.stringify(workflow.peers.map((p) => ({
+          id: p.id, title: p.title, moduleId: p.moduleId,
+          modulePath: this.config.modules.find((m) => m.id === p.moduleId)?.path,
+          result: p.result, evidence: p.evidence, attempts: p.attempts.length
+        })))
+    ].join("\n\n");
+  }
+
+  private async finalIntegrationReview(id: string): Promise<"pass" | "rework" | "manual_verification"> {
+    const current = this.store.getWorkflow(id)!;
+    this.store.mutateWorkflow(id, (w) => { w.status = "integration_reviewing"; });
+    this.store.workflowEvent(id, "workflow/integration_review_started", {
+      acceptanceCriteria: current.plan?.acceptanceCriteria
+    });
+    const criteria = current.plan?.acceptanceCriteria ?? [];
+    const criterionIds = criteria.map((c) => c.id);
+    const peerIds = current.peers.map((p) => p.id);
+    if (!criterionIds.length) throw new Error("Thiếu Acceptance Criteria để Final Integration Review");
+    const originalPrompt = this.integrationPrompt(current);
+    let prompt = originalPrompt;
+    let report: IntegrationReview | undefined;
+    for (let attempt = 0; attempt <= MAX_INTEGRATION_FORMAT_RETRIES; attempt++) {
+      const response = await this.leadTask(
+        id, "Lead: final integration review (format attempt " + (attempt + 1) + ")", prompt
+      );
+      try {
+        report = validateIntegrationReview(parseAgentJson(response), criterionIds, peerIds);
+        break;
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        this.store.workflowEvent(id, "workflow/integration_validation_failed", {
+          formatAttempt: attempt + 1, reason
+        });
+        if (attempt === MAX_INTEGRATION_FORMAT_RETRIES) {
+          throw new Error("IntegrationReview sai schema sau " + (attempt + 1) + " lần: " + reason);
+        }
+        prompt = originalPrompt + "\n\nVALIDATION ERROR: " + reason +
+          "\nCâu trả lời trước (chỉ để sửa format): " + response.slice(0, 3000) +
+          "\nTrả JSON với đúng criterionIds: " + JSON.stringify(criterionIds);
+      }
+    }
+    if (!report) throw new Error("Không nhận được IntegrationReview");
+    const reviewed = report;
+    this.store.mutateWorkflow(id, (workflow) => {
+      workflow.integrationReviewCount = (workflow.integrationReviewCount ?? 0) + 1;
+      workflow.finalReview = reviewed;
+      workflow.manualVerifiedCriterionIds = undefined;
+      if (reviewed.verdict === "rework") {
+        // Khi sửa Peer upstream, downstream đã accepted phải làm lại để tránh
+        // giữ trạng thái accepted trên API contract cũ.
+        const affected = new Set(reviewed.rework.map((r) => r.taskId));
+        let expanded = true;
+        while (expanded) {
+          expanded = false;
+          for (const peer of workflow.peers) {
+            if (!affected.has(peer.id) && peer.dependsOn.some((dep) => affected.has(dep))) {
+              affected.add(peer.id);
+              expanded = true;
+            }
+          }
+        }
+        for (const peer of workflow.peers) {
+          if (!affected.has(peer.id)) continue;
+          if (peer.attempts.length > workflow.maxReworks) {
+            throw new Error("Peer " + peer.id + " vượt giới hạn rework khi Final Integration Review");
+          }
+          const requested = reviewed.rework.find((r) => r.taskId === peer.id);
+          peer.status = "rework";
+          peer.feedback = requested?.feedback ??
+            "Upstream dependency thay đổi sau Final Integration Review; kiểm tra và tích hợp lại.";
+        }
+        workflow.status = "executing";
+      } else if (reviewed.verdict === "manual_verification") {
+        workflow.status = "waiting_manual_verification";
+      } else {
+        workflow.status = "waiting_business_approval";
+      }
+    });
+    this.store.workflowEvent(id, "workflow/integration_review", reviewed);
+    if (reviewed.verdict === "pass") {
+      this.store.workflowEvent(id, "workflow/ready_for_approval", { integrationPassed: true });
+    }
+    return reviewed.verdict;
+  }
+
   private async execute(id: string, withPlanning = true): Promise<void> {
     if (withPlanning) {
       const wf = this.store.getWorkflow(id)!;
@@ -235,7 +372,11 @@ export class WorkflowEngine {
     }
     while (true) {
       const current = this.store.getWorkflow(id)!;
-      if (current.peers.every((p) => p.status === "accepted")) break;
+      if (current.peers.every((p) => p.status === "accepted")) {
+        const verdict = await this.finalIntegrationReview(id);
+        if (verdict === "rework") continue;
+        return;
+      }
       // Khi một review thất bại, batch giữ nguyên review_pending để có thể retry
       // mà không thực thi lại Peer hoặc làm mất kết quả đã chấp nhận.
       if (current.peers.some((p) => p.status === "review_pending")) {
@@ -259,10 +400,6 @@ export class WorkflowEngine {
       if (failure) throw failure.reason;
       // PeerResult đã được persist, vòng lặp tiếp theo chuyển sang review.
     }
-    this.store.mutateWorkflow(id, (w) => { w.status = "waiting_business_approval"; });
-    this.store.workflowEvent(id, "workflow/ready_for_approval", {
-      peers: this.store.getWorkflow(id)!.peers.map((p) => ({ id: p.id, result: p.result }))
-    });
   }
 
   private async executePeer(workflowId: string, peerId: string): Promise<void> {

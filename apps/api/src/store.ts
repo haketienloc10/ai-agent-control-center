@@ -47,7 +47,7 @@ export class TaskStore extends EventEmitter {
       if (approval.status === "pending") approval.status = "expired";
     }
     for (const workflow of this.state.workflows) {
-      if (["planning", "executing", "reviewing"].includes(workflow.status)) {
+      if (["planning", "executing", "reviewing", "integration_reviewing"].includes(workflow.status)) {
         workflow.status = "interrupted";
         workflow.error = "Backend restarted; do not auto-dispatch without reconciliation";
         workflow.updatedAt = new Date().toISOString();

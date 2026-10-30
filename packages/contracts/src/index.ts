@@ -33,8 +33,25 @@ export interface ActivityEntry {
   createdAt: string;
   updatedAt: string;
 }
+export interface AcceptanceCriterion {
+  id: string;
+  description: string;
+  verification: string;
+}
+export interface IntegrationCheck {
+  criterionId: string;
+  status: "passed" | "failed" | "unverified";
+  evidence: string;
+}
+export interface IntegrationReview {
+  summary: string;
+  verdict: "pass" | "rework" | "manual_verification";
+  checks: IntegrationCheck[];
+  rework: Array<{ taskId: string; feedback: string }>;
+}
 export interface LeadPlan {
   summary: string;
+  acceptanceCriteria: AcceptanceCriterion[];
   tasks: Array<{
     id: string; title: string; moduleId: string;
     instructions: string; dependsOn: string[];
@@ -77,12 +94,15 @@ export interface PeerWork {
   attempts: PeerAttempt[]; result?: PeerResult; evidence?: PeerEvidence; feedback?: string;
 }
 export type WorkflowStatus =
-  | "planning" | "executing" | "reviewing" | "waiting_business_approval"
+  | "planning" | "executing" | "reviewing" | "integration_reviewing"
+  | "waiting_manual_verification" | "waiting_business_approval"
   | "completed" | "rejected" | "failed" | "interrupted";
 export interface WorkflowRun {
   id: string; title: string; request: string; status: WorkflowStatus;
   plan?: LeadPlan; peers: PeerWork[]; leadTaskIds: string[];
-  reviewCount: number; maxReworks: number; error?: string;
+  reviewCount: number; integrationReviewCount?: number;
+  finalReview?: IntegrationReview; manualVerifiedCriterionIds?: string[];
+  maxReworks: number; error?: string;
   createdAt: string; updatedAt: string;
 }
 export interface Snapshot {

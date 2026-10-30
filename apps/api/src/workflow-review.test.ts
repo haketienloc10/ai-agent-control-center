@@ -53,6 +53,7 @@ async function setup() {
       if (task.title.startsWith("Lead: lập kế hoạch")) {
         output = JSON.stringify({
           summary: "API then Web",
+          acceptanceCriteria: [{ id: "ac1", description: "Web integrates API", verification: "Run integrated test" }],
           tasks: [
             { id: "api1", title: "API", moduleId: "api", instructions: "Build API", dependsOn: [] },
             { id: "web1", title: "Web", moduleId: "web", instructions: "Build UI", dependsOn: ["api1"] }
@@ -62,6 +63,9 @@ async function setup() {
         peerRuns.push(task.moduleId!);
         output = JSON.stringify({ summary: "Made changes", changedFiles: [],
           tests: [{ status: "not_run" }], risks: [] });
+      } else if (task.title.startsWith("Lead: final integration review")) {
+        output = JSON.stringify({ summary: "Mock integration verified", verdict: "pass",
+          checks: [{ criterionId: "ac1", status: "passed", evidence: "Mock verification" }], rework: [] });
       } else {
         reviewPrompts.push(task.prompt);
         const batchMatch = /BATCH_TASK_IDS \(phải giữ nguyên từng ID\): (\[[^\n]*\])/.exec(task.prompt);
@@ -142,7 +146,9 @@ test("không thể dùng retryReview để bỏ qua lỗi thực thi hoặc work
   try {
     ctx.store.addWorkflow({
       id: "bad", title: "Bad", request: "x", status: "failed", error: "Codex RPC timeout",
-      plan: { summary: "Plan", tasks: [] },
+      plan: { summary: "Plan", tasks: [], acceptanceCriteria: [
+        { id: "ac1", description: "Test", verification: "Manual" }
+      ] },
       peers: [{ id: "web1", moduleId: "web", title: "Web", instructions: "x", dependsOn: [],
         status: "review_pending", attempts: [{ taskId: "t", iteration: 1 }],
         result: { summary: "x", tests: [], changedFiles: [], risks: [] } }],
