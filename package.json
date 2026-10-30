@@ -1,0 +1,19 @@
+{
+  "name": "ai-agent-control-center",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev:api": "npm run dev -w @aacc/api",
+    "dev:web": "npm run dev -w @aacc/web",
+    "typecheck": "npm run typecheck --workspaces",
+    "test": "npm run test -w @aacc/api",
+    "build": "npm run build -w @aacc/web"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "@types/node": "^22.15.0",
+    "tsx": "^4.20.6"
+  }
+}

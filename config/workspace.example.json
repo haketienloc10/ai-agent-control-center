@@ -1,0 +1,18 @@
+{
+  "lead": {
+    "cwd": "/ABSOLUTE/PATH/TO/agent-workspace",
+    "instructions": "Bạn là Lead Agent. Phân tích nhiệm vụ, phân công Peer theo module, nhận kết quả và review. Không tự ý merge."
+  },
+  "modules": [
+    {
+      "id": "api",
+      "label": "Module API",
+      "path": "/ABSOLUTE/PATH/TO/module-api"
+    },
+    {
+      "id": "web",
+      "label": "Module Web",
+      "path": "/ABSOLUTE/PATH/TO/module-web"
+    }
+  ]
+}
