@@ -83,3 +83,21 @@ footer { color: #8191a2; font-size: 12px; margin-top: 18px; }
 .raw-entry pre { max-height: 260px; }
 .activity-empty { padding: 32px 15px; text-align: center; border: 1px dashed #3b4d62; border-radius: 10px; }
 .activity-empty p { margin: 6px 0 0; }
+
+.acceptance-details { margin: 10px 0; border: 1px solid #344254; border-radius: 9px; padding: 12px; font-size: 13px; }
+.acceptance-details summary { cursor: pointer; color: #a8ceff; }
+.acceptance-details li { margin: 12px 0; }
+.acceptance-details li p { margin: 5px 0; }
+.integration-report { padding: 14px; border: 1px solid #37526d; border-radius: 10px; background: #12202f; margin: 12px 0; }
+.integration-report h3 { font-size: 15px; margin: 0; }
+.integration-check { padding: 12px 0; border-top: 1px solid #344254; display: flex; gap: 9px; flex-wrap: wrap; align-items: center; font-size: 13px; }
+.integration-check p { width: 100%; margin: 0; }
+.manual-verification { border: 1px solid #7c602c; border-radius: 9px; padding: 13px; background: #2c271e; }
+.manual-verification .actions { flex-wrap: wrap; }
+
+.status.integration_reviewing { background: #335483; }
+.status.waiting_manual_verification { background: #775324; }
+.manual-check { display: flex; align-items: flex-start; gap: 10px; margin: 9px 0; padding: 10px; border: 1px solid #65532d; border-radius: 8px; cursor: pointer; }
+.manual-check input { width: 18px; height: 18px; flex: 0 0 18px; margin-top: 2px; }
+.manual-check span { display: grid; gap: 5px; }
+.manual-verification .primary:disabled { opacity: .48; cursor: not-allowed; }

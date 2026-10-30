@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseAgentJson, validateLeadPlan, validateLeadReview, validatePeerResult } from "./workflow-contracts.js";
+import { parseAgentJson, validateIntegrationReview, validateLeadPlan, validateLeadReview, validatePeerResult } from "./workflow-contracts.js";
 import type { WorkspaceConfig } from "@aacc/contracts";
 const config: WorkspaceConfig = {
   lead: { cwd: "/tmp/lead", instructions: "" },
@@ -8,6 +8,7 @@ const config: WorkspaceConfig = {
 };
 const plan = {
   summary: "Triển khai hai module",
+  acceptanceCriteria: [{ id: "ac1", description: "UI kết nối API", verification: "Chạy thử demo" }],
   tasks: [
     { id: "api1", moduleId: "api", title: "API", instructions: "Build API", dependsOn: [] },
     { id: "web1", moduleId: "web", title: "Web", instructions: "Build UI", dependsOn: ["api1"] }
@@ -51,4 +52,33 @@ test("not_run cho phép không có command, nhưng passed/failed bắt buộc co
   assert.equal(validatePeerResult({
     summary: "Đã thử", changedFiles: [], tests: [{ status: "passed", command: "npm test" }], risks: []
   }).tests[0].command, "npm test");
+});
+
+test("Acceptance Criteria bắt buộc, không chấp nhận IDs trùng", () => {
+  assert.throws(() => validateLeadPlan({ ...plan, acceptanceCriteria: [] }, config), /acceptanceCriteria/);
+  assert.throws(() => validateLeadPlan({ ...plan, acceptanceCriteria: [
+    plan.acceptanceCriteria[0], plan.acceptanceCriteria[0]
+  ] }, config), /criterion.id/);
+});
+test("Final Integration Review chặn pass khi unverified/failed, bắt buộc evidence và Peer IDs hợp lệ", () => {
+  const criterionIds = ["ac1", "ac2"];
+  const peerIds = ["api1", "web1"];
+  const checks = [
+    { criterionId: "ac1", status: "passed", evidence: "Read API source" },
+    { criterionId: "ac2", status: "unverified", evidence: "Chưa chạy browser" }
+  ];
+  assert.throws(() => validateIntegrationReview({
+    summary: "Tạm", verdict: "pass", checks, rework: []
+  }, criterionIds, peerIds), /không được pass/);
+  assert.equal(validateIntegrationReview({
+    summary: "Manual", verdict: "manual_verification", checks, rework: []
+  }, criterionIds, peerIds).verdict, "manual_verification");
+  assert.throws(() => validateIntegrationReview({
+    summary: "Sai", verdict: "manual_verification", checks: [checks[0], checks[0]], rework: []
+  }, criterionIds, peerIds), /criterionId/);
+  assert.throws(() => validateIntegrationReview({
+    summary: "Sai", verdict: "rework", checks: [
+      checks[0], { ...checks[1], status: "failed" }
+    ], rework: [{ taskId: "bad", feedback: "Repair" }]
+  }, criterionIds, peerIds), /taskId/);
 });

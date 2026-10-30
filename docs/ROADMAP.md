@@ -18,6 +18,8 @@
 - [x] Handoff `PeerResult` có changedFiles/tests/risks kèm `PeerEvidence` (Git status/diff preview, command events, file path check) sang Lead review. Chưa có independent test verification.
 - [x] Lead review → accept/rework với tối đa 2 reworks/Peer, Business Approval trên UI.
 - [x] Mock executor + tests kiểm tra dependency/rework/concurrency/restart.
+- [x] Final Integration Review + Acceptance Criteria; rework Peer/downstream và manual-verification gate.
+- [x] Mock E2E tests cho integration mismatch, rework dependency, manual confirmation và giới hạn rework.
 - [ ] Live integration E2E với Codex app-server đã đăng nhập ở máy local.
 
 **Nghiệm thu:** một yêu cầu Lead tạo ít nhất hai PeerTask, retry một Peer riêng và xuất báo cáo tổng hợp.

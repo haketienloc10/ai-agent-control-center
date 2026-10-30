@@ -110,3 +110,21 @@ P1 sử dụng `approvalPolicy: "never"` và `danger-full-access` ở cả Threa
 - Khi Lead trả thiếu/thừa/sai JSON, backend chạy lại **Lead review** tối đa 2 lần cùng lỗi validator; `Peer` không chạy lại do lỗi format.
 - Nếu hết retry, Workflow đánh dấu `failed` nhưng PeerResults vẫn giữ `review_pending`. Dashboard cho phép nhấn **Thử lại Lead Review** (`POST /api/workflows/:id/retry-review`), chỉ khi workflow failed và có PeerResult chờ review. Không chạy lại planning hoặc Peer.
 - Rework của Peer (giới hạn `maxReworks`) khác với retry sửa schema của Lead; Lead format retry không làm tăng số lần Peer chạy.
+
+## Final Integration Review + Acceptance Criteria
+
+1. LeadPlan phải có `acceptanceCriteria` (1-12 tiêu chí, mỗi tiêu chí: `id,description,verification`) dựa trên yêu cầu gốc; không yêu cầu người dùng nhập schema.
+2. Sau khi từng Peer được chấp nhận, Backend gọi Lead Final Integration Reviewer với yêu cầu gốc, các tiêu chí, modulePath, kết quả, file preview, Git/command evidence của **mọi** Peer.
+3. `IntegrationReview` phải quyết định từng criterion ID đúng một lần, với `status=passed|failed|unverified` và `evidence` không rỗng; `verdict=pass|rework|manual_verification`.
+4. `pass` chỉ được phép khi tất cả tiêu chí `passed`. `rework` cần criterion `failed` và Peer ID + feedback hợp lệ. Nếu không có failed nhưng còn unverified thì phải `manual_verification`.
+5. Khi `rework`, Backend chạy lại Peer được chỉ định; các Peer downstream phụ thuộc vào Peer đó cũng bị chuyển về `rework` vì contract upstream có thể thay đổi. Tuân thủ giới hạn tối đa 2 rework/Peer.
+6. Khi `manual_verification`, không hiển thị nút duyệt ngay. Người dùng phải xác nhận chính xác danh sách các acceptance criteria `unverified` qua `POST /api/workflows/:id/confirm-verification` với `{criterionIds:[]}`, sau đó mới có Business Approval. Có thể từ chối ngay tại bước này.
+7. Tất cả quyết định của reviewer là đánh giá của Agent dựa trên evidence, **không phải test E2E tự động độc lập**. Không tuyên bố integration verified nếu chưa chạy các kiểm tra có ý nghĩa.
+
+Lưu ý: Workflow cũ đã `waiting_business_approval` không tự động bị xem xét lại. Các workflow mới chạy qua bước review cuối; workflow đang `integration_reviewing` khi Backend restart được đánh dấu interrupted, không tự chạy lại.
+
+### Phục hồi khi reviewer trả sai JSON
+
+- Lead Planning và Final Integration Review đều có tối đa 2 lần sửa định dạng khi parse/validate thất bại. Chỉ chạy lại **Lead** ở các lượt này.
+- Nếu Final Integration Review vẫn `failed` do sai JSON/schema nhưng mọi Peer vẫn `accepted`, có thể gọi `POST /api/workflows/:id/retry-integration`. Backend giữ nguyên source và PeerResult, chỉ gọi lại Final Integration Reviewer, rồi tiếp tục gate.
+- Các lỗi runtime, vượt rework budget và lỗi khác **không** được phép dùng endpoint này.

@@ -137,3 +137,28 @@ Cấu hình hiện tại tương đương `codex --yolo`:
 - Streaming delta có flush/publish 250ms để hạn chế I/O và refresh UI; các event không phải delta vẫn được ghi ngay.
 - UI lọc Lead/Peer/Workflow và Task, hiển thị trạng thái, mốc thời gian, tóm tắt structured result. **Raw JSON** còn trong tab kỹ thuật để debug (ngoại trừ streaming fragment đã được gộp).
 - Đây là *projection* phục vụ trải nghiệm, không thay thế `Task` / `WorkflowRun` state machine hay nhật ký audit đầy đủ. Việc lọc bỏ raw delta cần được hiểu khi debug.
+
+## Final Integration Review (Gate trước Business Approval)
+
+```mermaid
+flowchart TD
+  P["LeadPlan + Acceptance Criteria"] --> D["Peer dispatch / Peer review"]
+  D --> A{"Tất cả Peers accepted?"}
+  A -->|Có| F["Final Integration Reviewer"]
+  F --> V{"IntegrationReview verdict"}
+  V -->|rework| R["Rerun affected Peer + downstream"]
+  R --> D
+  V -->|manual_verification| M["Người dùng kiểm tra các criterion chưa xác minh"]
+  M --> H["Business Approval"]
+  V -->|pass| H
+  H --> C["completed / rejected"]
+```
+
+- `LeadPlan.acceptanceCriteria` gồm 1–12 tiêu chí có `id`, `description`, `verification`. Validator bắt buộc và chống ID trùng.
+- `IntegrationReview` là báo cáo có cấu trúc và evidence cho từng criterion; không pass nếu còn failed hoặc unverified. Vòng review-format correction tối đa 2 lần.
+- Rework do Integration Reviewer yêu cầu làm invalid các peer downstream đã accepted. Giới hạn rework 2 lần/Peer được áp dụng chung.
+- Với `waiting_manual_verification`, người dùng đánh dấu từng criterion trên UI rồi xác nhận, sau đó mới vào `waiting_business_approval`. Backend kiểm tra tập IDs chính xác; có thể từ chối kết quả ở bước manual.
+- `integration_reviewing` đang hoạt động khi restart được đánh dấu `interrupted` để tránh phát lệnh trùng; trạng thái `waiting_manual_verification` được lưu bền vững.
+- LLM review không thay thế test độc lập. Nếu chưa chạy đủ kiểm tra, phải trả `unverified` và đưa về manual verification.
+
+Chi tiết: `docs/WORKFLOW_P1.md`.

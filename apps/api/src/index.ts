@@ -74,6 +74,20 @@ const server = createServer(async (req, res) => {
       json(res, 202, workflows.retryReview(reviewRetry[1]));
       return;
     }
+    const integrationRetry = /^\/api\/workflows\/([^/]+)\/retry-integration$/.exec(url.pathname);
+    if (req.method === "POST" && integrationRetry) {
+      json(res, 202, workflows.retryIntegration(integrationRetry[1]));
+      return;
+    }
+    const manualVerification = /^\/api\/workflows\/([^/]+)\/confirm-verification$/.exec(url.pathname);
+    if (req.method === "POST" && manualVerification) {
+      const body = await readJson(req) as Record<string, unknown>;
+      if (!Array.isArray(body?.criterionIds) || !body.criterionIds.every((id) => typeof id === "string")) {
+        throw new Error("criterionIds phải là danh sách IDs được xác minh thủ công");
+      }
+      json(res, 200, workflows.confirmManualVerification(manualVerification[1], body.criterionIds));
+      return;
+    }
     const workflowDecision = /^\/api\/workflows\/([^/]+)\/decision$/.exec(url.pathname);
     if (req.method === "POST" && workflowDecision) {
       const body = await readJson(req) as Record<string, unknown>;

@@ -155,6 +155,34 @@ export function projectActivity(entries: ActivityEntry[], event: ActivityEvent):
     add("workflow", "Lead đã đánh giá kết quả", accepted + " chấp nhận · " + (reviews.length - accepted) + " cần sửa lại", "completed");
     return true;
   }
+  if (kind === "workflow/integration_review_started") {
+    add("workflow", "Lead đang kiểm tra tích hợp tổng thể", "Đối chiếu acceptance criteria và kết quả các module", "running");
+    return true;
+  }
+  if (kind === "workflow/integration_review") {
+    const verdict = string(data.verdict);
+    const title = verdict === "pass" ? "Tích hợp tổng thể đã đạt" :
+      verdict === "rework" ? "Tích hợp cần sửa lại" : "Cần xác minh thủ công";
+    add("workflow", title, string(data.summary), verdict === "pass" ? "completed" : "info");
+    return true;
+  }
+  if (kind === "workflow/integration_review_resumed") {
+    add("workflow", "Đang thử lại Final Integration Review", "Giữ nguyên kết quả các Peer", "running");
+    return true;
+  }
+  if (kind === "workflow/plan_validation_failed") {
+    add("workflow", "Lead đang điều chỉnh kế hoạch", string(data.reason), "info");
+    return true;
+  }
+  if (kind === "workflow/integration_validation_failed") {
+    add("workflow", "Lead đang điều chỉnh báo cáo kiểm tra cuối", string(data.reason), "info");
+    return true;
+  }
+  if (kind === "workflow/manual_verification_confirmed") {
+    const ids = Array.isArray(data.criterionIds) ? data.criterionIds : [];
+    add("workflow", "Bạn đã xác nhận kiểm tra thủ công", ids.length + " acceptance criteria", "completed");
+    return true;
+  }
   if (kind === "workflow/ready_for_approval") {
     add("workflow", "Đang chờ bạn duyệt kết quả", "Tất cả Peer đã được Lead chấp nhận", "running");
     return true;
