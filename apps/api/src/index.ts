@@ -69,6 +69,11 @@ const server = createServer(async (req, res) => {
       json(res, 202, workflows.create(await readJson(req)));
       return;
     }
+    const reviewRetry = /^\/api\/workflows\/([^/]+)\/retry-review$/.exec(url.pathname);
+    if (req.method === "POST" && reviewRetry) {
+      json(res, 202, workflows.retryReview(reviewRetry[1]));
+      return;
+    }
     const workflowDecision = /^\/api\/workflows\/([^/]+)\/decision$/.exec(url.pathname);
     if (req.method === "POST" && workflowDecision) {
       const body = await readJson(req) as Record<string, unknown>;

@@ -16,9 +16,10 @@ async function api<T>(path: string, method: "GET" | "POST" = "GET", body?: unkno
 }
 const empty: Snapshot = { tasks: [], approvals: [], events: [], modules: [], workflows: [], activities: [] };
 
-function WorkflowCard({ workflow, onDecision, onSelect }: {
+function WorkflowCard({ workflow, onDecision, onRetryReview, onSelect }: {
   workflow: WorkflowRun;
   onDecision: (id: string, decision: "approve" | "reject") => void;
+  onRetryReview: (id: string) => void;
   onSelect: (id: string) => void;
 }) {
   return <div className="workflow">
@@ -61,6 +62,12 @@ function WorkflowCard({ workflow, onDecision, onSelect }: {
         onClick={() => onSelect(attempt.taskId)}>Xem Task attempt #{attempt.iteration}</button>)}
     </div>)}</div>
     {workflow.error && <p className="error-text">{workflow.error}</p>}
+    {workflow.status === "failed" && workflow.peers.some((p) => p.status === "review_pending") &&
+      <div className="actions">
+        <button className="primary" onClick={() => onRetryReview(workflow.id)}>
+          Thử lại Lead Review (không chạy lại Peer)
+        </button>
+      </div>}
     {workflow.status === "waiting_business_approval" &&
       <div className="actions">
         <button onClick={() => onDecision(workflow.id, "reject")}>Từ chối kết quả</button>
@@ -157,6 +164,7 @@ function App() {
       {snapshot.workflows.length === 0 && <p className="muted">Chưa có Workflow.</p>}
       {snapshot.workflows.map((workflow) => <WorkflowCard key={workflow.id} workflow={workflow}
         onDecision={(id, decision) => void runAction("/workflows/" + id + "/decision", { decision })}
+        onRetryReview={(id) => void runAction("/workflows/" + id + "/retry-review")}
         onSelect={setSelectedTask} />)}
     </section>
     <section className="columns">
