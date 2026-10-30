@@ -59,6 +59,7 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onR
     {workflow.finalReview && <div className="integration-report">
       <h3>Final Integration Review</h3>
       <p>{workflow.finalReview.summary}</p>
+      <h3>Product Acceptance</h3>
       {workflow.finalReview.checks.map((check) => {
         const criterion = workflow.plan?.acceptanceCriteria.find((c) => c.id === check.criterionId);
         return <div key={check.criterionId} className="integration-check">
