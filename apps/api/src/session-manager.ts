@@ -1,15 +1,20 @@
 import type { RpcMessage } from "./codex-client.js";
 import { CodexClient } from "./codex-client.js";
 import { cwdForTask } from "./domain.js";
+import type { WorktreeManager } from "./worktree-manager.js";
 import { TaskStore } from "./store.js";
 import type { Task, WorkspaceConfig } from "@aacc/contracts";
 
 // Personal local workspace: equivalent to codex --yolo (no runtime approvals/sandbox).
 // WARNING: cwd / module registry are routing hints, NOT filesystem boundaries in YOLO mode.
 type ApprovalPolicy = "untrusted" | "on-request" | "granular" | "never";
-const APPROVAL_POLICY: ApprovalPolicy = "never";
-const THREAD_SANDBOX = "danger-full-access";
-const TURN_SANDBOX_POLICY = { type: "dangerFullAccess" } as const;
+// Preserve user's YOLO preference. Sandbox mode is an explicit opt-in.
+const SAFE_MODE = process.env.CODEX_SECURITY_MODE === "sandbox";
+const APPROVAL_POLICY: ApprovalPolicy = SAFE_MODE ? "on-request" : "never";
+const THREAD_SANDBOX = SAFE_MODE ? "workspace-write" : "danger-full-access";
+const turnSandbox = (cwd: string) => SAFE_MODE
+  ? { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false }
+  : { type: "dangerFullAccess" };
 
 interface ThreadResult { thread: { id: string } }
 interface TurnResult { turn: { id: string; status: string } }
@@ -21,6 +26,7 @@ interface QueueEntry {
 
 export interface AgentTaskExecutor {
   runAndWait(taskId: string): Promise<string>;
+  prepare?(taskId: string): Promise<string>;
 }
 
 export class SessionManager implements AgentTaskExecutor {
@@ -33,7 +39,8 @@ export class SessionManager implements AgentTaskExecutor {
     private readonly config: WorkspaceConfig,
     private readonly store: TaskStore,
     private readonly codex: CodexClient,
-    private readonly concurrency = 2
+    private readonly concurrency = 2,
+    private readonly worktrees?: WorktreeManager
   ) {
     codex.on("notification", (message: RpcMessage) => this.onNotification(message));
     codex.on("serverRequest", (message: RpcMessage) => this.onServerRequest(message));
@@ -55,6 +62,21 @@ export class SessionManager implements AgentTaskExecutor {
     this.queue.push({ taskId, resolve, reject });
     this.drain();
     return this.store.get(taskId);
+  }
+
+  // Prepare worktree before collecting evidence. Calling twice reuses the same directory.
+  async prepare(taskId: string): Promise<string> {
+    const task = this.store.get(taskId);
+    if (!task) throw new Error("Task not found");
+    if (task.role !== "peer" || !this.worktrees) return cwdForTask(task, this.config);
+    if (task.executionCwd) return task.executionCwd;
+    const location = this.worktrees.ensure(task);
+    this.store.update(task.id, {
+      executionCwd: location.cwd, worktreeRoot: location.root,
+      sourceRoot: location.sourceRoot, sourceModule: location.sourceModule,
+      moduleRelative: location.moduleRelative, baseHead: location.baseHead
+    });
+    return location.cwd;
   }
 
   runAndWait(taskId: string): Promise<string> {
@@ -97,8 +119,8 @@ export class SessionManager implements AgentTaskExecutor {
   }
 
   private async execute(task: Task): Promise<string> {
+    const cwd = await this.prepare(task.id);
     await this.codex.start();
-    const cwd = cwdForTask(task, this.config);
     const thread = task.threadId
       ? await this.codex.request<ThreadResult>("thread/resume", {
           threadId: task.threadId, excludeTurns: true
@@ -112,7 +134,8 @@ export class SessionManager implements AgentTaskExecutor {
     const prompt = task.role === "lead"
       ? this.config.lead.instructions + "\n\nYêu cầu:\n" + task.prompt
       : "Bạn là Peer Agent cho module " + task.moduleId +
-        ". Chỉ thao tác trong module được giao. Tuân thủ yêu cầu output và báo cáo test trung thực.\n\nYêu cầu:\n" + task.prompt;
+        ". Chỉ thao tác trong worktree hiện tại. Không ghi vào source module gốc; P2 chỉ xuất patch sau duyệt. " +
+        "Tuân thủ yêu cầu output và báo cáo test trung thực.\n\nYêu cầu:\n" + task.prompt;
 
     let finish!: (status: string) => void;
     const completed = new Promise<string>((resolve) => { finish = resolve; });
@@ -139,7 +162,7 @@ export class SessionManager implements AgentTaskExecutor {
         threadId: thread.thread.id,
         input: [{ type: "text", text: prompt }],
         cwd, approvalPolicy: APPROVAL_POLICY,
-        sandboxPolicy: TURN_SANDBOX_POLICY
+        sandboxPolicy: turnSandbox(cwd)
       });
       if (!turn?.turn?.id) throw new Error("Codex turn/start did not return turn.id");
       if (this.store.get(task.id)?.status === "starting") {
