@@ -99,9 +99,13 @@ export class SessionManager implements AgentTaskExecutor {
   private async execute(task: Task): Promise<string> {
     await this.codex.start();
     const cwd = cwdForTask(task, this.config);
-    const thread = await this.codex.request<ThreadResult>("thread/start", {
-      cwd, approvalPolicy: APPROVAL_POLICY, sandbox: THREAD_SANDBOX
-    });
+    const thread = task.threadId
+      ? await this.codex.request<ThreadResult>("thread/resume", {
+          threadId: task.threadId, excludeTurns: true
+        })
+      : await this.codex.request<ThreadResult>("thread/start", {
+          cwd, approvalPolicy: APPROVAL_POLICY, sandbox: THREAD_SANDBOX
+        });
     if (!thread?.thread?.id) throw new Error("Codex thread/start did not return thread.id");
     this.store.update(task.id, { threadId: thread.thread.id });
 

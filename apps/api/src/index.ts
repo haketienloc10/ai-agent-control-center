@@ -5,14 +5,22 @@ import { createTask } from "./domain.js";
 import { TaskStore } from "./store.js";
 import { CodexClient } from "./codex-client.js";
 import { SessionManager } from "./session-manager.js";
+import { WorktreeManager } from "./worktree-manager.js";
+import { ArtifactStore } from "./artifacts.js";
+import { P2Services } from "./p2-services.js";
+import { RecoveryManager } from "./recovery.js";
 import { WorkflowEngine } from "./workflow-engine.js";
 
 const config = loadWorkspaceConfig();
 const dataDir = process.env.APP_DATA_DIR ?? fileURLToPath(new URL("../../../.data", import.meta.url));
 const store = new TaskStore(dataDir);
 const runtime = new CodexClient();
-const manager = new SessionManager(config, store, runtime);
-const workflows = new WorkflowEngine(config, store, manager);
+const worktrees = new WorktreeManager(config, dataDir);
+const artifacts = new ArtifactStore(dataDir);
+const p2 = new P2Services(config, worktrees, artifacts);
+const manager = new SessionManager(config, store, runtime, 2, worktrees);
+const workflows = new WorkflowEngine(config, store, manager, p2);
+const recovery = new RecoveryManager(config, store, runtime, manager);
 const port = Number(process.env.PORT ?? "4317");
 
 function json(res: ServerResponse, code: number, data: unknown) {
@@ -43,8 +51,27 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/snapshot") {
       json(res, 200, {
         tasks: store.list(), events: store.events(), approvals: store.approvals(),
-        modules: config.modules, workflows: store.workflows(), activities: store.activities()
+        modules: config.modules, workflows: store.workflows(), activities: store.activities(),
+        artifacts: artifacts.list()
       });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/journal") {
+      json(res, 200, store.journal(Number(url.searchParams.get("after") ?? "0"),
+        Number(url.searchParams.get("limit") ?? "100")));
+      return;
+    }
+    const artifactMatch = /^\/api\/artifacts\/([0-9a-f-]+)$/.exec(url.pathname);
+    if (req.method === "GET" && artifactMatch) {
+      const artifact = artifacts.get(artifactMatch[1]);
+      res.writeHead(200, {
+        "Content-Type": artifact.descriptor.kind === "patch"
+          ? "text/x-diff; charset=utf-8" : "application/json; charset=utf-8",
+        "Content-Disposition": "attachment; filename=\"" + artifact.descriptor.id +
+          (artifact.descriptor.kind === "patch" ? ".patch" : ".json") + "\"",
+        "Cache-Control": "no-store"
+      });
+      res.end(artifact.content);
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/events") {
@@ -98,6 +125,17 @@ const server = createServer(async (req, res) => {
       json(res, 200, workflows.decide(workflowDecision[1], body.decision));
       return;
     }
+    const reconcile = /^\/api\/tasks\/([^/]+)\/reconcile$/.exec(url.pathname);
+    if (req.method === "POST" && reconcile) {
+      json(res, 200, await recovery.reconcile(reconcile[1]));
+      return;
+    }
+    const followup = /^\/api\/tasks\/([^/]+)\/continue$/.exec(url.pathname);
+    if (req.method === "POST" && followup) {
+      const body = await readJson(req) as Record<string, unknown>;
+      json(res, 202, await recovery.continueTask(followup[1], body?.prompt));
+      return;
+    }
     const run = /^\/api\/tasks\/([^/]+)\/run$/.exec(url.pathname);
     if (req.method === "POST" && run) {
       json(res, 202, manager.start(run[1]));
@@ -123,6 +161,8 @@ const server = createServer(async (req, res) => {
 });
 server.listen(port, "127.0.0.1", () => {
   console.log("AI Agent Control Center API listening on http://127.0.0.1:" + port);
+  void recovery.reconcileAll().catch((error: unknown) =>
+    console.error("Startup reconciliation failed:", error));
 });
 process.on("SIGINT", () => { runtime.stop(); server.close(); });
 process.on("SIGTERM", () => { runtime.stop(); server.close(); });

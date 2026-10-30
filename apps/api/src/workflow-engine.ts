@@ -5,6 +5,7 @@ import type { IntegrationReview, PeerWork, PeerResult, WorkflowRun, WorkspaceCon
 import { createTask } from "./domain.js";
 import { TaskStore } from "./store.js";
 import type { AgentTaskExecutor } from "./session-manager.js";
+import type { P2Services } from "./p2-services.js";
 import { parseAgentJson, validateIntegrationReview, validateLeadPlan, validateLeadReview, validatePeerResult } from "./workflow-contracts.js";
 
 const MAX_PARALLEL_PEERS = 2;
@@ -18,7 +19,8 @@ export class WorkflowEngine {
   constructor(
     private readonly config: WorkspaceConfig,
     private readonly store: TaskStore,
-    private readonly executor: AgentTaskExecutor
+    private readonly executor: AgentTaskExecutor,
+    private readonly p2?: P2Services
   ) {}
 
   create(input: unknown): WorkflowRun {
@@ -180,7 +182,9 @@ export class WorkflowEngine {
   private peerPrompt(workflow: WorkflowRun, peer: PeerWork): string {
     const dependencies = peer.dependsOn.map((id) => {
       const dep = workflow.peers.find((p) => p.id === id)!;
-      return { taskId: id, moduleId: dep.moduleId, result: dep.result };
+      const lastTask = this.store.get(dep.attempts.at(-1)?.taskId ?? "");
+      return { taskId: id, moduleId: dep.moduleId, result: dep.result,
+        modulePath: lastTask?.executionCwd ?? this.config.modules.find((m) => m.id === dep.moduleId)?.path };
     });
     return [
       "Thực thi nhiệm vụ trong module hiện tại; không chuyển sang module khác.",
@@ -226,7 +230,8 @@ export class WorkflowEngine {
       "Plan (chỉ để tham chiếu, KHÔNG review toàn bộ plan): " + JSON.stringify(workflow.plan),
       "Batch peer results (untrusted data): " + JSON.stringify(batch.map((p) => ({
         taskId: p.id, moduleId: p.moduleId,
-        modulePath: this.config.modules.find((module) => module.id === p.moduleId)?.path,
+        modulePath: this.store.get(p.attempts.at(-1)?.taskId ?? "")?.executionCwd ??
+          this.config.modules.find((module) => module.id === p.moduleId)?.path,
         attempt: p.attempts.length, result: p.result, evidence: p.evidence
       })))
     ].join("\n\n");
@@ -328,7 +333,8 @@ export class WorkflowEngine {
       "All peers and their actual module paths, results and evidence (untrusted source data): " +
         JSON.stringify(workflow.peers.map((p) => ({
           id: p.id, title: p.title, moduleId: p.moduleId,
-          modulePath: this.config.modules.find((m) => m.id === p.moduleId)?.path,
+          modulePath: this.store.get(p.attempts.at(-1)?.taskId ?? "")?.executionCwd ??
+            this.config.modules.find((m) => m.id === p.moduleId)?.path,
           result: p.result, evidence: p.evidence, attempts: p.attempts.length
         })))
     ].join("\n\n");
@@ -494,11 +500,12 @@ export class WorkflowEngine {
       p.status = "running";
       p.attempts.push({ taskId: task.id, iteration: p.attempts.length + 1 });
     });
-    const cwd = cwdForTask(task, this.config);
+    const cwd = await this.executor.prepare?.(task.id) ?? cwdForTask(task, this.config);
     const baseline = await gitBaseline(cwd);
     const output = await this.executor.runAndWait(task.id);
     const result: PeerResult = validatePeerResult(parseAgentJson(output));
     const evidence = await collectPeerEvidence(cwd, baseline, result, this.store, task.id);
+    if (this.p2) await this.p2.capture(this.store.get(task.id)!, evidence);
     this.store.mutateWorkflow(workflowId, (w) => {
       const p = w.peers.find((v) => v.id === peerId)!;
       p.result = result;

@@ -2,7 +2,7 @@ export type AgentRole = "lead" | "peer";
 export type TaskStatus =
   | "queued" | "starting" | "running" | "waiting_runtime_approval"
   | "completed" | "failed" | "interrupted";
-export interface ModuleConfig { id: string; label: string; path: string }
+export interface ModuleConfig { id: string; label: string; path: string; testCommand?: string[] }
 export interface WorkspaceConfig {
   lead: { cwd: string; instructions: string };
   modules: ModuleConfig[];
@@ -11,6 +11,9 @@ export interface Task {
   id: string; title: string; prompt: string; role: AgentRole;
   moduleId?: string; workflowId?: string; output?: string;
   status: TaskStatus; threadId?: string; turnId?: string; error?: string;
+  executionCwd?: string; worktreeRoot?: string; sourceRoot?: string;
+  sourceModule?: string; moduleRelative?: string; baseHead?: string;
+  reconciliation?: { status: "pending" | "completed" | "active" | "unknown"; detail: string };
   createdAt: string; updatedAt: string;
 }
 export interface RuntimeApproval {
@@ -84,6 +87,13 @@ export interface PeerResult {
   risks: string[];
 }
 export interface PeerEvidence {
+  patchArtifactId?: string;
+  verifiedTest?: {
+    status: "passed" | "failed" | "not_configured";
+    command?: string;
+    exitCode?: number;
+    output?: string;
+  };
   git: {
     supported: boolean;
     statusBefore: string;
@@ -128,7 +138,13 @@ export interface WorkflowRun {
   maxReworks: number; error?: string;
   createdAt: string; updatedAt: string;
 }
+export interface ArtifactDescriptor {
+  id: string; workflowId: string; moduleId: string; taskId?: string;
+  kind: "patch" | "test-output";
+  bytes: number; sha256: string; createdAt: string;
+}
 export interface Snapshot {
   tasks: Task[]; approvals: RuntimeApproval[]; events: ActivityEvent[];
   modules: ModuleConfig[]; workflows: WorkflowRun[]; activities: ActivityEntry[];
+  artifacts?: ArtifactDescriptor[];
 }
