@@ -5,19 +5,20 @@ import { createTask } from "./domain.js";
 import { TaskStore } from "./store.js";
 import { CodexClient } from "./codex-client.js";
 import { SessionManager } from "./session-manager.js";
+import { WorkflowEngine } from "./workflow-engine.js";
 
 const config = loadWorkspaceConfig();
 const dataDir = process.env.APP_DATA_DIR ?? fileURLToPath(new URL("../../../.data", import.meta.url));
 const store = new TaskStore(dataDir);
 const runtime = new CodexClient();
 const manager = new SessionManager(config, store, runtime);
+const workflows = new WorkflowEngine(config, store, manager);
 const port = Number(process.env.PORT ?? "4317");
 
 function json(res: ServerResponse, code: number, data: unknown) {
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
   res.end(JSON.stringify(data));
 }
-
 async function readJson(req: IncomingMessage) {
   let body = "";
   for await (const chunk of req) {
@@ -40,7 +41,10 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/snapshot") {
-      json(res, 200, { tasks: store.list(), events: store.events(), approvals: store.approvals(), modules: config.modules });
+      json(res, 200, {
+        tasks: store.list(), events: store.events(), approvals: store.approvals(),
+        modules: config.modules, workflows: store.workflows()
+      });
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/events") {
@@ -58,8 +62,18 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/tasks") {
-      const task = createTask(await readJson(req), config);
-      json(res, 201, store.add(task));
+      json(res, 201, store.add(createTask(await readJson(req), config)));
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/workflows") {
+      json(res, 202, workflows.create(await readJson(req)));
+      return;
+    }
+    const workflowDecision = /^\/api\/workflows\/([^/]+)\/decision$/.exec(url.pathname);
+    if (req.method === "POST" && workflowDecision) {
+      const body = await readJson(req) as Record<string, unknown>;
+      if (body?.decision !== "approve" && body?.decision !== "reject") throw new Error("Invalid business decision");
+      json(res, 200, workflows.decide(workflowDecision[1], body.decision));
       return;
     }
     const run = /^\/api\/tasks\/([^/]+)\/run$/.exec(url.pathname);
@@ -72,20 +86,19 @@ const server = createServer(async (req, res) => {
       json(res, 202, await manager.interrupt(interrupt[1]));
       return;
     }
-    const approve = /^\/api\/approvals\/([^/]+)\/decision$/.exec(url.pathname);
-    if (req.method === "POST" && approve) {
+    const runtimeApproval = /^\/api\/approvals\/([^/]+)\/decision$/.exec(url.pathname);
+    if (req.method === "POST" && runtimeApproval) {
       const body = await readJson(req) as Record<string, unknown>;
-      if (body?.decision !== "accept" && body?.decision !== "decline") throw new Error("Invalid approval decision");
-      json(res, 200, manager.decide(approve[1], body.decision));
+      if (body?.decision !== "accept" && body?.decision !== "decline") throw new Error("Invalid runtime decision");
+      json(res, 200, manager.decide(runtimeApproval[1], body.decision));
       return;
     }
     json(res, 404, { error: "Not found" });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    json(res, message === "Task not found" ? 404 : 400, { error: message });
+    json(res, ["Task not found", "Workflow not found"].includes(message) ? 404 : 400, { error: message });
   }
 });
-
 server.listen(port, "127.0.0.1", () => {
   console.log("AI Agent Control Center API listening on http://127.0.0.1:" + port);
 });
