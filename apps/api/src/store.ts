@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ActivityEvent, RuntimeApproval, Task, TaskStatus, WorkflowRun } from "@aacc/contracts";
+import type { ActivityEntry, ActivityEvent, RuntimeApproval, Task, TaskStatus, WorkflowRun } from "@aacc/contracts";
+import { projectActivity } from "./activity.js";
 import { assertTransition } from "./domain.js";
 
 interface Persisted {
@@ -10,11 +11,13 @@ interface Persisted {
   events: ActivityEvent[];
   approvals: RuntimeApproval[];
   workflows: WorkflowRun[];
+  activities: ActivityEntry[];
 }
 
 export class TaskStore extends EventEmitter {
   private readonly file: string;
   private state: Persisted;
+  private streamFlush?: NodeJS.Timeout;
 
   constructor(dataDir: string) {
     super();
@@ -25,8 +28,13 @@ export class TaskStore extends EventEmitter {
       : {};
     this.state = {
       tasks: raw.tasks ?? [], events: raw.events ?? [],
-      approvals: raw.approvals ?? [], workflows: raw.workflows ?? []
+      approvals: raw.approvals ?? [], workflows: raw.workflows ?? [],
+      activities: raw.activities ?? []
     };
+    // Migrate legacy raw event journal into readable timeline once.
+    if (!raw.activities) {
+      for (const event of this.state.events) projectActivity(this.state.activities, event);
+    }
     // Không chạy lại Task/Workflow tự động sau restart vì có thể sinh side effect trùng.
     for (const task of this.state.tasks) {
       if (["starting", "running", "waiting_runtime_approval"].includes(task.status)) {
@@ -49,13 +57,24 @@ export class TaskStore extends EventEmitter {
   }
 
   private save() {
+    if (this.streamFlush) { clearTimeout(this.streamFlush); this.streamFlush = undefined; }
     const temp = this.file + ".tmp";
     writeFileSync(temp, JSON.stringify(this.state, null, 2), { mode: 0o600 });
     renameSync(temp, this.file);
   }
 
+  private flushStreamSoon() {
+    if (this.streamFlush) return;
+    this.streamFlush = setTimeout(() => {
+      this.streamFlush = undefined;
+      this.save();
+      this.emit("change");
+    }, 250);
+  }
+
   list() { return [...this.state.tasks].reverse(); }
   events() { return this.state.events.slice(-150); }
+  activities() { return this.state.activities.slice(-300); }
   eventsForTask(taskId: string) { return this.state.events.filter((event) => event.taskId === taskId); }
   approvals() { return [...this.state.approvals].reverse(); }
   workflows() { return [...this.state.workflows].reverse(); }
@@ -72,14 +91,26 @@ export class TaskStore extends EventEmitter {
     if (!task) throw new Error("Task not found");
     if (status) { assertTransition(task.status, status); task.status = status; }
     Object.assign(task, patch, { updatedAt: new Date().toISOString() });
+    if (status) projectActivity(this.state.activities, {
+      id: randomUUID(), taskId: id, kind: "task/status", data: { status, error: patch.error },
+      createdAt: task.updatedAt
+    });
     this.save(); this.emit("change");
     return task;
   }
   event(taskId: string, kind: string, data: unknown) {
     const event: ActivityEvent = { id: randomUUID(), taskId, kind, data, createdAt: new Date().toISOString() };
-    this.state.events.push(event);
-    this.state.events = this.state.events.slice(-1000);
-    this.save(); this.emit("change");
+    projectActivity(this.state.activities, event);
+    // Streaming fragments are represented by a single aggregated ActivityEntry.
+    // Do not flood the raw journal with a JSON event for every token.
+    const streaming = kind === "item/agentMessage/delta" || kind === "item/commandExecution/outputDelta";
+    if (streaming) {
+      this.flushStreamSoon();
+    } else {
+      this.state.events.push(event);
+      this.state.events = this.state.events.slice(-1000);
+      this.save(); this.emit("change");
+    }
     return event;
   }
   workflowEvent(workflowId: string, kind: string, data: unknown) {

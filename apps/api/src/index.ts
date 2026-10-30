@@ -43,7 +43,7 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/snapshot") {
       json(res, 200, {
         tasks: store.list(), events: store.events(), approvals: store.approvals(),
-        modules: config.modules, workflows: store.workflows()
+        modules: config.modules, workflows: store.workflows(), activities: store.activities()
       });
       return;
     }

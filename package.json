@@ -8,7 +8,7 @@
     "dev:api": "npm run dev -w @aacc/api",
     "dev:web": "npm run dev -w @aacc/web",
     "typecheck": "npm run typecheck --workspaces",
-    "test": "npm run test -w @aacc/api",
+    "test": "npm run test -w @aacc/api && npm run test -w @aacc/web",
     "build": "npm run build -w @aacc/web"
   },
   "devDependencies": {

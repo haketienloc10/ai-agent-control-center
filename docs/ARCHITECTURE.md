@@ -128,3 +128,12 @@ Cấu hình hiện tại tương đương `codex --yolo`:
 - Regression test kiểm tra cả 2 RPC request trên fake app-server.
 
 **Rủi ro:** Chế độ này bỏ hàng rào bảo vệ file/network; Codex có thể thao tác cả bên ngoài module theo quyền user chạy Backend, kể cả thay đổi/xóa file hoặc gọi lệnh không cần duyệt. `cwd`, instructions và module lock **không tạo bảo mật hoặc filesystem isolation**. Chỉ dùng với dữ liệu/Agent đáng tin, sao lưu hoặc commit code trước khi chạy, không mở HTTP server ra mạng.
+
+## Activity Timeline (P1 UX)
+
+- `TaskStore.event` nhận notifications từ Codex, dùng `projectActivity` để tạo timeline có ý nghĩa. Các `item/agentMessage/delta` của cùng `itemId` gom lại thành một ActivityEntry, không lưu raw event cho từng token.
+- Trạng thái Task, `turn/started`, `turn/completed`, command/file/tool lifecycle và Workflow events được diễn giải riêng (không phải nguyên tên phương thức JSON-RPC).
+- `ActivityEntry` được lưu trong `.data/state.json`. Nếu có event journal cũ mà chưa có `activities`, backend reconstruct một lần khi khởi động. Tối đa 500 ActivityEntries, API trả 300 gần nhất.
+- Streaming delta có flush/publish 250ms để hạn chế I/O và refresh UI; các event không phải delta vẫn được ghi ngay.
+- UI lọc Lead/Peer/Workflow và Task, hiển thị trạng thái, mốc thời gian, tóm tắt structured result. **Raw JSON** còn trong tab kỹ thuật để debug (ngoại trừ streaming fragment đã được gộp).
+- Đây là *projection* phục vụ trải nghiệm, không thay thế `Task` / `WorkflowRun` state machine hay nhật ký audit đầy đủ. Việc lọc bỏ raw delta cần được hiểu khi debug.
