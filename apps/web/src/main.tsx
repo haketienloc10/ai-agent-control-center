@@ -337,6 +337,12 @@ function App() {
             {["running", "waiting_runtime_approval"].includes(task.status) &&
               <button onClick={() => void runAction("/tasks/" + task.id + "/interrupt")}>Interrupt</button>}
             {task.executionCwd && <small className="worktree-path">Worktree: {task.executionCwd}</small>}
+            {task.status === "completed" && task.role === "peer" && !task.workflowId && task.executionCwd &&
+              <button type="button" onClick={() =>
+                void runAction("/tasks/" + task.id + "/export-patch")}>Xuất patch</button>}
+            {(snapshot.artifacts ?? []).filter((a) => a.taskId === task.id && a.kind === "patch").map(
+              (a) => <ArtifactViewer key={a.id} id={a.id} label="Xem patch đã lưu" />
+            )}
             {task.status === "interrupted" && <button type="button" onClick={() =>
               void runAction("/tasks/" + task.id + "/reconcile")}>Reconcile</button>}
             {task.reconciliation && <small className="recovery-detail">

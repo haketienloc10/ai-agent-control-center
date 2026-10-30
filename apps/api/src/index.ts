@@ -127,6 +127,13 @@ const server = createServer(async (req, res) => {
       json(res, 200, workflows.decide(workflowDecision[1], body.decision));
       return;
     }
+    const exportPatch = /^\/api\/tasks\/([^/]+)\/export-patch$/.exec(url.pathname);
+    if (req.method === "POST" && exportPatch) {
+      const task = store.get(exportPatch[1]);
+      if (!task) throw new Error("Task not found");
+      json(res, 201, p2.exportManualPatch(task));
+      return;
+    }
     const reconcile = /^\/api\/tasks\/([^/]+)\/reconcile$/.exec(url.pathname);
     if (req.method === "POST" && reconcile) {
       json(res, 200, await recovery.reconcile(reconcile[1]));

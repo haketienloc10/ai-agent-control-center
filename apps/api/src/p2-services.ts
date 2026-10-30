@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 import type { PeerEvidence, Task, WorkspaceConfig } from "@aacc/contracts";
 import { WorktreeManager } from "./worktree-manager.js";
@@ -11,6 +12,27 @@ export class P2Services {
     public readonly worktrees: WorktreeManager,
     public readonly artifacts: ArtifactStore
   ) {}
+
+  exportManualPatch(task: Task) {
+    if (task.role !== "peer" || task.status !== "completed" || !task.moduleId ||
+        !task.executionCwd || !task.worktreeRoot || !task.sourceRoot ||
+        !task.sourceModule || task.moduleRelative === undefined || !task.baseHead) {
+      throw new Error("Only completed isolated Peer tasks can export patches");
+    }
+    const patch = this.worktrees.patch({
+      cwd: task.executionCwd, root: task.worktreeRoot, sourceRoot: task.sourceRoot,
+      sourceModule: task.sourceModule, moduleRelative: task.moduleRelative, baseHead: task.baseHead
+    });
+    if (!patch.length) throw new Error("No Git changes to export");
+    const previous = this.artifacts.list().find((a) =>
+      a.taskId === task.id && a.kind === "patch" &&
+      a.sha256 === createHash("sha256").update(patch).digest("hex"));
+    if (previous) return previous;
+    return this.artifacts.add({
+      workflowId: task.workflowId ?? "manual-" + task.id,
+      moduleId: task.moduleId, taskId: task.id, kind: "patch"
+    }, patch);
+  }
 
   async capture(task: Task, evidence: PeerEvidence): Promise<PeerEvidence> {
     if (!task.workflowId || !task.moduleId || !task.executionCwd || !task.worktreeRoot ||

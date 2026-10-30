@@ -67,3 +67,19 @@ test("P2 independent runner FAIL cannot be reported as PASS", async () => {
     assert.equal(result.verifiedTest?.exitCode, 3);
   } finally { rmSync(fixtureData.dir, { recursive: true, force: true }); }
 });
+
+test("P2 manual Peer explicitly exports patch, deduplicates SHA, never applies to source", () => {
+  const fixtureData = fixture([process.execPath, "-e", "process.exit(0)"]);
+  try {
+    const { task, worktrees, artifactStore, config, moduleDir } = fixtureData;
+    task.status = "completed";
+    task.workflowId = undefined;
+    const p2 = new P2Services(config, worktrees, artifactStore);
+    const first = p2.exportManualPatch(task);
+    const second = p2.exportManualPatch(task);
+    assert.equal(first.id, second.id);
+    assert.equal(artifactStore.list().length, 1);
+    assert.match(artifactStore.get(first.id).content.toString(), /new-feature.js/);
+    assert.equal(git(moduleDir, "status", "--porcelain"), "");
+  } finally { rmSync(fixtureData.dir, { recursive: true, force: true }); }
+});
