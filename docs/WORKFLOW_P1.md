@@ -163,3 +163,7 @@ Lưu ý: Workflow cũ đã `waiting_business_approval` không tự động bị 
 ### Agent roles (cập nhật)
 
 Lead là orchestrator và decision maker cho Peer. Final Integration Review thuộc `reviewer` riêng, không thuộc Lead; mỗi review bắt đầu fresh session `thread/start`. Khi reviewer báo failed/rework, Lead phải tạo `LeadRemediation` có task IDs và hướng dẫn khắc phục hợp lệ. Xem `docs/AGENT_ROLES.md`.
+
+## Unverified decisions
+
+Bắt đầu từ P2, `unverified` của Final Reviewer không tự chuyển đến Human. Backend gọi Lead để xử lý theo `collect_evidence | run_verification | request_human | blocked`. Bằng chứng mới phải qua fresh Final Reviewer. Cơ chế giới hạn 2 vòng chống lặp tự động; chỉ `request_human` mới hiển thị checklist Human. Xem `docs/AGENT_ROLES.md`.

@@ -71,3 +71,16 @@ Mock runtime test xác nhận reviewer luôn có Thread ID riêng, không chứa
 Khi Reviewer báo `rework`, Backend lưu báo cáo trước khi gọi Lead. Nếu Lead trả `LeadRemediation` không hợp lệ sau ba lượt, workflow chuyển `failed` nhưng giữ `finalReview`. Nút retry gọi `POST /api/workflows/:id/retry-integration`, chỉ gọi lại Lead với báo cáo Reviewer đã lưu, **không chạy lại Reviewer hay Peer**. Khi Lead đã giao sửa, các Peer liên quan chạy và một Final Reviewer fresh Thread đánh giá kết quả mới.
 
 Reviewer `interrupted` không được `thread/resume` qua Recovery follow-up vì điều đó phá tính fresh-session. Cần retry toàn bộ Final Review qua workflow khi phù hợp.
+
+## Unverified Resolution — Lead điều phối thay vì mặc định hỏi Human
+
+Final Reviewer chỉ báo `manual_verification` (= còn `unverified`); đây **không** phải quyết định bắt người dùng kiểm tra ngay. Workflow chuyển báo cáo này cho Lead (fresh Lead Task), yêu cầu lựa chọn một trong bốn quyết định có schema:
+
+- `collect_evidence` với `taskIds`, `reason`, `instructions`: giao Peer bổ sung bằng chứng/sửa phần chưa đủ và chạy lại Final Reviewer trên Thread mới.
+- `run_verification` với Peer IDs: dùng `modules[].testCommand` đã cấu hình ở P2, chạy độc lập trong worktree, lưu `PeerEvidence.verifiedTest`, sau đó Final Reviewer fresh session xác minh lại. Nếu command/worktree thiếu, hệ thống chuyển `blocked`, không giả định kiểm thử đã chạy.
+- `request_human` không có task IDs: Lead nêu rõ lý do cần con người và hướng dẫn chi tiết, **khi đó** mới chuyển `waiting_manual_verification`, người dùng xác nhận checklist và sau đó Business Approval.
+- `blocked` không có task IDs: dừng tại `blocked`, hiển thị blocker; không cho duyệt sản phẩm. Người dùng có thể đóng workflow, cập nhật môi trường rồi tạo workflow mới.
+
+Mỗi workflow tối đa **2 vòng xác minh tự động** (`verificationRounds`) ngoài format retry/rework budget. Khi hết lượt, Lead chỉ có thể chọn `request_human` hoặc `blocked`; Backend từ chối decision tự động vượt giới hạn. Human Confirmation chỉ chứng nhận người dùng đã kiểm tra, không biến `failed` thành `passed`. Báo cáo Reviewer vẫn là nguồn đánh giá cuối cùng; Lead không tự trả verdict PASS.
+
+Khi `LeadVerification` sai schema sau 3 lượt, Workflow `failed` và nút retry chỉ chạy lại Lead với báo cáo đã lưu, không gọi lại Reviewer hoặc Peer.

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseAgentJson, validateIntegrationReview, validateLeadRemediation, validateLeadPlan, validateLeadReview, validatePeerResult } from "./workflow-contracts.js";
+import { parseAgentJson, validateIntegrationReview, validateLeadVerificationDecision, validateLeadRemediation, validateLeadPlan, validateLeadReview, validatePeerResult } from "./workflow-contracts.js";
 import type { WorkspaceConfig } from "@aacc/contracts";
 const config: WorkspaceConfig = {
   lead: { cwd: "/tmp/lead", instructions: "" },
@@ -140,4 +140,27 @@ test("Lead remediation chỉ chọn Peer hợp lệ, có chỉ dẫn và không 
     summary: "Fix integration",
     rework: [{ taskId: "web1", feedback: "Kết nối API thực tế thay vì fallback" }]
   }, ids).rework.map((x) => x.taskId), ["web1"]);
+});
+
+test("LeadVerification requires evidence reason, valid Peer IDs and bounded decisions", () => {
+  const peers = ["api1", "web1"];
+  const decision = { decision: "collect_evidence", reason: "Missing UI test",
+    instructions: "Run Playwright and report evidence", taskIds: ["web1"] };
+  assert.equal(validateLeadVerificationDecision(decision, peers, true).decision, "collect_evidence");
+  assert.throws(() => validateLeadVerificationDecision(decision, peers, false), /hết giới hạn/);
+  assert.throws(() => validateLeadVerificationDecision({
+    ...decision, taskIds: ["outside"]
+  }, peers, true), /taskIds/);
+  assert.throws(() => validateLeadVerificationDecision({
+    ...decision, decision: "request_human"
+  }, peers, true), /không được dispatch/);
+  assert.equal(validateLeadVerificationDecision({
+    ...decision, decision: "request_human", taskIds: []
+  }, peers, false).decision, "request_human");
+  assert.throws(() => validateLeadVerificationDecision({
+    ...decision, instructions: ""
+  }, peers, true), /instructions/);
+  assert.throws(() => validateLeadVerificationDecision({
+    ...decision, decision: "pass", taskIds: []
+  }, peers, true), /decision/);
 });

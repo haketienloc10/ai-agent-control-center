@@ -1,4 +1,4 @@
-import type { IntegrationReview, LeadPlan, LeadReview, LeadRemediation, PeerResult, WorkspaceConfig } from "@aacc/contracts";
+import type { IntegrationReview, LeadPlan, LeadReview, LeadRemediation, LeadVerificationDecision, PeerResult, WorkspaceConfig } from "@aacc/contracts";
 
 const object = (value: unknown): Record<string, unknown> => {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected JSON object");
@@ -268,4 +268,35 @@ export function validateLeadRemediation(value: unknown, peerIds: string[]): Lead
     return { taskId, feedback: nonempty(action.feedback, "remediation.feedback", 4000) };
   });
   return { summary: nonempty(data.summary, "remediation.summary", 5000), rework };
+}
+
+/** Strictly validate Lead's response to missing evidence. Never turn unverified into pass. */
+export function validateLeadVerificationDecision(
+  value: unknown, peerIds: string[], automatedAllowed: boolean
+): LeadVerificationDecision {
+  const data = object(value);
+  const allowed = ["collect_evidence", "run_verification", "request_human", "blocked"];
+  if (!allowed.includes(String(data.decision))) {
+    throw new Error("LeadVerification.decision không hợp lệ");
+  }
+  const decision = data.decision as LeadVerificationDecision["decision"];
+  if (!automatedAllowed && (decision === "collect_evidence" || decision === "run_verification")) {
+    throw new Error("Đã hết giới hạn xác minh tự động; Lead phải request_human hoặc blocked");
+  }
+  const tasks = array(data.taskIds, "LeadVerification.taskIds");
+  const taskIds = tasks.map((value) => nonempty(value, "LeadVerification.taskId", 48));
+  if (new Set(taskIds).size !== taskIds.length || taskIds.some((id) => !peerIds.includes(id))) {
+    throw new Error("LeadVerification.taskIds không thuộc Peer của Workflow hoặc bị trùng");
+  }
+  if ((decision === "collect_evidence" || decision === "run_verification") && taskIds.length === 0) {
+    throw new Error("LeadVerification cần ít nhất một Peer để thực hiện xác minh");
+  }
+  if ((decision === "request_human" || decision === "blocked") && taskIds.length !== 0) {
+    throw new Error("LeadVerification request_human/blocked không được dispatch Peer");
+  }
+  return {
+    decision, taskIds,
+    reason: nonempty(data.reason, "LeadVerification.reason", 3000),
+    instructions: nonempty(data.instructions, "LeadVerification.instructions", 4000)
+  };
 }

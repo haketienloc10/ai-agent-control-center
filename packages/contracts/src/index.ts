@@ -121,6 +121,14 @@ export interface LeadRemediation {
   summary: string;
   rework: Array<{ taskId: string; feedback: string }>;
 }
+
+/** Unverified is a missing-evidence finding, never implicit human approval. */
+export interface LeadVerificationDecision {
+  decision: "collect_evidence" | "run_verification" | "request_human" | "blocked";
+  reason: string;
+  instructions: string;
+  taskIds: string[];
+}
 export interface PeerAttempt {
   taskId: string; iteration: number; result?: PeerResult; feedback?: string;
 }
@@ -131,13 +139,16 @@ export interface PeerWork {
 }
 export type WorkflowStatus =
   | "planning" | "executing" | "reviewing" | "integration_reviewing"
-  | "waiting_manual_verification" | "waiting_business_approval"
+  | "waiting_manual_verification" | "waiting_business_approval" | "blocked"
   | "completed" | "rejected" | "failed" | "interrupted";
 export interface WorkflowRun {
   id: string; title: string; request: string; status: WorkflowStatus;
   plan?: LeadPlan; peers: PeerWork[]; leadTaskIds: string[];
   reviewerTaskIds?: string[];
   lastRemediation?: LeadRemediation;
+  lastVerificationDecision?: LeadVerificationDecision;
+  verificationRounds?: number;
+  blocker?: string;
   reviewCount: number; integrationReviewCount?: number;
   finalReview?: IntegrationReview;
   manualVerifiedCriterionIds?: string[];

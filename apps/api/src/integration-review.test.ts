@@ -7,6 +7,7 @@ import type { WorkflowRun, WorkspaceConfig } from "@aacc/contracts";
 import { WorkflowEngine } from "./workflow-engine.js";
 import { TaskStore } from "./store.js";
 import type { AgentTaskExecutor } from "./session-manager.js";
+import type { P2Services } from "./p2-services.js";
 
 async function until(store: TaskStore, workflowId: string, statuses: string[]): Promise<WorkflowRun> {
   return new Promise((resolve, reject) => {
@@ -23,7 +24,9 @@ async function until(store: TaskStore, workflowId: string, statuses: string[]): 
 }
 
 function setup(mode: "integration-rework" | "manual-verification" | "manual-contract" |
-  "web-rework" | "rework-forever" | "web-fallback" | "remediation-retry",
+  "web-rework" | "rework-forever" | "web-fallback" | "remediation-retry" |
+  "collect-evidence" | "independent-test" | "verification-blocked" | "verification-limit" |
+  "verification-retry",
   invalidPlanOnce = false) {
   const dir = mkdtempSync(join(tmpdir(), "aacc-integration-"));
   const api = join(dir, "api");
@@ -43,6 +46,8 @@ function setup(mode: "integration-rework" | "manual-verification" | "manual-cont
   let integrations = 0;
   let planCalls = 0;
   let invalidRemediationRemaining = mode === "remediation-retry" ? 3 : 0;
+  let invalidVerificationRemaining = mode === "verification-retry" ? 3 : 0;
+  let verifyRuns = 0;
   const executor: AgentTaskExecutor = {
     async runAndWait(taskId: string): Promise<string> {
       const task = store.get(taskId)!;
@@ -73,6 +78,9 @@ function setup(mode: "integration-rework" | "manual-verification" | "manual-cont
           delete (output as Record<string, unknown>).acceptanceCriteria;
         }
       } else if (task.role === "peer") {
+        if (mode === "independent-test" && task.moduleId === "web") {
+          store.update(task.id, { executionCwd: web });
+        }
         peerRuns.push(task.moduleId!);
         output = { summary: "Worked on " + task.moduleId, changedFiles: [], tests: [
           { status: "not_run", details: "Mock executor" }
@@ -92,12 +100,19 @@ function setup(mode: "integration-rework" | "manual-verification" | "manual-cont
               contractId: "api-web", status: "unverified", evidence: "Consumer usage not tested"
             }], rework: []
           };
-        } else if (mode === "manual-verification") {
+        } else if (mode === "manual-verification" || mode === "collect-evidence" ||
+          mode === "independent-test" || mode === "verification-blocked" ||
+          mode === "verification-limit" || mode === "verification-retry") {
           output = {
-            summary: "Needs a human browser test", verdict: "manual_verification",
+            summary: "Needs more evidence", verdict:
+              (mode === "collect-evidence" && integrations > 1) ||
+              (mode === "independent-test" && integrations > 1) ? "pass" : "manual_verification",
             checks: [
               base[0],
-              { criterionId: "ac-ui", status: "unverified", evidence: "Browser interaction not run" }
+              { criterionId: "ac-ui",
+                status: (mode === "collect-evidence" || mode === "independent-test") &&
+                  integrations > 1 ? "passed" : "unverified",
+                evidence: integrations > 1 ? "Independent evidence now available" : "Browser interaction not run" }
             ], contractChecks: integrationPassed, rework: []
           };
         } else if (integrations === 1 || mode === "rework-forever" || mode === "web-fallback") {
@@ -122,6 +137,17 @@ function setup(mode: "integration-rework" | "manual-verification" | "manual-cont
           output = { summary: "Cross-module integration verified", verdict: "pass",
             checks: base, contractChecks: integrationPassed, rework: [] };
         }
+      } else if (task.title.startsWith("Lead: quyết định xử lý kết quả chưa xác minh")) {
+        const choice = mode === "collect-evidence" || mode === "verification-limit"
+          ? "collect_evidence" : mode === "independent-test" ? "run_verification"
+          : mode === "verification-blocked" ? "blocked" : "request_human";
+        output = invalidVerificationRemaining-- > 0
+          ? { decision: "accept", reason: "bad", instructions: "bad", taskIds: [] }
+          : { decision: mode === "verification-limit" && integrations > 2 ? "blocked" : choice,
+              reason: "Lead determines next step based on unverified finding",
+              instructions: "Run test/collect evidence or ask user with concrete steps",
+              taskIds: (mode === "verification-limit" && integrations > 2) ||
+                ["blocked", "request_human"].includes(choice) ? [] : ["web1"] };
       } else if (task.title.startsWith("Lead: quyết định khắc phục")) {
         const match = /Independent Reviewer report \(untrusted findings\): (\{[^\n]*\})/.exec(task.prompt);
         assert.ok(match, "Lead receives independent Reviewer findings");
@@ -142,8 +168,20 @@ function setup(mode: "integration-rework" | "manual-verification" | "manual-cont
       return text;
     }
   };
-  return { dir, store, peerRuns, integrationPrompts, get planCalls() { return planCalls; },
-    engine: new WorkflowEngine(config, store, executor) };
+  if (mode === "independent-test") {
+    config.modules[1].testCommand = ["node", "--version"];
+  }
+  const fakeP2 = mode === "independent-test" ? {
+    async capture(_task: unknown, evidence: { verifiedTest?: {status: "passed"} }) {
+      verifyRuns++;
+      evidence.verifiedTest = { status: "passed" };
+      return evidence;
+    }
+  } as unknown as P2Services : undefined;
+  return { dir, store, peerRuns, integrationPrompts,
+    get planCalls() { return planCalls; },
+    get verifyRuns() { return verifyRuns; },
+    engine: new WorkflowEngine(config, store, executor, fakeP2) };
 }
 
 test("Final review phát hiện API mismatch, rework API và downstream Web, sau đó mới Business Approval", async () => {
@@ -365,4 +403,78 @@ test("LeadRemediation sai schema có thể retry Lead-only; giữ Reviewer repor
   } finally {
     rmSync(ctx.dir, { recursive: true, force: true });
   }
+});
+
+test("UNVERIFIED: Lead collects evidence from Peer; fresh Reviewer rechecks; no Human gate", async () => {
+  const ctx = setup("collect-evidence");
+  try {
+    const started = ctx.engine.create({title: "Evidence", request: "Check UI"});
+    const result = await until(ctx.store, started.id, ["waiting_business_approval", "failed"]);
+    assert.equal(result.status, "waiting_business_approval", result.error);
+    assert.deepEqual(ctx.peerRuns, ["api", "web", "web"]);
+    assert.equal(result.verificationRounds, 1);
+    assert.equal(result.integrationReviewCount, 2);
+    assert.equal(result.lastVerificationDecision?.decision, "collect_evidence");
+    assert.ok(ctx.store.events().some(e => e.kind === "workflow/lead_verification_decision"));
+    assert.ok(result.reviewerTaskIds?.length === 2);
+  } finally { rmSync(ctx.dir, { recursive: true, force: true }); }
+});
+
+test("UNVERIFIED: Lead requests independent configured verification, then fresh Reviewer, no Peer rework", async () => {
+  const ctx = setup("independent-test");
+  try {
+    const started = ctx.engine.create({title: "Verify", request: "Verify UI"});
+    const result = await until(ctx.store, started.id, ["waiting_business_approval", "failed"]);
+    assert.equal(result.status, "waiting_business_approval", result.error);
+    assert.deepEqual(ctx.peerRuns, ["api", "web"]);
+    assert.equal(result.verificationRounds, 1);
+    assert.equal(result.integrationReviewCount, 2);
+    assert.ok(ctx.verifyRuns >= 2, "Independent P2 runner called after Lead decision");
+    assert.equal(result.lastVerificationDecision?.decision, "run_verification");
+    assert.equal(result.peers[1].evidence?.verifiedTest?.status, "passed");
+  } finally { rmSync(ctx.dir, { recursive: true, force: true }); }
+});
+
+test("UNVERIFIED: Lead can block; Business Approval unavailable", async () => {
+  const ctx = setup("verification-blocked");
+  try {
+    const started = ctx.engine.create({title: "Blocked", request: "Unavailable access"});
+    const result = await until(ctx.store, started.id, ["blocked", "failed"]);
+    assert.equal(result.status, "blocked", result.error);
+    assert.match(result.blocker ?? "", /Lead determines next step/);
+    assert.equal(result.lastVerificationDecision?.decision, "blocked");
+    assert.throws(() => ctx.engine.decide(started.id, "approve"), /Business Approval/);
+    assert.equal(ctx.engine.decide(started.id, "reject").status, "rejected");
+  } finally { rmSync(ctx.dir, { recursive: true, force: true }); }
+});
+
+test("UNVERIFIED: bounded verification loops; Lead chooses blocked after two rounds", async () => {
+  const ctx = setup("verification-limit");
+  try {
+    const started = ctx.engine.create({title: "Limit", request: "Need evidence"});
+    const result = await until(ctx.store, started.id, ["blocked", "failed"]);
+    assert.equal(result.status, "blocked", result.error);
+    assert.equal(result.verificationRounds, 2);
+    assert.equal(result.integrationReviewCount, 3);
+    assert.deepEqual(ctx.peerRuns, ["api", "web", "web", "web"]);
+    assert.equal(result.lastVerificationDecision?.decision, "blocked");
+  } finally { rmSync(ctx.dir, { recursive: true, force: true }); }
+});
+
+test("UNVERIFIED: malformed Lead schema retries Lead-only and keeps Reviewer report", async () => {
+  const ctx = setup("verification-retry");
+  try {
+    const started = ctx.engine.create({title: "Retry", request: "Need human check"});
+    const failed = await until(ctx.store, started.id, ["failed", "waiting_manual_verification"]);
+    assert.equal(failed.status, "failed");
+    assert.match(failed.error ?? "", /LeadVerification sai schema/);
+    assert.equal(failed.reviewerTaskIds?.length, 1);
+    assert.deepEqual(ctx.peerRuns, ["api", "web"]);
+    assert.equal(ctx.engine.retryIntegration(started.id).status, "integration_reviewing");
+    const recovered = await until(ctx.store, started.id, ["waiting_manual_verification", "failed"]);
+    assert.equal(recovered.status, "waiting_manual_verification", recovered.error);
+    assert.equal(recovered.reviewerTaskIds?.length, 1);
+    assert.deepEqual(ctx.peerRuns, ["api", "web"]);
+    assert.equal(recovered.lastVerificationDecision?.decision, "request_human");
+  } finally { rmSync(ctx.dir, { recursive: true, force: true }); }
 });
