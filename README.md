@@ -2,7 +2,7 @@
 
 Dashboard **cá nhân, chạy trên máy local** để thay thế việc quản lý nhiều terminal Codex. Mục tiêu là giữ nguyên mô hình làm việc hiện có: **Lead Agent trong workspace chung → giao việc cho Peer ở các source module bên ngoài → nhận kết quả → Lead review / yêu cầu sửa → người dùng quyết định**.
 
-> Trạng thái: P1 **Lead-controlled dispatch** trên nhánh tính năng; chưa phải production, cần kiểm tra với Codex CLI đã đăng nhập trên máy thực.
+> Trạng thái: P1 **Lead-controlled dispatch**, dùng Codex **YOLO mode** cho máy local cá nhân; chưa phải production, cần kiểm tra với Codex CLI đã đăng nhập trên máy thực.
 
 ## Bắt đầu
 
@@ -55,3 +55,9 @@ Tài liệu giao thức: https://developers.openai.com/codex/app-server
 - POST `/api/workflows/:id/decision` với `{ "decision": "approve" }` hoặc `reject`.
 
 **Lưu ý:** P1 cho phép ghi trực tiếp vào source module ngoài repo. Sao lưu/commit code của bạn trước khi chạy, và dùng module riêng hoặc worktree thủ công nếu cần cách ly. Worktree tự động, xác minh test độc lập và resume an toàn nằm ở P2. P1 không tự merge.
+
+## Codex YOLO mode (local-only)
+
+Nhánh này dùng `approvalPolicy: "never"` và `sandbox: "danger-full-access"` / `sandboxPolicy.type: "dangerFullAccess"` cho mọi Thread và Turn. Tương đương `codex --yolo`. **Codex không hỏi cấp quyền từng lệnh, có quyền filesystem/network theo tài khoản chạy Backend**, kể cả bên ngoài source module; `cwd` chỉ định tuyến công việc chứ không chặn truy cập. Hãy sao lưu/commit các source modules và chỉ chạy với workspace tin cậy. Backend chưa có authentication và chỉ bind `127.0.0.1`.
+
+**Business Approval** ở cuối workflow vẫn cần bạn bấm duyệt; khác với Runtime Approval vốn đã bỏ qua trong YOLO mode.

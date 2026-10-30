@@ -97,8 +97,8 @@ starting → failed
 
 1. Chỉ bind API vào `127.0.0.1` trong MVP; chưa có auth, không đặt public.
 2. `cwd` đến từ config allowlist, không nhận từ request; dùng `realpath` để kiểm tra tồn tại.
-3. Sử dụng `approvalPolicy: on-request`, `sandboxPolicy: workspaceWrite` với `writableRoots` chỉ gồm workspace hoặc module tương ứng. Không bật `dangerFullAccess`, không tự accept mọi approval.
-4. Bản foundation chỉ xử lý approval command/file-change thông dụng. Các kiểu server request khác được từ chối an toàn, không tự duyệt.
+3. **YOLO mode (chủ động chọn cho local):** `approvalPolicy: "never"`, `sandbox: "danger-full-access"` tại `thread/start` và `sandboxPolicy: { "type": "dangerFullAccess" }` tại `turn/start`. Codex chạy **không sandbox và không yêu cầu runtime approval**. Chỉ chạy với workspace tin cậy trên máy cá nhân.
+4. Runtime Approval UI vẫn có mã xử lý cũ nhưng với YOLO mode sẽ không nhận approval thông thường; **Business Approval** cuối Workflow vẫn là bước duyệt thủ công. Không đồng nhất hai khái niệm này.
 5. Không commit `config/workspace.local.json`, `.data/`, credentials hay log cá nhân.
 6. Đặt `cwd` và sandbox policy **không thay thế** kiểm soát quyền host. P1 chỉ giới hạn một Peer cùng lúc/module, **không cách ly Git working tree**; phải dùng workspace tin cậy, lưu thay đổi trước khi chạy. Worktree isolation và kiểm tra symlink là yêu cầu P2 trước khi dùng rộng rãi.
 
@@ -118,8 +118,13 @@ https://developers.openai.com/codex/app-server
 
 Đọc `docs/WORKFLOW_P1.md` để xem contracts, dependency, các nhánh review và API. Các Agent được tạo thành **Task có Thread riêng**; Lead review nhận context từ JSON plan và PeerResult. P1 chưa tái sử dụng một Codex Thread duy nhất cho mọi review turn.
 
-## Codex app-server approvalPolicy compatibility
+## Codex app-server YOLO wire format
 
-Trong JSON-RPC `thread/start` và `turn/start`, giá trị `approvalPolicy` phải là `"on-request"` theo giao thức mà Codex CLI local đang trả về, **không phải** `"onRequest"` (dễ nhầm với cách viết ở một số ví dụ / layer khác). Unit test mock app-server từ chối giá trị khác để ngăn lỗi tái xuất hiện.
+Cấu hình hiện tại tương đương `codex --yolo`:
 
-`sandbox: "workspaceWrite"` (thread) và `sandboxPolicy: {type:"workspaceWrite", ...}` (turn) là trường khác, **không** đổi thành `workspace-write` trong JSON-RPC.
+- `thread/start`: `{ "approvalPolicy": "never", "sandbox": "danger-full-access" }`.
+- `turn/start`: `{ "approvalPolicy": "never", "sandboxPolicy": { "type": "dangerFullAccess" } }`.
+- `sandbox` là enum kiểu **kebab-case**, `sandboxPolicy.type` là tagged enum **camelCase**. `workspaceWrite` ở `thread/start` và `workspace-write` ở `sandboxPolicy.type` đều sai giao thức.
+- Regression test kiểm tra cả 2 RPC request trên fake app-server.
+
+**Rủi ro:** Chế độ này bỏ hàng rào bảo vệ file/network; Codex có thể thao tác cả bên ngoài module theo quyền user chạy Backend, kể cả thay đổi/xóa file hoặc gọi lệnh không cần duyệt. `cwd`, instructions và module lock **không tạo bảo mật hoặc filesystem isolation**. Chỉ dùng với dữ liệu/Agent đáng tin, sao lưu hoặc commit code trước khi chạy, không mở HTTP server ra mạng.

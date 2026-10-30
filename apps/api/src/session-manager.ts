@@ -4,9 +4,12 @@ import { cwdForTask } from "./domain.js";
 import { TaskStore } from "./store.js";
 import type { Task, WorkspaceConfig } from "@aacc/contracts";
 
-// Codex app-server validates this wire enum using kebab-case, not "onRequest".
+// Personal local workspace: equivalent to codex --yolo (no runtime approvals/sandbox).
+// WARNING: cwd / module registry are routing hints, NOT filesystem boundaries in YOLO mode.
 type ApprovalPolicy = "untrusted" | "on-request" | "granular" | "never";
-const APPROVAL_POLICY: ApprovalPolicy = "on-request";
+const APPROVAL_POLICY: ApprovalPolicy = "never";
+const THREAD_SANDBOX = "danger-full-access";
+const TURN_SANDBOX_POLICY = { type: "dangerFullAccess" } as const;
 
 interface ThreadResult { thread: { id: string } }
 interface TurnResult { turn: { id: string; status: string } }
@@ -97,7 +100,7 @@ export class SessionManager implements AgentTaskExecutor {
     await this.codex.start();
     const cwd = cwdForTask(task, this.config);
     const thread = await this.codex.request<ThreadResult>("thread/start", {
-      cwd, approvalPolicy: APPROVAL_POLICY, sandbox: "workspaceWrite"
+      cwd, approvalPolicy: APPROVAL_POLICY, sandbox: THREAD_SANDBOX
     });
     if (!thread?.thread?.id) throw new Error("Codex thread/start did not return thread.id");
     this.store.update(task.id, { threadId: thread.thread.id });
@@ -132,7 +135,7 @@ export class SessionManager implements AgentTaskExecutor {
         threadId: thread.thread.id,
         input: [{ type: "text", text: prompt }],
         cwd, approvalPolicy: APPROVAL_POLICY,
-        sandboxPolicy: { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false }
+        sandboxPolicy: TURN_SANDBOX_POLICY
       });
       if (!turn?.turn?.id) throw new Error("Codex turn/start did not return turn.id");
       if (this.store.get(task.id)?.status === "starting") {

@@ -89,3 +89,7 @@ Runtime Approval cho command/file-change sử dụng `/api/approvals/:id/decisio
 - Các module là working directories thật, **không được tách worktree**. Chỉ nên thử ở repo đã commit sạch và trên máy đáng tin.
 - Không hỗ trợ auto-recovery, resume và rollback sau runtime failure; P2 xử lý.
 - Đã có mock executor để test DAG, giới hạn đồng thời, retry và approval. Test với Codex thật cần chạy trên máy đã đăng nhập.
+
+## YOLO mode cho Codex app-server
+
+P1 sử dụng `approvalPolicy: "never"` và `danger-full-access` ở cả Thread/Turn để không dừng ở runtime approval. Hệ thống vẫn giữ Business Approval trước `completed`. **Lưu ý:** `cwd`/module allowlist chỉ định tuyến Agent, không cấm Codex đọc hoặc sửa nơi khác trên máy trong chế độ này. Không dùng với repo/đầu vào không tin cậy hoặc máy chứa dữ liệu chưa sao lưu.

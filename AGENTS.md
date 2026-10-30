@@ -5,7 +5,7 @@
 - Không để UI gọi trực tiếp Codex CLI, không truyền đường dẫn `cwd` từ request.
 - Lead chạy trong workspace chung, Peer trong source module đăng ký; các source module nằm ngoài repository này.
 - Không gắn logic workflow vào Codex JSON-RPC adapter. App-server không phải Orchestrator.
-- Không tự approve các yêu cầu runtime; không bật danger-full-access.
+- Chế độ local được chọn: Codex YOLO (`approvalPolicy=never`, `danger-full-access`) bỏ runtime approval/sandbox. Không dùng với dữ liệu không tin cậy, không expose server ra ngoài. Business Approval vẫn bắt buộc.
 - Không giả định `turn/completed` là success nếu `turn.status` không phải `completed`.
 - Sửa code phải kèm test/verification phù hợp, phân biệt đã chạy và chỉ đề xuất.
 - Không commit `config/workspace.local.json`, `.data/`, credentials.
