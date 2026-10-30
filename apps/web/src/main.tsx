@@ -119,7 +119,7 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onR
         <button type="button" onClick={() => onDecision(workflow.id, "reject")}>Đóng workflow bị chặn</button>
       </div>
     </section>}
-    {workflow.plan && <p><strong>Lead Plan:</strong> {workflow.plan.summary}</p>
+    {workflow.plan && <p><strong>Lead Plan:</strong> {workflow.plan.summary}</p>}
     <div className="peers">{workflow.peers.map((peer) => <div key={peer.id} className="peer">
       <div className="panel-heading">
         <strong>{peer.title} · {peer.moduleId}</strong>
