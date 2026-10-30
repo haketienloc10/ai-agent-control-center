@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Task, WorkflowRun, WorkspaceConfig } from "@aacc/contracts";
@@ -146,4 +146,55 @@ test("P1: workflow đang chạy sau restart không auto-dispatch lại", () => {
     });
     assert.equal(new TaskStore(dir).getWorkflow("w1")?.status, "interrupted");
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("E2E mock: Lead review đọc file untracked ở module, not_run không cần command", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "aacc-handoff-"));
+  const modulePath = join(directory, "api");
+  mkdirSync(modulePath);
+  try {
+    const workspace: WorkspaceConfig = {
+      lead: { cwd: directory, instructions: "Lead" },
+      modules: [{ id: "api", label: "API", path: modulePath }]
+    };
+    const store = new TaskStore(join(directory, "state"));
+    let reviewPrompt = "";
+    const executor: AgentTaskExecutor = {
+      async runAndWait(taskId) {
+        const task = store.get(taskId)!;
+        store.update(taskId, {}, "starting");
+        store.update(taskId, {}, "running");
+        let output: string;
+        if (task.role === "peer") {
+          writeFileSync(join(modulePath, "task-board-api.js"), "export const createTask = () => true;\n");
+          output = JSON.stringify({
+            summary: "Đã tạo logic", changedFiles: ["task-board-api.js"],
+            tests: [{ status: "not_run", command: "", details: "Không có test runner" }], risks: []
+          });
+        } else if (task.title.startsWith("Lead: lập kế hoạch")) {
+          output = JSON.stringify({ summary: "One API task", tasks: [{
+            id: "api1", title: "API", moduleId: "api", instructions: "Create logic", dependsOn: []
+          }] });
+        } else {
+          reviewPrompt = task.prompt;
+          output = JSON.stringify({ summary: "Đã đọc file", reviews: [{
+            taskId: "api1", decision: "accept", feedback: "Đã xem contentPreview và path"
+          }] });
+        }
+        store.update(task.id, { output }, "completed");
+        return output;
+      }
+    };
+    const engine = new WorkflowEngine(workspace, store, executor);
+    const created = engine.create({ title: "Board", request: "Tạo Task Board" });
+    const wf = await until(store, created.id, ["waiting_business_approval", "failed"]);
+    assert.equal(wf.status, "waiting_business_approval", wf.error);
+    assert.match(reviewPrompt, /task-board-api.js/);
+    assert.match(reviewPrompt, /export const createTask/);
+    assert.ok(reviewPrompt.includes(modulePath));
+    assert.equal(wf.peers[0].result?.tests[0].command, undefined);
+    assert.equal(wf.peers[0].evidence?.files[0].exists, true);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

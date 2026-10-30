@@ -1,12 +1,16 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { realpathSync, statSync } from "node:fs";
+import { closeSync, openSync, readSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { PeerResult, PeerEvidence } from "@aacc/contracts";
 import type { TaskStore } from "./store.js";
 
 const exec = promisify(execFile);
 const MAX_DIFF = 12000;
+// Previews are bounded so Lead prompts cannot grow indefinitely.
+const MAX_FILES_PREVIEW = 5;
+const MAX_BYTES_PER_FILE = 2400;
+const MAX_BYTES_TOTAL = 6400;
 
 async function git(cwd: string, args: string[]): Promise<string | null> {
   try {
@@ -39,7 +43,8 @@ export async function collectPeerEvidence(
     git(cwd, ["diff", "--no-ext-diff", "--no-color", "HEAD", "--"])
   ]);
   const diff = rawDiff ?? "";
-  const fileEvidence = result.changedFiles.map((path) => {
+  let previewBudget = MAX_BYTES_TOTAL;
+  const fileEvidence = result.changedFiles.map((path, index) => {
     // Đường dẫn Peer tự báo cáo là untrusted. Không đọc ngoài cwd hoặc theo symlink.
     if (!path || isAbsolute(path)) return { path, exists: false, insideWorkspace: false };
     const absolute = resolve(cwd, path);
@@ -52,7 +57,30 @@ export async function collectPeerEvidence(
       const relativeActual = relative(cwd, actual);
       const insideWorkspace = relativeActual !== ".." &&
         !relativeActual.startsWith(".." + sep) && !isAbsolute(relativeActual);
-      return { path, insideWorkspace, exists: insideWorkspace && statSync(actual).isFile() };
+      const file = insideWorkspace ? statSync(actual) : undefined;
+      const exists = !!file?.isFile();
+      const base = { path, insideWorkspace, exists };
+      if (!file?.isFile()) return base;
+      if (index >= MAX_FILES_PREVIEW || previewBudget <= 0) {
+        return { ...base, previewNote: "File chưa được đưa vào bản xem trước do giới hạn dung lượng." };
+      }
+      const size = Math.min(file.size, MAX_BYTES_PER_FILE, previewBudget);
+      const buf = Buffer.alloc(size);
+      const fd = openSync(actual, "r");
+      let bytesRead: number;
+      try {
+        bytesRead = readSync(fd, buf, 0, size, 0);
+      } finally {
+        closeSync(fd);
+      }
+      const content = buf.subarray(0, bytesRead);
+      if (content.includes(0)) return { ...base, previewNote: "File nhị phân: không hiển thị nội dung." };
+      previewBudget -= bytesRead;
+      return {
+        ...base,
+        contentPreview: content.toString("utf8"),
+        truncated: file.size > bytesRead
+      };
     } catch {
       // Deleted/missing file, still report path but don't read it.
       return { path, exists: false, insideWorkspace: true };

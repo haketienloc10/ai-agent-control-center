@@ -68,10 +68,23 @@ export function validatePeerResult(value: unknown): PeerResult {
     if (t.status !== "passed" && t.status !== "failed" && t.status !== "not_run") {
       throw new Error("Invalid test status");
     }
+    // An unexecuted test does not have a command; never require or invent one.
+    const command = typeof t.command === "string" && t.command.trim() ? nonempty(t.command, "test.command", 1000) : undefined;
+    if (t.status !== "not_run" && !command) {
+      throw new Error("test.command bắt buộc khi test.status là passed hoặc failed");
+    }
+    if (t.command !== null && t.command !== undefined && typeof t.command !== "string") {
+      throw new Error("test.command không hợp lệ");
+    }
+    const details = typeof t.details === "string" && t.details.trim()
+      ? nonempty(t.details, "test.details", 3000) : undefined;
+    if (t.details !== null && t.details !== undefined && typeof t.details !== "string") {
+      throw new Error("test.details không hợp lệ");
+    }
     return {
-      command: nonempty(t.command, "test.command", 1000),
+      ...(command ? { command } : {}),
       status: t.status as PeerResult["tests"][number]["status"],
-      ...(t.details === undefined ? {} : { details: nonempty(t.details, "test.details", 3000) })
+      ...(details ? { details } : {})
     };
   });
   return { summary: nonempty(data.summary, "result.summary"), changedFiles, tests, risks };

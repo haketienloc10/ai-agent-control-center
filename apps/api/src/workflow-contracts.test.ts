@@ -35,3 +35,20 @@ test("PeerResult có test evidence và review phủ hết batch", () => {
     { taskId: "api1", decision: "accept", feedback: "Đạt" }
   ] }, ["api1"]).reviews.length, 1);
 });
+
+test("not_run cho phép không có command, nhưng passed/failed bắt buộc command", () => {
+  for (const command of ["", null, undefined]) {
+    const result = validatePeerResult({
+      summary: "Không có test framework", changedFiles: ["index.html"],
+      tests: [{ command, status: "not_run", details: "Chưa cài test runner" }], risks: []
+    });
+    assert.equal(result.tests[0].status, "not_run");
+    assert.equal(result.tests[0].command, undefined);
+  }
+  assert.throws(() => validatePeerResult({
+    summary: "Sai", changedFiles: [], tests: [{ status: "passed", command: "" }], risks: []
+  }), /test.command bắt buộc/);
+  assert.equal(validatePeerResult({
+    summary: "Đã thử", changedFiles: [], tests: [{ status: "passed", command: "npm test" }], risks: []
+  }).tests[0].command, "npm test");
+});
