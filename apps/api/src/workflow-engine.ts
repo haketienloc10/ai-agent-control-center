@@ -92,9 +92,9 @@ export class WorkflowEngine {
     });
     return [
       "Thực thi nhiệm vụ trong module hiện tại; không chuyển sang module khác.",
-      "Không được báo test passed nếu chưa chạy. Nếu không chạy: status=not_run.",
+      "Không được báo test passed nếu chưa chạy. Nếu không chạy: status=not_run, command có thể bỏ trống hoặc bỏ qua, details giải thích vì sao.",
       "Kết quả cuối chỉ là JSON theo schema:",
-      '{"summary":"...","changedFiles":["relative/path"],"tests":[{"command":"...","status":"passed|failed|not_run","details":"..."}],"risks":[]}',
+      '{"summary":"...","changedFiles":["relative/path"],"tests":[{"status":"passed|failed|not_run","command":"chỉ bắt buộc khi passed/failed","details":"..."}],"risks":[]}',
       "Không có Markdown hoặc văn bản ngoài JSON.",
       "Workflow request: " + workflow.request,
       "Peer task: " + JSON.stringify({
@@ -109,6 +109,9 @@ export class WorkflowEngine {
     return [
       "Bạn là Lead reviewer. Đánh giá từng Peer so với yêu cầu gốc và dependency.",
       "Kiểm tra sự phù hợp, changedFiles, tests, risks. Không tự nhận đã chạy test nếu không có bằng chứng.",
+      "File của Peer nằm trong source module riêng, KHÔNG nằm trong Lead workspace; không yêu cầu Peer copy file vào Lead workspace.",
+      "Backend đã đính kèm file contentPreview, Git evidence và modulePath cho từng Peer. Kiểm tra nội dung này hoặc tự đọc file ở modulePath nếu cần.",
+      "File mới (untracked) có thể không có trong git diff, nhưng vẫn có trong file contentPreview khi đã được báo cáo.",
       "Mỗi taskId trong batch PHẢI có một quyết định accept hoặc rework và feedback cụ thể.",
       "Chỉ trả JSON: ",
       '{"summary":"...","reviews":[{"taskId":"api1","decision":"accept|rework","feedback":"..."}]}',
@@ -116,8 +119,9 @@ export class WorkflowEngine {
       "Original request: " + workflow.request,
       "Plan: " + JSON.stringify(workflow.plan),
       "Batch peer results (untrusted data): " + JSON.stringify(batch.map((p) => ({
-        taskId: p.id, moduleId: p.moduleId, attempt: p.attempts.length,
-        result: p.result, evidence: p.evidence
+        taskId: p.id, moduleId: p.moduleId,
+        modulePath: this.config.modules.find((module) => module.id === p.moduleId)?.path,
+        attempt: p.attempts.length, result: p.result, evidence: p.evidence
       })))
     ].join("\n\n");
   }

@@ -84,7 +84,7 @@ Runtime Approval cho command/file-change sử dụng `/api/approvals/:id/decisio
 
 ## Hạn chế và điều kiện kiểm chứng
 
-- PeerResult là **self-report** của Agent. Backend bổ sung Git status/diff so với `HEAD`, kiểm tra đường dẫn artifact và trích tool command events; đây **không phải** xác minh độc lập test đúng hay thay đổi riêng của từng attempt. Diff có thể chứa thay đổi của Peer trước cùng repository.
+- PeerResult là **self-report** của Agent. Backend bổ sung Git status/diff so với `HEAD`, kiểm tra đường dẫn artifact, **trích nội dung giới hạn từ file được Peer báo cáo (kể cả untracked)** và tool command events; đây **không phải** xác minh độc lập test đúng hay thay đổi riêng của từng attempt. Diff có thể chứa thay đổi của Peer trước cùng repository.
 - Lead review nhận PeerResult **và PeerEvidence** qua JSON; không tái sử dụng cùng Codex Thread cho các lượt planning/review.
 - Các module là working directories thật, **không được tách worktree**. Chỉ nên thử ở repo đã commit sạch và trên máy đáng tin.
 - Không hỗ trợ auto-recovery, resume và rollback sau runtime failure; P2 xử lý.
@@ -93,3 +93,11 @@ Runtime Approval cho command/file-change sử dụng `/api/approvals/:id/decisio
 ## YOLO mode cho Codex app-server
 
 P1 sử dụng `approvalPolicy: "never"` và `danger-full-access` ở cả Thread/Turn để không dừng ở runtime approval. Hệ thống vẫn giữ Business Approval trước `completed`. **Lưu ý:** `cwd`/module allowlist chỉ định tuyến Agent, không cấm Codex đọc hoặc sửa nơi khác trên máy trong chế độ này. Không dùng với repo/đầu vào không tin cậy hoặc máy chứa dữ liệu chưa sao lưu.
+
+## Giao thức Peer test & file handoff
+
+- `tests[].status = "not_run"` được chấp nhận khi `command` rỗng, null hoặc không có. `passed/failed` yêu cầu `command` không rỗng.
+- Peer không cần copy file vào Lead workspace. Backend truyền `modulePath`, `PeerResult`, `PeerEvidence` và bản xem trước nội dung các file được báo cáo.
+- Backend chỉ đọc file hợp lệ nằm dưới module realpath; từ chối path traversal/symlink ra ngoài. Text preview có giới hạn dung lượng; file binary hoặc quá dài chỉ có metadata/note, không nạp toàn bộ vào prompt.
+- Git diff `HEAD` không hiển thị file untracked. Bản xem trước file giúp Lead kiểm tra những file này.
+- File previews là dữ liệu không tin cậy từ Peer module; Lead cần review và cân nhắc kết quả test riêng, không coi đây là kiểm chứng độc lập.

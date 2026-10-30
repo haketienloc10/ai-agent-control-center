@@ -42,7 +42,7 @@ export interface LeadPlan {
 }
 export interface PeerResult {
   summary: string; changedFiles: string[];
-  tests: Array<{ command: string; status: "passed" | "failed" | "not_run"; details?: string }>;
+  tests: Array<{ command?: string; status: "passed" | "failed" | "not_run"; details?: string }>;
   risks: string[];
 }
 export interface PeerEvidence {
@@ -54,7 +54,14 @@ export interface PeerEvidence {
     diffPreview: string;
     truncated: boolean;
   };
-  files: Array<{ path: string; exists: boolean; insideWorkspace: boolean }>;
+  files: Array<{
+    path: string;
+    exists: boolean;
+    insideWorkspace: boolean;
+    contentPreview?: string;
+    truncated?: boolean;
+    previewNote?: string;
+  }>;
   commands: Array<{ command: string; exitCode?: number }>;
 }
 export interface LeadReview {
