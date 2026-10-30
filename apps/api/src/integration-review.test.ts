@@ -22,7 +22,8 @@ async function until(store: TaskStore, workflowId: string, statuses: string[]): 
   });
 }
 
-function setup(mode: "integration-rework" | "manual-verification" | "web-rework" | "rework-forever",
+function setup(mode: "integration-rework" | "manual-verification" | "manual-contract" |
+  "web-rework" | "rework-forever" | "web-fallback",
   invalidPlanOnce = false) {
   const dir = mkdtempSync(join(tmpdir(), "aacc-integration-"));
   const api = join(dir, "api");
@@ -55,6 +56,12 @@ function setup(mode: "integration-rework" | "manual-verification" | "web-rework"
             { id: "ac-api", description: "API handles tasks", verification: "Inspect API contract" },
             { id: "ac-ui", description: "Web integrates API", verification: "Run end-to-end UI operations" }
           ],
+          integrationContracts: [{
+            id: "api-web", producerTaskId: "api1", consumerTaskId: "web1",
+            deliverable: "task-board-api.js", consumerUsage: "Web must call API functions, not fallback",
+            verification: "Inspect Web API imports and execute integrated addTask/changeStatus flow"
+          }],
+          orderingOnlyDependencies: [],
           tasks: [
             { id: "api1", moduleId: "api", title: "API", instructions: "Implement API", dependsOn: [] },
             { id: "web1", moduleId: "web", title: "UI", instructions: "Implement UI", dependsOn: ["api1"] }
@@ -76,15 +83,23 @@ function setup(mode: "integration-rework" | "manual-verification" | "web-rework"
           { criterionId: "ac-api", status: "passed", evidence: "API code reviewed" },
           { criterionId: "ac-ui", status: "passed", evidence: "UI integration checked" }
         ];
-        if (mode === "manual-verification") {
+        const integrationPassed = [{ contractId: "api-web", status: "passed", evidence: "Mock integrated execution" }];
+        if (mode === "manual-contract") {
+          output = {
+            summary: "Product works, contract needs test", verdict: "manual_verification",
+            checks: base, contractChecks: [{
+              contractId: "api-web", status: "unverified", evidence: "Consumer usage not tested"
+            }], rework: []
+          };
+        } else if (mode === "manual-verification") {
           output = {
             summary: "Needs a human browser test", verdict: "manual_verification",
             checks: [
               base[0],
               { criterionId: "ac-ui", status: "unverified", evidence: "Browser interaction not run" }
-            ], rework: []
+            ], contractChecks: integrationPassed, rework: []
           };
-        } else if (integrations === 1 || mode === "rework-forever") {
+        } else if (integrations === 1 || mode === "rework-forever" || mode === "web-fallback") {
           output = {
             summary: "Modules are not integrated", verdict: "rework",
             checks: [
@@ -92,6 +107,11 @@ function setup(mode: "integration-rework" | "manual-verification" | "web-rework"
                 evidence: "Mismatch in shared API contract" },
               { criterionId: "ac-ui", status: "failed", evidence: "UI cannot call API" }
             ],
+            contractChecks: [{
+              contractId: "api-web", status: "failed",
+              evidence: mode === "web-fallback" ? "Web only uses local fallback, not API deliverable" :
+                "Consumer cannot use expected producer API artifact"
+            }],
             rework: [{
               taskId: mode === "integration-rework" ? "api1" : "web1",
               feedback: "Connect the UI and API correctly"
@@ -99,7 +119,7 @@ function setup(mode: "integration-rework" | "manual-verification" | "web-rework"
           };
         } else {
           output = { summary: "Cross-module integration verified", verdict: "pass",
-            checks: base, rework: [] };
+            checks: base, contractChecks: integrationPassed, rework: [] };
         }
       } else {
         // Peer-level Lead review has no final integration authority.
@@ -128,6 +148,8 @@ test("Final review phát hiện API mismatch, rework API và downstream Web, sau
     assert.deepEqual(ctx.peerRuns, ["api", "web", "api", "web"]);
     assert.deepEqual(result.peers.map((p) => p.attempts.length), [2, 2]);
     assert.match(ctx.integrationPrompts[0], /REQUIRED_CRITERION_IDS/);
+    assert.match(ctx.integrationPrompts[0], /REQUIRED_CONTRACT_IDS/);
+    assert.equal(result.finalReview?.contractChecks[0].status, "passed");
     assert.match(ctx.integrationPrompts[0], /modulePath/);
     assert.ok(ctx.store.events().some((evt) => evt.kind === "workflow/integration_review"));
     assert.equal(ctx.engine.decide(workflow.id, "approve").status, "completed");
@@ -239,6 +261,12 @@ test("Retry Final Integration chỉ chạy Lead, không ghi lại source từ c�
           { id: "ac-api", description: "API", verification: "Inspect API" },
           { id: "ac-ui", description: "Web", verification: "Browser check" }
         ],
+        integrationContracts: [{
+          id: "api-web", producerTaskId: "api1", consumerTaskId: "web1",
+          deliverable: "task-board-api.js", consumerUsage: "Web calls API",
+          verification: "Run cross-module test"
+        }],
+        orderingOnlyDependencies: [],
         tasks: [
           { id: "api1", title: "API", moduleId: "api", instructions: "Build", dependsOn: [] },
           { id: "web1", title: "Web", moduleId: "web", instructions: "Build", dependsOn: ["api1"] }
@@ -261,6 +289,40 @@ test("Retry Final Integration chỉ chạy Lead, không ghi lại source từ c�
     assert.equal(final.integrationReviewCount, 1);
     assert.throws(() => ctx.engine.retryIntegration("wf-recover"));
     assert.ok(ctx.store.events().some((evt) => evt.kind === "workflow/integration_review_resumed"));
+  } finally {
+    rmSync(ctx.dir, { recursive: true, force: true });
+  }
+});
+
+test("Product Acceptance pass không thể che giấu Web fallback sai Integration Contract", async () => {
+  const ctx = setup("web-fallback");
+  try {
+    const workflow = ctx.engine.create({ title: "Fallback", request: "Web must use shared API" });
+    const result = await until(ctx.store, workflow.id, ["failed", "waiting_business_approval"]);
+    assert.equal(result.status, "failed", "Repeated fallback must not reach Business Approval");
+    assert.deepEqual(ctx.peerRuns, ["api", "web", "web", "web"]);
+    assert.match(result.error ?? "", /giới hạn rework/);
+    assert.equal(result.finalReview?.contractChecks[0].status, "failed");
+    assert.equal(result.finalReview?.checks[0].status, "passed");
+    assert.throws(() => ctx.engine.decide(workflow.id, "approve"));
+  } finally {
+    rmSync(ctx.dir, { recursive: true, force: true });
+  }
+});
+
+test("Contract unverified phải xác nhận riêng, không được dùng checkbox sản phẩm thay thế", async () => {
+  const ctx = setup("manual-contract");
+  try {
+    const workflow = ctx.engine.create({ title: "Contract", request: "Verify handoff" });
+    const result = await until(ctx.store, workflow.id, ["waiting_manual_verification", "failed"]);
+    assert.equal(result.status, "waiting_manual_verification", result.error);
+    assert.ok(result.finalReview?.checks.every((item) => item.status === "passed"));
+    assert.equal(result.finalReview?.contractChecks[0].status, "unverified");
+    assert.throws(() => ctx.engine.confirmManualVerification(workflow.id, []), /xác nhận/);
+    assert.throws(() => ctx.engine.confirmManualVerification(workflow.id, [], ["other"]), /xác nhận/);
+    assert.equal(ctx.engine.confirmManualVerification(workflow.id, [], ["api-web"]).status,
+      "waiting_business_approval");
+    assert.deepEqual(ctx.store.getWorkflow(workflow.id)?.manualVerifiedContractIds, ["api-web"]);
   } finally {
     rmSync(ctx.dir, { recursive: true, force: true });
   }

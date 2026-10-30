@@ -67,7 +67,59 @@ export function validateLeadPlan(value: unknown, config: WorkspaceConfig): LeadP
     return { id, description: nonempty(criterion.description, "criterion.description", 600),
       verification: nonempty(criterion.verification, "criterion.verification", 1000) };
   });
-  return { summary: nonempty(data.summary, "plan.summary"), tasks: normalized, acceptanceCriteria };
+  // Every direct cross-module dependency must be classified explicitly:
+  // required artifact handoff OR ordering-only dependency with a reason.
+  const contractRaw = array(data.integrationContracts, "integrationContracts");
+  const orderingRaw = array(data.orderingOnlyDependencies, "orderingOnlyDependencies");
+  if (contractRaw.length > 30 || orderingRaw.length > 30) throw new Error("Too many dependency contracts");
+  const usedIds = new Set<string>();
+  const usedEdges = new Set<string>();
+  const edge = (producerTaskId: string, consumerTaskId: string): string => {
+    const producer = tasksById.get(producerTaskId);
+    const consumer = tasksById.get(consumerTaskId);
+    if (!producer || !consumer || producer.moduleId === consumer.moduleId ||
+        !consumer.dependsOn.includes(producerTaskId)) {
+      throw new Error("Cross-module dependency edge không hợp lệ: " + producerTaskId + " → " + consumerTaskId);
+    }
+    const key = producerTaskId + "->" + consumerTaskId;
+    if (usedEdges.has(key)) throw new Error("Cross-module dependency edge bị khai báo trùng: " + key);
+    usedEdges.add(key);
+    return key;
+  };
+  const integrationContracts = contractRaw.map((raw) => {
+    const c = object(raw);
+    const id = nonempty(c.id, "contract.id", 48);
+    if (!/^[a-zA-Z0-9_-]+$/.test(id) || usedIds.has(id)) throw new Error("contract.id trùng hoặc không hợp lệ: " + id);
+    usedIds.add(id);
+    const producerTaskId = nonempty(c.producerTaskId, "contract.producerTaskId", 48);
+    const consumerTaskId = nonempty(c.consumerTaskId, "contract.consumerTaskId", 48);
+    edge(producerTaskId, consumerTaskId);
+    return {
+      id, producerTaskId, consumerTaskId,
+      deliverable: nonempty(c.deliverable, "contract.deliverable", 600),
+      consumerUsage: nonempty(c.consumerUsage, "contract.consumerUsage", 800),
+      verification: nonempty(c.verification, "contract.verification", 1000)
+    };
+  });
+  const orderingOnlyDependencies = orderingRaw.map((raw) => {
+    const d = object(raw);
+    const producerTaskId = nonempty(d.producerTaskId, "ordering.producerTaskId", 48);
+    const consumerTaskId = nonempty(d.consumerTaskId, "ordering.consumerTaskId", 48);
+    edge(producerTaskId, consumerTaskId);
+    return {
+      producerTaskId, consumerTaskId,
+      reason: nonempty(d.reason, "ordering.reason", 800)
+    };
+  });
+  for (const task of normalized) {
+    for (const dep of task.dependsOn) {
+      if (tasksById.get(dep)!.moduleId !== task.moduleId && !usedEdges.has(dep + "->" + task.id)) {
+        throw new Error("Thiếu phân loại dependency xuyên module: " + dep + " → " + task.id);
+      }
+    }
+  }
+  return { summary: nonempty(data.summary, "plan.summary"), tasks: normalized,
+    acceptanceCriteria, integrationContracts, orderingOnlyDependencies };
 }
 
 export function validatePeerResult(value: unknown): PeerResult {
@@ -126,7 +178,8 @@ export function validateLeadReview(value: unknown, batchIds: string[]): LeadRevi
   return { summary: nonempty(data.summary, "review.summary"), reviews: normalized };
 }
 
-export function validateIntegrationReview(value: unknown, criterionIds: string[], peerIds: string[]): IntegrationReview {
+export function validateIntegrationReview(value: unknown, criterionIds: string[], peerIds: string[],
+  contractIds: string[] = []): IntegrationReview {
   const data = object(value);
   if (data.verdict !== "pass" && data.verdict !== "rework" && data.verdict !== "manual_verification") {
     throw new Error("IntegrationReview.verdict phải là pass, rework hoặc manual_verification");
@@ -149,6 +202,26 @@ export function validateIntegrationReview(value: unknown, criterionIds: string[]
       evidence: nonempty(check.evidence, "check.evidence", 3000)
     };
   });
+  const contractChecksRaw = array(data.contractChecks, "integration.contractChecks");
+  if (contractChecksRaw.length !== contractIds.length) {
+    throw new Error("IntegrationReview phải đánh giá mọi integration contract: " + JSON.stringify(contractIds));
+  }
+  const seenContracts = new Set<string>();
+  const contractChecks = contractChecksRaw.map((raw) => {
+    const check = object(raw);
+    const contractId = nonempty(check.contractId, "contractCheck.contractId", 48);
+    if (!contractIds.includes(contractId) || seenContracts.has(contractId)) {
+      throw new Error("IntegrationReview contractChecks thiếu/thừa/trùng contractId: " + contractId);
+    }
+    seenContracts.add(contractId);
+    if (check.status !== "passed" && check.status !== "failed" && check.status !== "unverified") {
+      throw new Error("IntegrationReview contractCheck.status không hợp lệ");
+    }
+    return { contractId,
+      status: check.status as "passed" | "failed" | "unverified",
+      evidence: nonempty(check.evidence, "contractCheck.evidence", 3000)
+    };
+  });
   const reworkRaw = array(data.rework, "integration.rework");
   if (reworkRaw.length > peerIds.length) throw new Error("IntegrationReview quá nhiều Peer rework");
   const reworked = new Set<string>();
@@ -161,8 +234,8 @@ export function validateIntegrationReview(value: unknown, criterionIds: string[]
     reworked.add(taskId);
     return { taskId, feedback: nonempty(item.feedback, "rework.feedback", 4000) };
   });
-  const hasFailed = checks.some((c) => c.status === "failed");
-  const hasUnverified = checks.some((c) => c.status === "unverified");
+  const hasFailed = [...checks, ...contractChecks].some((c) => c.status === "failed");
+  const hasUnverified = [...checks, ...contractChecks].some((c) => c.status === "unverified");
   if (data.verdict === "pass" && (hasFailed || hasUnverified || rework.length)) {
     throw new Error("IntegrationReview không được pass khi còn failed/unverified hoặc rework");
   }
@@ -173,5 +246,5 @@ export function validateIntegrationReview(value: unknown, criterionIds: string[]
     throw new Error("IntegrationReview manual_verification chỉ dùng khi còn unverified, không có failed/rework");
   }
   return { summary: nonempty(data.summary, "integration.summary", 5000),
-    verdict: data.verdict, checks, rework };
+    verdict: data.verdict, checks, contractChecks, rework };
 }

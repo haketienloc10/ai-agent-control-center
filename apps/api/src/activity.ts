@@ -180,7 +180,9 @@ export function projectActivity(entries: ActivityEntry[], event: ActivityEvent):
   }
   if (kind === "workflow/manual_verification_confirmed") {
     const ids = Array.isArray(data.criterionIds) ? data.criterionIds : [];
-    add("workflow", "Bạn đã xác nhận kiểm tra thủ công", ids.length + " acceptance criteria", "completed");
+    const contracts = Array.isArray(data.contractIds) ? data.contractIds : [];
+    add("workflow", "Bạn đã xác nhận kiểm tra thủ công",
+      ids.length + " tiêu chí sản phẩm · " + contracts.length + " hợp đồng tích hợp", "completed");
     return true;
   }
   if (kind === "workflow/ready_for_approval") {
