@@ -67,7 +67,7 @@ export interface ContractCheck {
 }
 export interface IntegrationReview {
   summary: string;
-  verdict: "pass" | "rework" | "manual_verification";
+  verdict: "pass" | "rework" | "unverified" | "manual_verification"; // legacy alias accepted for old workflows
   checks: IntegrationCheck[];
   contractChecks: ContractCheck[];
   rework: Array<{ taskId: string; feedback: string }>;

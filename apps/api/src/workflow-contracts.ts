@@ -181,9 +181,11 @@ export function validateLeadReview(value: unknown, batchIds: string[]): LeadRevi
 export function validateIntegrationReview(value: unknown, criterionIds: string[], peerIds: string[],
   contractIds: string[] = []): IntegrationReview {
   const data = object(value);
-  if (data.verdict !== "pass" && data.verdict !== "rework" && data.verdict !== "manual_verification") {
-    throw new Error("IntegrationReview.verdict phải là pass, rework hoặc manual_verification");
+  if (data.verdict !== "pass" && data.verdict !== "rework" &&
+      data.verdict !== "unverified" && data.verdict !== "manual_verification") {
+    throw new Error("IntegrationReview.verdict phải là pass, rework hoặc unverified");
   }
+  const verdict = data.verdict === "manual_verification" ? "unverified" : data.verdict;
   const checksRaw = array(data.checks, "integration.checks");
   if (checksRaw.length !== criterionIds.length) throw new Error("IntegrationReview phải kiểm tra đúng mọi acceptance criterion");
   const seen = new Set<string>();
@@ -242,11 +244,11 @@ export function validateIntegrationReview(value: unknown, criterionIds: string[]
   if (data.verdict === "rework" && (!hasFailed || !rework.length)) {
     throw new Error("IntegrationReview rework cần ít nhất một failed criterion và Peer feedback");
   }
-  if (data.verdict === "manual_verification" && (hasFailed || !hasUnverified || rework.length)) {
-    throw new Error("IntegrationReview manual_verification chỉ dùng khi còn unverified, không có failed/rework");
+  if (verdict === "unverified" && (hasFailed || !hasUnverified || rework.length)) {
+    throw new Error("IntegrationReview unverified chỉ dùng khi còn unverified, không có failed/rework");
   }
   return { summary: nonempty(data.summary, "integration.summary", 5000),
-    verdict: data.verdict, checks, contractChecks, rework };
+    verdict, checks, contractChecks, rework };
 }
 
 /** Lead makes the repair decision after independent Reviewer reports failed criteria.

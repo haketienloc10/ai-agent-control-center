@@ -102,7 +102,8 @@ export class WorkflowEngine {
         !workflow.peers.length || !workflow.peers.every((p) => p.status === "accepted") ||
         (!error.startsWith("IntegrationReview sai schema") && !retryRemediation && !retryVerification) ||
         (retryRemediation && workflow.finalReview?.verdict !== "rework") ||
-        (retryVerification && workflow.finalReview?.verdict !== "manual_verification")) {
+        (retryVerification && workflow.finalReview?.verdict !== "unverified" &&
+          workflow.finalReview?.verdict !== "manual_verification")) {
       throw new Error("Chỉ retry được Final Review hoặc quyết định Lead lỗi schema khi mọi Peer đã accepted");
     }
     this.store.mutateWorkflow(id, (w) => {
@@ -362,7 +363,8 @@ export class WorkflowEngine {
 
   private async resumeLeadVerification(id: string): Promise<void> {
     const report = this.store.getWorkflow(id)?.finalReview;
-    if (!report || report.verdict !== "manual_verification") {
+    if (!report || (report.verdict !== "unverified" &&
+        report.verdict !== "manual_verification")) {
       throw new Error("Thiếu unverified Reviewer report để retry Lead");
     }
     const decision = await this.leadVerification(id, report);
@@ -576,7 +578,7 @@ export class WorkflowEngine {
       "Nếu consumer dùng fallback/mock trong khi contract yêu cầu output của producer, phải ghi failed và chỉ định rework.",
       "Ordering-only dependencies không cần integration contract check; nhưng không được lạm dụng để bỏ qua integration đã cam kết.",
       "Nếu integration lỗi: verdict=rework, checks có failed và rework chứa ít nhất một taskId thuộc Peers với feedback cụ thể.",
-      "Nếu không có failed nhưng chưa xác minh một số tiêu chí: verdict=manual_verification.",
+      "Nếu không có failed nhưng chưa xác minh một số tiêu chí: verdict=unverified. Lead sẽ quyết định bước tiếp theo.",
       "Chỉ verdict=pass khi TẤT CẢ tiêu chí passed và evidence có căn cứ cụ thể.",
       "Không thực hiện merge, publish hoặc sửa code trong bước review này.",
       "Bạn chỉ đưa ra verdict và đề xuất rework dựa trên bằng chứng. Lead sẽ quyết định Peer nào sửa.",
@@ -585,7 +587,7 @@ export class WorkflowEngine {
       "ALLOWED_PEER_IDS: " + JSON.stringify(workflow.peers.map((p) => p.id)),
       "Trả JSON duy nhất: " + JSON.stringify({
         summary: "Báo cáo tích hợp tổng thể",
-        verdict: "manual_verification",
+        verdict: "unverified",
         checks: criteria.map((c) => ({
           criterionId: c.id, status: "unverified",
           evidence: "Điều kiện chưa kiểm chứng bằng test hay thao tác thực tế"
@@ -660,7 +662,7 @@ export class WorkflowEngine {
       workflow.manualVerifiedContractIds = undefined;
     });
     this.store.workflowEvent(id, "workflow/integration_review", reviewed);
-    if (reviewed.verdict === "manual_verification") {
+    if (reviewed.verdict === "unverified" || reviewed.verdict === "manual_verification") {
       const decision = await this.leadVerification(id, reviewed);
       return this.applyVerificationDecision(id, reviewed, decision);
     }

@@ -84,3 +84,5 @@ Final Reviewer chỉ báo `manual_verification` (= còn `unverified`); đây **k
 Mỗi workflow tối đa **2 vòng xác minh tự động** (`verificationRounds`) ngoài format retry/rework budget. Khi hết lượt, Lead chỉ có thể chọn `request_human` hoặc `blocked`; Backend từ chối decision tự động vượt giới hạn. Human Confirmation chỉ chứng nhận người dùng đã kiểm tra, không biến `failed` thành `passed`. Báo cáo Reviewer vẫn là nguồn đánh giá cuối cùng; Lead không tự trả verdict PASS.
 
 Khi `LeadVerification` sai schema sau 3 lượt, Workflow `failed` và nút retry chỉ chạy lại Lead với báo cáo đã lưu, không gọi lại Reviewer hoặc Peer.
+
+**Tên verdict:** Reviewer sử dụng `unverified` (chỉ thiếu bằng chứng). Hệ thống vẫn chấp nhận giá trị cũ `manual_verification` từ Codex/P1 và chuẩn hóa thành `unverified` để tương thích. Trạng thái Workflow `waiting_manual_verification` chỉ được đặt sau khi Lead chọn `request_human`.
