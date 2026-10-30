@@ -59,6 +59,9 @@ export class RecoveryManager {
   /** User-initiated follow-up turn. Does NOT replay the original prompt or resume Workflow. */
   async continueTask(taskId: string, prompt: unknown) {
     const source = this.store.get(taskId);
+    if (source?.role === "reviewer") {
+      throw new Error("Final Reviewer never resumes a previous Thread; retry the workflow review");
+    }
     if (!source || source.status !== "interrupted" ||
         source.reconciliation?.status !== "completed" || !source.threadId) {
       throw new Error("Must reconcile a terminal interrupted turn before starting a follow-up");

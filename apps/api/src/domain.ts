@@ -10,13 +10,17 @@ export function createTask(input: unknown, config: WorkspaceConfig): Task {
   if (typeof value.prompt !== "string" || !value.prompt.trim() || value.prompt.length > 20000) {
     throw new Error("prompt phải có 1-20000 ký tự");
   }
-  if (value.role !== "lead" && value.role !== "peer") throw new Error("role phải là lead hoặc peer");
+  if (value.role !== "lead" && value.role !== "peer" && value.role !== "reviewer") {
+    throw new Error("role phải là lead, peer hoặc reviewer");
+  }
   const role: AgentRole = value.role;
   if (role === "peer" && (typeof value.moduleId !== "string" ||
        !config.modules.some((module) => module.id === value.moduleId))) {
     throw new Error("Peer phải chọn module đã đăng ký");
   }
-  if (role === "lead" && value.moduleId !== undefined) throw new Error("Lead không nhận moduleId");
+  if (role !== "peer" && value.moduleId !== undefined) {
+    throw new Error("Lead/Reviewer không nhận moduleId");
+  }
   const now = new Date().toISOString();
   return {
     id: randomUUID(),
@@ -46,6 +50,7 @@ export function assertTransition(from: TaskStatus, to: TaskStatus): void {
 
 export function cwdForTask(task: Task, config: WorkspaceConfig): string {
   if (task.role === "lead") return config.lead.cwd;
+  if (task.role === "reviewer") return config.reviewer?.cwd ?? config.lead.cwd;
   const module = config.modules.find((item) => item.id === task.moduleId);
   if (!module) throw new Error("Module chưa được đăng ký: " + task.moduleId);
   return module.path;
