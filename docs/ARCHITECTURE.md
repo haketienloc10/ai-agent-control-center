@@ -171,3 +171,13 @@ Không mở thêm Agent hay gate. LeadPlan thêm `integrationContracts` và `ord
 - `IntegrationReview`: song song hai tập `checks` (Product Acceptance) và `contractChecks` (Integration Acceptance), đều strict ID/evidence.
 - Final Review pass khi cả hai tập passed; contract fail → targeted rework và downstream invalidation; contract unverified → manual verification gate trước Business Approval.
 - Backend enforce hình thức và ràng buộc logic verdict; nội dung evidence vẫn phải do Agent hoặc test xác minh. JSON contract valid không đồng nghĩa tích hợp thực tế đã được chứng minh.
+
+## P2 implementation
+
+P2 tách `WorktreeManager` (Git lifecycle), `TaskStore` (SQLite snapshot/event journal), `P2Services` (patch + independent test), `ArtifactStore` (SHA-256 + tải/preview diff), `RecoveryManager` (Codex thread/read → thread/resume explicit), `SingleInstanceLock` (giảm nguy cơ dispatch trùng từ hai server).
+
+Quy trình: Module Registry → WorktreeManager.ensure(workflowId, moduleId) → SessionManager.thread/start(cwd=isolatedModule) → Peer → P2Services.capture() → Lead Review → Final Integration Review → Business Approval. Artifact chỉ xuất patch, không tự áp dụng vào source.
+
+Module chung repository chia sẻ worktree theo workflow; độc lập repo có worktree riêng. Module repo chưa commit hoặc dirty fail closed. Git worktree không chặn Codex YOLO ra ngoài, sandbox tùy chọn là ranh giới quyền ghi chặt chẽ hơn. Backend vẫn không áp MCP allowlist cho nội bộ Codex; phải kiểm soát qua cấu hình Codex bên ngoài.
+
+Chi tiết và lệnh chạy: `docs/P2.md`.

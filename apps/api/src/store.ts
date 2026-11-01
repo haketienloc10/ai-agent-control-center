@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type { ActivityEntry, ActivityEvent, RuntimeApproval, Task, TaskStatus, WorkflowRun } from "@aacc/contracts";
 import { projectActivity } from "./activity.js";
 import { assertTransition } from "./domain.js";
@@ -16,16 +17,24 @@ interface Persisted {
 
 export class TaskStore extends EventEmitter {
   private readonly file: string;
+  private readonly db: DatabaseSync;
   private state: Persisted;
   private streamFlush?: NodeJS.Timeout;
+  private pendingJournal: ActivityEvent[] = [];
 
   constructor(dataDir: string) {
     super();
     mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     this.file = join(dataDir, "state.json");
-    const raw = existsSync(this.file)
-      ? JSON.parse(readFileSync(this.file, "utf8")) as Partial<Persisted>
-      : {};
+    this.db = new DatabaseSync(join(dataDir, "state.sqlite"), { timeout: 5000 });
+    this.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
+    this.db.exec("CREATE TABLE IF NOT EXISTS snapshots (id INTEGER PRIMARY KEY CHECK(id=1), json TEXT NOT NULL);");
+    this.db.exec("CREATE TABLE IF NOT EXISTS event_journal (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, task_id TEXT NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL);");
+    this.db.exec("CREATE INDEX IF NOT EXISTS event_task_seq ON event_journal(task_id,seq);");
+    const saved = this.db.prepare("SELECT json FROM snapshots WHERE id=1").get() as { json: string } | undefined;
+    const raw = saved ? JSON.parse(saved.json) as Partial<Persisted> : existsSync(this.file)
+      ? JSON.parse(readFileSync(this.file, "utf8")) as Partial<Persisted> : {};
+    if (!saved && raw.events?.length) this.pendingJournal = [...raw.events];
     this.state = {
       tasks: raw.tasks ?? [], events: raw.events ?? [],
       approvals: raw.approvals ?? [], workflows: raw.workflows ?? [],
@@ -58,9 +67,30 @@ export class TaskStore extends EventEmitter {
 
   private save() {
     if (this.streamFlush) { clearTimeout(this.streamFlush); this.streamFlush = undefined; }
+    const json = JSON.stringify(this.state);
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.prepare("INSERT INTO snapshots(id,json) VALUES (1,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json").run(json);
+      const statement = this.db.prepare("INSERT OR IGNORE INTO event_journal(id,task_id,kind,data,created_at) VALUES(?,?,?,?,?)");
+      for (const item of this.pendingJournal) {
+        statement.run(item.id, item.taskId, item.kind, JSON.stringify(item.data), item.createdAt);
+      }
+      this.db.exec("COMMIT");
+      this.pendingJournal = [];
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    // Compatibility view only. SQLite is authoritative on subsequent boot.
     const temp = this.file + ".tmp";
     writeFileSync(temp, JSON.stringify(this.state, null, 2), { mode: 0o600 });
     renameSync(temp, this.file);
+  }
+
+  close() {
+    if (this.streamFlush) { clearTimeout(this.streamFlush); this.streamFlush = undefined; }
+    this.save();
+    this.db.close();
   }
 
   private flushStreamSoon() {
@@ -74,6 +104,19 @@ export class TaskStore extends EventEmitter {
 
   list() { return [...this.state.tasks].reverse(); }
   events() { return this.state.events.slice(-150); }
+  journal(afterSeq = 0, limit = 100) {
+    if (!Number.isSafeInteger(afterSeq) || afterSeq < 0 ||
+        !Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
+      throw new Error("Invalid journal pagination");
+    }
+    return this.db.prepare(
+      "SELECT seq, id, task_id AS taskId, kind, data, created_at AS createdAt FROM event_journal WHERE seq>? ORDER BY seq LIMIT ?"
+    ).all(afterSeq, limit).map((row) => ({
+      seq: Number(row.seq), id: row.id as string, taskId: row.taskId as string,
+      kind: row.kind as string, data: JSON.parse(row.data as string),
+      createdAt: row.createdAt as string
+    }));
+  }
   activities() { return this.state.activities.slice(-300); }
   eventsForTask(taskId: string) { return this.state.events.filter((event) => event.taskId === taskId); }
   approvals() { return [...this.state.approvals].reverse(); }
@@ -91,10 +134,16 @@ export class TaskStore extends EventEmitter {
     if (!task) throw new Error("Task not found");
     if (status) { assertTransition(task.status, status); task.status = status; }
     Object.assign(task, patch, { updatedAt: new Date().toISOString() });
-    if (status) projectActivity(this.state.activities, {
-      id: randomUUID(), taskId: id, kind: "task/status", data: { status, error: patch.error },
-      createdAt: task.updatedAt
-    });
+    if (status) {
+      const event: ActivityEvent = {
+        id: randomUUID(), taskId: id, kind: "task/status",
+        data: { status, error: patch.error }, createdAt: task.updatedAt
+      };
+      projectActivity(this.state.activities, event);
+      this.state.events.push(event);
+      this.state.events = this.state.events.slice(-1000);
+      this.pendingJournal.push(event);
+    }
     this.save(); this.emit("change");
     return task;
   }
@@ -109,6 +158,7 @@ export class TaskStore extends EventEmitter {
     } else {
       this.state.events.push(event);
       this.state.events = this.state.events.slice(-1000);
+      this.pendingJournal.push(event);
       this.save(); this.emit("change");
     }
     return event;

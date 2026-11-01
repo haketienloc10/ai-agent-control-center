@@ -24,13 +24,17 @@
 
 **Nghiệm thu:** một yêu cầu Lead tạo ít nhất hai PeerTask, retry một Peer riêng và xuất báo cáo tổng hợp.
 
-## P2 — Isolation & recovery
+## P2 — Isolation & recovery (PR #8)
 
-- [ ] Git worktree theo repository và chính sách merge.
-- [ ] SQLite/PostgreSQL state, durable event journal.
-- [ ] Restart reconciliation, resume thread, không thực thi trùng.
-- [ ] Artifact store, diff viewer và xác minh tests evidence độc lập.
-- [ ] Permission boundary và shell/MCP policy theo Agent.
+- [x] Git worktree riêng theo workflow/Git repo; source repo sạch, merge policy review-only (xuất patch, không tự áp dụng).
+- [x] SQLite WAL snapshot, durable event journal có cursor và migration từ P1 state.json.
+- [x] Restart reconciliation qua Codex thread/read & thread/turns/list; follow-up chủ động dùng thread/resume, không phát lại prompt cũ.
+- [x] Artifact store SHA-256, diff viewer/tải patch và test runner độc lập từ modules[].testCommand.
+- [x] Có chế độ Codex sandbox opt-in và giới hạn API shell command bằng argv cấu hình, localhost-only.
+- [ ] Hard OS-level isolation và MCP allowlist trong YOLO mode: không thể được bảo đảm bằng app-server; cần sandbox/OS policy thực tế.
+- [ ] Live Codex E2E với các Git repos thực trên máy người dùng.
+
+**Nghiệm thu P2:** Peer chỉ ghi vào detached worktree; nguồn gốc sạch, artifact patch truy vết được; restart không phát lại lệnh tự động. Xem docs/P2.md.
 
 ## P3 — Experience
 
