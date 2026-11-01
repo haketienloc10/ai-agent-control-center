@@ -259,6 +259,11 @@ function App() {
     return () => events.close();
   }, []);
 
+  const inspectTask = (id: string) => {
+    setSelectedTask(id);
+    document.getElementById("tasks-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   const runAction = async (path: string, body?: unknown) => {
     try {
       setError("");
@@ -299,10 +304,10 @@ function App() {
     <p className="error" role="status">YOLO mode: Codex được quyền chạy lệnh và sửa file không cần Runtime Approval, kể cả ngoài module. Chỉ chạy trên máy cá nhân với repo tin cậy; Business Approval cuối workflow vẫn được giữ.</p>
     {error && <aside className="error" role="alert">{error} <button onClick={() => setError("")}>Đóng</button></aside>}
     <AgentMap modules={snapshot.modules} tasks={snapshot.tasks}
-      workflows={snapshot.workflows} onSelectTask={setSelectedTask}/>
+      workflows={snapshot.workflows} onSelectTask={inspectTask}/>
     <ObservabilityPanel notifications={snapshot.notifications ?? []}
       onAcknowledge={id => void runAction("/notifications/" + id + "/read")}
-      onInspectTask={id => setSelectedTask(id)}
+      onInspectTask={inspectTask}
       onInspectWorkflow={id =>
         document.getElementById("workflow-" + id)?.scrollIntoView({ behavior: "smooth" })}/>
     <section className="columns">
@@ -371,7 +376,7 @@ function App() {
           </div>)}
       </article>
     </section>
-    <section className="panel">
+    <section className="panel" id="tasks-panel">
       <div className="panel-heading"><h2>Tasks / Codex Sessions</h2><button onClick={() => void refresh()}>Làm mới</button></div>
       {snapshot.tasks.length === 0 ? <p className="muted">Chưa có Task.</p> :
         <div className="task-list">{snapshot.tasks.map((task) =>
@@ -411,7 +416,7 @@ function App() {
             {task.error && <small className="error-text">{task.error}</small>}
           </div>)}</div>}
     </section>
-    <SessionHistory workflows={snapshot.workflows} onInspectTask={setSelectedTask}/>
+    <SessionHistory workflows={snapshot.workflows} onInspectTask={inspectTask}/>
     <ActivityPanel
       activities={snapshot.activities ?? []}
       events={snapshot.events}

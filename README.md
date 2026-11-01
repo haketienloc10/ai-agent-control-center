@@ -60,7 +60,7 @@ Tài liệu giao thức: https://developers.openai.com/codex/app-server
 
 ## Codex YOLO mode (local-only)
 
-Nhánh này dùng `approvalPolicy: "never"` và `sandbox: "danger-full-access"` / `sandboxPolicy.type: "dangerFullAccess"` cho mọi Thread và Turn. Tương đương `codex --yolo`. **Codex không hỏi cấp quyền từng lệnh, có quyền filesystem/network theo tài khoản chạy Backend**, kể cả bên ngoài source module; `cwd` chỉ định tuyến công việc chứ không chặn truy cập. Hãy sao lưu/commit các source modules và chỉ chạy với workspace tin cậy. Backend chưa có authentication và chỉ bind `127.0.0.1`.
+Chỉ Peer mặc định chạy `approvalPolicy: "never"`, `sandbox: "danger-full-access"` và `sandboxPolicy.type: "dangerFullAccess"`, tương đương Codex YOLO. Lead và Final Reviewer dùng `read-only` để điều phối/kiểm tra. Có thể bật `CODEX_SECURITY_MODE=sandbox` cho Peer. **Git worktree không phải OS sandbox:** Peer ở YOLO vẫn có quyền filesystem/network theo tài khoản Backend; `cwd` chỉ định tuyến công việc. Chỉ chạy trên máy tin cậy; Backend không có authentication và bind `127.0.0.1`. 
 
 **Business Approval** ở cuối workflow vẫn cần bạn bấm duyệt; khác với Runtime Approval vốn đã bỏ qua trong YOLO mode.
 
@@ -70,7 +70,7 @@ Dashboard mặc định hiển thị **Activity Timeline** (Lead/Peer, thời gi
 
 ## Final Integration Review + Acceptance Criteria
 
-Sau khi tất cả Peer được Lead accept, Workflow **chưa** tự chuyển sang Business Approval: Lead chạy Final Integration Review, đối chiếu `acceptanceCriteria` của kế hoạch, kiểm tra việc kết nối giữa source modules và kết quả test/evidence. Final reviewer trả `pass`, `rework` hoặc `manual_verification`. Khi `rework`, Backend dispatch Peer được chỉ định và invalidate các Peer phụ thuộc upstream đã thay đổi. Khi `manual_verification`, UI hiển thị từng tiêu chí chưa được xác minh để người dùng tự kiểm tra và xác nhận, trước khi duyệt kết quả cuối.
+Sau khi tất cả Peer được Lead accept, một **Final Reviewer Agent riêng** mở Codex Thread mới, read-only, đối chiếu `acceptanceCriteria`, kết nối giữa các module và test evidence. Reviewer trả `pass`, `rework` hoặc `unverified`. Khi `rework`, **Lead** quyết định Peer nào sửa, Backend invalidates các downstream phụ thuộc. Khi `unverified`, **Lead** quyết định `collect_evidence`, `run_verification`, `request_human` hoặc `blocked`. Chỉ `request_human` mới mở Human Verification; Lead không được tự tuyên bố passed.
 
 Không có claim rằng test/browser đã được chạy nếu không có bằng chứng; review của LLM không thay thế E2E tự động. Xem `docs/WORKFLOW_P1.md`.
 
@@ -78,7 +78,7 @@ Không có claim rằng test/browser đã được chạy nếu không có bằn
 
 Mỗi dependency xuyên module trong LeadPlan phải được phân loại: **integrationContracts** (có artifact/API được bàn giao, nơi sử dụng và cách kiểm chứng) hoặc **orderingOnlyDependencies** (chỉ yêu cầu thứ tự, có lý do). Một dependency không đồng nghĩa với tích hợp; tuy nhiên Lead không được tự lờ đi một contract đã cam kết.
 
-Final Integration Review duy nhất đánh giá đồng thời **Product Acceptance** (`checks`) và **Integration Acceptance** (`contractChecks`), đều có evidence. PASS chỉ khi cả hai nhóm đều passed. Nếu UI chạy bằng mock/fallback trong khi plan cam kết Web dùng API, reviewer phải đánh dấu contract failed và yêu cầu rework; nếu chưa kiểm chứng, yêu cầu người dùng xác nhận contract trước Business Approval. Đây vẫn là review dựa vào bằng chứng do Agent báo cáo, không đảm bảo chứng thực kỹ thuật độc lập.
+Final Integration Review duy nhất đánh giá đồng thời **Product Acceptance** (`checks`) và **Integration Acceptance** (`contractChecks`), đều có evidence. PASS chỉ khi cả hai nhóm đều passed. Nếu UI chạy bằng mock/fallback trong khi plan cam kết Web dùng API, reviewer phải đánh dấu contract failed và yêu cầu rework; nếu chưa kiểm chứng, Reviewer báo `unverified` và Lead điều phối thu thập bằng chứng hoặc quyết định có cần Human Verification.  Đây vẫn là review dựa vào bằng chứng do Agent báo cáo, không đảm bảo chứng thực kỹ thuật độc lập.
 
 ## P2 — Worktree, SQLite, Recovery và Artifact Viewer
 

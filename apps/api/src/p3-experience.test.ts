@@ -116,3 +116,22 @@ test("P3 process metrics are explicitly backend-level, resource values and queue
   assert.equal(result.workflows.waitingHuman, 1);
   assert.equal(result.alerts.unread, 3);
 });
+
+test("P3 restart creates exactly one interruption notification per active task/workflow", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aacc-p3-restart-alert-"));
+  let store: TaskStore | undefined;
+  try {
+    store = new TaskStore(dir);
+    const t = store.add(createTask({ role: "lead", title: "Running", prompt: "work" }, config));
+    store.update(t.id, {}, "starting");
+    store.update(t.id, {}, "running");
+    store.addWorkflow({ ...workflow("wf-restart"), status: "executing" });
+    store.close(); store = new TaskStore(dir);
+    assert.equal(store.get(t.id)?.status, "interrupted");
+    assert.equal(store.getWorkflow("wf-restart")?.status, "interrupted");
+    assert.deepEqual(store.notifications().map(n => n.kind).sort(),
+      ["task_interrupted", "workflow_interrupted"]);
+    store.close(); store = new TaskStore(dir);
+    assert.equal(store.notifications().length, 2, "No duplicate after second restart");
+  } finally { store?.close(); rmSync(dir, { recursive: true, force: true }); }
+});

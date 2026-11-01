@@ -53,6 +53,9 @@ export class TaskStore extends EventEmitter {
         task.status = "interrupted";
         task.error = "Backend restarted; reconcile thread before retry";
         task.updatedAt = new Date().toISOString();
+        task.finishedAt = task.updatedAt;
+        this.notify("task", task.id, "task_interrupted", "Task gián đoạn sau restart",
+          task.title + ": " + task.error);
       }
     }
     for (const approval of this.state.approvals) {
@@ -63,6 +66,8 @@ export class TaskStore extends EventEmitter {
         workflow.status = "interrupted";
         workflow.error = "Backend restarted; do not auto-dispatch without reconciliation";
         workflow.updatedAt = new Date().toISOString();
+        this.notify("workflow", workflow.id, "workflow_interrupted",
+          "Workflow gián đoạn sau restart", workflow.title + ": " + workflow.error);
       }
     }
     this.save();
