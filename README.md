@@ -90,3 +90,7 @@ Peer phải chạy trong Git repository có ít nhất 1 commit và working tree
 - `CODEX_SECURITY_MODE=sandbox npm run dev:api` để dùng sandbox cho Codex. Nếu không đặt, YOLO được giữ lại và không thể coi là cô lập quyền truy cập file/network.
 
 Xem [docs/P2.md](docs/P2.md) để biết quy trình áp dụng patch thủ công và các giới hạn bảo mật.
+
+## Agent roles — Independent Final Reviewer
+
+Lead chỉ điều phối Peer và ra quyết định accept/rework hoặc khắc phục blocker; không tự làm Final Integration Review. Sau các Peer được Lead chấp nhận, một **Final Reviewer riêng** (`role=reviewer`) kiểm tra Product + Integration Acceptance trên **Codex Thread mới, read-only**. Nếu có failed findings, Lead nhận báo cáo và quyết định Peer cần sửa. Mỗi lần review lại sau rework tạo một Thread mới. Xem [docs/AGENT_ROLES.md](docs/AGENT_ROLES.md).

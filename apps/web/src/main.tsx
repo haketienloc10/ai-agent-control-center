@@ -39,7 +39,15 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onR
       <div><strong>{workflow.title}</strong><p>{workflow.request}</p></div>
       <span className={"status " + workflow.status}>{workflow.status.replaceAll("_", " ")}</span>
     </div>
-    <p className="muted">Lead reviews: {workflow.reviewCount} · Final integration reviews: {workflow.integrationReviewCount ?? 0} · Max reworks / Peer: {workflow.maxReworks}</p>
+    <p className="muted">Lead reviews: {workflow.reviewCount} · Independent Final Reviews: {workflow.integrationReviewCount ?? 0} · Verification rounds: {workflow.verificationRounds ?? 0}/2 · Max reworks / Peer: {workflow.maxReworks}</p>
+    {(workflow.reviewerTaskIds ?? []).length > 0 && <details className="acceptance-details">
+      <summary>Final Reviewer · Fresh Codex Sessions ({workflow.reviewerTaskIds!.length})</summary>
+      <p className="muted">Reviewer là role riêng, mỗi lượt có Codex Thread mới, không sử dụng session Lead.</p>
+      {workflow.reviewerTaskIds!.map((taskId, i) =>
+        <button type="button" className="link-button" key={taskId}
+          onClick={() => onSelect(taskId)}>Xem Final Reviewer session #{i + 1}</button>
+      )}
+    </details>}
     {workflow.plan?.acceptanceCriteria && <details className="acceptance-details">
       <summary>Acceptance Criteria ({workflow.plan.acceptanceCriteria.length})</summary>
       <ol>{workflow.plan.acceptanceCriteria.map((criterion) => <li key={criterion.id}>
@@ -58,7 +66,7 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onR
       </div>)}
     </details>}
     {workflow.finalReview && <div className="integration-report">
-      <h3>Final Integration Review</h3>
+      <h3>Final Integration Review · Independent Reviewer</h3>
       <p>{workflow.finalReview.summary}</p>
       <h3>Product Acceptance</h3>
       {workflow.finalReview.checks.map((check) => {
@@ -83,9 +91,34 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onR
         </div>;
       })}
       {workflow.finalReview.rework.map((item) => <p key={item.taskId} className="error-text">
-        Cần sửa {item.taskId}: {item.feedback}
+        Reviewer đề xuất sửa {item.taskId}: {item.feedback}
       </p>)}
+      {workflow.lastRemediation && <div className="independent-test">
+        <strong>Lead quyết định khắc phục:</strong> {workflow.lastRemediation.summary}
+        {workflow.lastRemediation.rework.map((action) =>
+          <p key={action.taskId}>Giao lại {action.taskId}: {action.feedback}</p>)}
+      </div>}
     </div>}
+    {workflow.lastVerificationDecision && <section className="lead-verification">
+      <h3>Lead xử lý kết quả chưa xác minh</h3>
+      <p><strong>Quyết định:</strong> {({
+        collect_evidence: "Yêu cầu Peer bổ sung bằng chứng",
+        run_verification: "Chạy kiểm chứng độc lập",
+        request_human: "Cần người dùng hỗ trợ",
+        blocked: "Đang bị chặn"
+      } as const)[workflow.lastVerificationDecision.decision]}</p>
+      <p><strong>Lý do:</strong> {workflow.lastVerificationDecision.reason}</p>
+      <p><strong>Hướng xử lý:</strong> {workflow.lastVerificationDecision.instructions}</p>
+      {workflow.lastVerificationDecision.taskIds.length > 0 &&
+        <p className="muted">Peer: {workflow.lastVerificationDecision.taskIds.join(", ")}</p>}
+    </section>}
+    {workflow.status === "blocked" && <section className="manual-verification">
+      <strong>Workflow đang bị chặn, chưa thể duyệt</strong>
+      <p>{workflow.blocker}</p>
+      <div className="actions">
+        <button type="button" onClick={() => onDecision(workflow.id, "reject")}>Đóng workflow bị chặn</button>
+      </div>
+    </section>}
     {workflow.plan && <p><strong>Lead Plan:</strong> {workflow.plan.summary}</p>}
     <div className="peers">{workflow.peers.map((peer) => <div key={peer.id} className="peer">
       <div className="panel-heading">
@@ -132,10 +165,15 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onR
     {workflow.error && <p className="error-text">{workflow.error}</p>}
     {workflow.status === "failed" && workflow.peers.length > 0 &&
       workflow.peers.every((p) => p.status === "accepted") &&
-      workflow.error?.startsWith("IntegrationReview sai schema") &&
+      (workflow.error?.startsWith("IntegrationReview sai schema") ||
+        workflow.error?.startsWith("LeadRemediation sai schema") ||
+        workflow.error?.startsWith("LeadVerification sai schema")) &&
       <div className="actions">
         <button className="primary" onClick={() => onRetryIntegration(workflow.id)}>
-          Thử lại Final Integration Review (không chạy lại Peer)
+          {workflow.error?.startsWith("LeadRemediation sai schema") ||
+           workflow.error?.startsWith("LeadVerification sai schema")
+            ? "Thử lại quyết định Lead (không chạy lại Reviewer/Peer)"
+            : "Thử lại Final Reviewer (fresh session, không chạy lại Peer)"}
         </button>
       </div>}
     {workflow.status === "failed" && workflow.peers.some((p) => p.status === "review_pending") &&
@@ -146,7 +184,9 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onR
       </div>}
     {workflow.status === "waiting_manual_verification" && workflow.finalReview &&
       <div className="manual-verification">
-        <p><strong>Cần bạn kiểm tra thủ công:</strong> các tiêu chí chưa được xác minh bằng bằng chứng thực tế.</p>
+        <p><strong>Lead đã yêu cầu bạn hỗ trợ xác minh:</strong> chỉ sau khi Lead đánh giá việc kiểm chứng tự động không phù hợp hoặc chưa đủ.</p>
+        {workflow.lastVerificationDecision?.decision === "request_human" &&
+          <p>{workflow.lastVerificationDecision.instructions}</p>}
         <p className="muted">Chỉ xác nhận sau khi bạn tự thử nghiệm các chức năng liên quan. Đây không phải xác nhận test tự động đã chạy.</p>
         {unverifiedChecks.map((check) => {
           const criterion = workflow.plan?.acceptanceCriteria.find((c) => c.id === check.criterionId);
@@ -347,7 +387,7 @@ function App() {
               void runAction("/tasks/" + task.id + "/reconcile")}>Reconcile</button>}
             {task.reconciliation && <small className="recovery-detail">
               Recovery: {task.reconciliation.status} — {task.reconciliation.detail}</small>}
-            {task.reconciliation?.status === "completed" && selectedTask === task.id &&
+            {task.role !== "reviewer" && task.reconciliation?.status === "completed" && selectedTask === task.id &&
               <div className="recovery-followup">
                 <label>Follow-up mới trên Thread cũ (không chạy lại prompt trước)
                   <textarea rows={2} value={followupPrompt} onChange={(event) => setFollowupPrompt(event.target.value)}
@@ -370,7 +410,7 @@ function App() {
       selectedTask={selectedTask}
       onSelectTask={setSelectedTask}
     />
-    <footer>P1 — Lead/Peer automatic workflow. Chưa có Git worktree, recovery/resume sau restart hoặc merge tự động.</footer>
+    <footer>P2 — Lead điều phối · Peer triển khai · Final Reviewer độc lập trong fresh session · Bạn duyệt.</footer>
   </main>;
 }
 

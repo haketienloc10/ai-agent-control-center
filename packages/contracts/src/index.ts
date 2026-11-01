@@ -1,10 +1,11 @@
-export type AgentRole = "lead" | "peer";
+export type AgentRole = "lead" | "peer" | "reviewer";
 export type TaskStatus =
   | "queued" | "starting" | "running" | "waiting_runtime_approval"
   | "completed" | "failed" | "interrupted";
 export interface ModuleConfig { id: string; label: string; path: string; testCommand?: string[] }
 export interface WorkspaceConfig {
   lead: { cwd: string; instructions: string };
+  reviewer?: { cwd: string; instructions: string };
   modules: ModuleConfig[];
 }
 export interface Task {
@@ -66,7 +67,7 @@ export interface ContractCheck {
 }
 export interface IntegrationReview {
   summary: string;
-  verdict: "pass" | "rework" | "manual_verification";
+  verdict: "pass" | "rework" | "unverified" | "manual_verification"; // legacy alias accepted for old workflows
   checks: IntegrationCheck[];
   contractChecks: ContractCheck[];
   rework: Array<{ taskId: string; feedback: string }>;
@@ -116,6 +117,18 @@ export interface LeadReview {
   summary: string;
   reviews: Array<{ taskId: string; decision: "accept" | "rework"; feedback: string }>;
 }
+export interface LeadRemediation {
+  summary: string;
+  rework: Array<{ taskId: string; feedback: string }>;
+}
+
+/** Unverified is a missing-evidence finding, never implicit human approval. */
+export interface LeadVerificationDecision {
+  decision: "collect_evidence" | "run_verification" | "request_human" | "blocked";
+  reason: string;
+  instructions: string;
+  taskIds: string[];
+}
 export interface PeerAttempt {
   taskId: string; iteration: number; result?: PeerResult; feedback?: string;
 }
@@ -126,11 +139,16 @@ export interface PeerWork {
 }
 export type WorkflowStatus =
   | "planning" | "executing" | "reviewing" | "integration_reviewing"
-  | "waiting_manual_verification" | "waiting_business_approval"
+  | "waiting_manual_verification" | "waiting_business_approval" | "blocked"
   | "completed" | "rejected" | "failed" | "interrupted";
 export interface WorkflowRun {
   id: string; title: string; request: string; status: WorkflowStatus;
   plan?: LeadPlan; peers: PeerWork[]; leadTaskIds: string[];
+  reviewerTaskIds?: string[];
+  lastRemediation?: LeadRemediation;
+  lastVerificationDecision?: LeadVerificationDecision;
+  verificationRounds?: number;
+  blocker?: string;
   reviewCount: number; integrationReviewCount?: number;
   finalReview?: IntegrationReview;
   manualVerifiedCriterionIds?: string[];

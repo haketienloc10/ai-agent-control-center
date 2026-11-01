@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseAgentJson, validateIntegrationReview, validateLeadPlan, validateLeadReview, validatePeerResult } from "./workflow-contracts.js";
+import { parseAgentJson, validateIntegrationReview, validateLeadVerificationDecision, validateLeadRemediation, validateLeadPlan, validateLeadReview, validatePeerResult } from "./workflow-contracts.js";
 import type { WorkspaceConfig } from "@aacc/contracts";
 const config: WorkspaceConfig = {
   lead: { cwd: "/tmp/lead", instructions: "" },
@@ -78,7 +78,7 @@ test("Final Integration Review chặn pass khi unverified/failed, bắt buộc e
   }, criterionIds, peerIds), /không được pass/);
   assert.equal(validateIntegrationReview({
     summary: "Manual", verdict: "manual_verification", checks, contractChecks: [], rework: []
-  }, criterionIds, peerIds).verdict, "manual_verification");
+  }, criterionIds, peerIds).verdict, "unverified");
   assert.throws(() => validateIntegrationReview({
     summary: "Sai", verdict: "manual_verification", checks: [checks[0], checks[0]], contractChecks: [], rework: []
   }, criterionIds, peerIds), /criterionId/);
@@ -117,10 +117,66 @@ test("Không thể pass Integration Acceptance khi hợp đồng fail hoặc ch�
   assert.equal(validateIntegrationReview({
     summary: "Chờ xác minh", verdict: "manual_verification", checks: product,
     contractChecks: contracts, rework: []
-  }, ["ac1"], ["api1", "web1"], ["contract-api-web"]).verdict, "manual_verification");
+  }, ["ac1"], ["api1", "web1"], ["contract-api-web"]).verdict, "unverified");
   assert.equal(validateIntegrationReview({
     summary: "Fallback is wrong", verdict: "rework", checks: product,
     contractChecks: [{ ...contracts[0], status: "failed", evidence: "Web only runs mock" }],
     rework: [{ taskId: "web1", feedback: "Use API artifact" }]
   }, ["ac1"], ["api1", "web1"], ["contract-api-web"]).verdict, "rework");
+});
+
+test("Lead remediation chỉ chọn Peer hợp lệ, có chỉ dẫn và không được chọn 0 Peer", () => {
+  const ids = ["api1", "web1"];
+  assert.throws(() => validateLeadRemediation({ summary: "Skip failure", rework: [] }, ids), /ít nhất một/);
+  assert.throws(() => validateLeadRemediation({
+    summary: "Invalid", rework: [{ taskId: "unknown", feedback: "Fix" }]
+  }, ids), /taskId/);
+  assert.throws(() => validateLeadRemediation({
+    summary: "Duplicate", rework: [
+      { taskId: "api1", feedback: "Fix" }, { taskId: "api1", feedback: "Fix again" }
+    ]
+  }, ids), /taskId/);
+  assert.deepEqual(validateLeadRemediation({
+    summary: "Fix integration",
+    rework: [{ taskId: "web1", feedback: "Kết nối API thực tế thay vì fallback" }]
+  }, ids).rework.map((x) => x.taskId), ["web1"]);
+});
+
+test("LeadVerification requires evidence reason, valid Peer IDs and bounded decisions", () => {
+  const peers = ["api1", "web1"];
+  const decision = { decision: "collect_evidence", reason: "Missing UI test",
+    instructions: "Run Playwright and report evidence", taskIds: ["web1"] };
+  assert.equal(validateLeadVerificationDecision(decision, peers, true).decision, "collect_evidence");
+  assert.throws(() => validateLeadVerificationDecision(decision, peers, false), /hết giới hạn/);
+  assert.throws(() => validateLeadVerificationDecision({
+    ...decision, taskIds: ["outside"]
+  }, peers, true), /taskIds/);
+  assert.throws(() => validateLeadVerificationDecision({
+    ...decision, decision: "request_human"
+  }, peers, true), /không được dispatch/);
+  assert.equal(validateLeadVerificationDecision({
+    ...decision, decision: "request_human", taskIds: []
+  }, peers, false).decision, "request_human");
+  assert.throws(() => validateLeadVerificationDecision({
+    ...decision, instructions: ""
+  }, peers, true), /instructions/);
+  assert.throws(() => validateLeadVerificationDecision({
+    ...decision, decision: "pass", taskIds: []
+  }, peers, true), /decision/);
+});
+
+test("Reviewer verdict unverified là missing evidence, không mặc định Human", () => {
+  const criterionIds = ["ac1"];
+  const report = {
+    summary: "Insufficient evidence", verdict: "unverified",
+    checks: [{ criterionId: "ac1", status: "unverified", evidence: "Not run" }],
+    contractChecks: [], rework: []
+  };
+  assert.equal(validateIntegrationReview(report, criterionIds, []).verdict, "unverified");
+  assert.equal(validateIntegrationReview({
+    ...report, verdict: "manual_verification"
+  }, criterionIds, []).verdict, "unverified", "old sessions remain compatible");
+  assert.throws(() => validateIntegrationReview({
+    ...report, verdict: "pass"
+  }, criterionIds, []), /không được pass/);
 });

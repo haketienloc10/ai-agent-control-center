@@ -1,7 +1,11 @@
 {
   "lead": {
     "cwd": "/ABSOLUTE/PATH/TO/agent-workspace",
-    "instructions": "Bạn là Lead Agent. Phân tích nhiệm vụ, phân công Peer theo module, nhận kết quả và review. Không tự ý merge."
+    "instructions": "Bạn là Lead Agent. Điều phối Peer theo module, nhận PeerResult, chấp nhận hoặc yêu cầu bổ sung/làm lại, hỗ trợ giải quyết blocker. Không trực tiếp code hoặc làm Final Integration Review."
+  },
+  "reviewer": {
+    "cwd": "/ABSOLUTE/PATH/TO/agent-workspace",
+    "instructions": "Bạn là Final Reviewer độc lập. Chỉ kiểm tra source, test evidence, tiêu chí sản phẩm và integration contract. Không sửa code, không điều phối Peer."
   },
   "modules": [
     {

@@ -1,4 +1,4 @@
-import type { IntegrationReview, LeadPlan, LeadReview, PeerResult, WorkspaceConfig } from "@aacc/contracts";
+import type { IntegrationReview, LeadPlan, LeadReview, LeadRemediation, LeadVerificationDecision, PeerResult, WorkspaceConfig } from "@aacc/contracts";
 
 const object = (value: unknown): Record<string, unknown> => {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected JSON object");
@@ -181,9 +181,11 @@ export function validateLeadReview(value: unknown, batchIds: string[]): LeadRevi
 export function validateIntegrationReview(value: unknown, criterionIds: string[], peerIds: string[],
   contractIds: string[] = []): IntegrationReview {
   const data = object(value);
-  if (data.verdict !== "pass" && data.verdict !== "rework" && data.verdict !== "manual_verification") {
-    throw new Error("IntegrationReview.verdict phải là pass, rework hoặc manual_verification");
+  if (data.verdict !== "pass" && data.verdict !== "rework" &&
+      data.verdict !== "unverified" && data.verdict !== "manual_verification") {
+    throw new Error("IntegrationReview.verdict phải là pass, rework hoặc unverified");
   }
+  const verdict = data.verdict === "manual_verification" ? "unverified" : data.verdict;
   const checksRaw = array(data.checks, "integration.checks");
   if (checksRaw.length !== criterionIds.length) throw new Error("IntegrationReview phải kiểm tra đúng mọi acceptance criterion");
   const seen = new Set<string>();
@@ -242,9 +244,61 @@ export function validateIntegrationReview(value: unknown, criterionIds: string[]
   if (data.verdict === "rework" && (!hasFailed || !rework.length)) {
     throw new Error("IntegrationReview rework cần ít nhất một failed criterion và Peer feedback");
   }
-  if (data.verdict === "manual_verification" && (hasFailed || !hasUnverified || rework.length)) {
-    throw new Error("IntegrationReview manual_verification chỉ dùng khi còn unverified, không có failed/rework");
+  if (verdict === "unverified" && (hasFailed || !hasUnverified || rework.length)) {
+    throw new Error("IntegrationReview unverified chỉ dùng khi còn unverified, không có failed/rework");
   }
   return { summary: nonempty(data.summary, "integration.summary", 5000),
-    verdict: data.verdict, checks, contractChecks, rework };
+    verdict, checks, contractChecks, rework };
+}
+
+/** Lead makes the repair decision after independent Reviewer reports failed criteria.
+ * No silently accepting failed findings; every action must point to an existing Peer. */
+export function validateLeadRemediation(value: unknown, peerIds: string[]): LeadRemediation {
+  const data = object(value);
+  const actions = array(data.rework, "LeadRemediation.rework");
+  if (!actions.length || actions.length > peerIds.length) {
+    throw new Error("LeadRemediation phải chọn ít nhất một Peer để sửa");
+  }
+  const seen = new Set<string>();
+  const rework = actions.map((raw) => {
+    const action = object(raw);
+    const taskId = nonempty(action.taskId, "remediation.taskId", 48);
+    if (!peerIds.includes(taskId) || seen.has(taskId)) {
+      throw new Error("LeadRemediation taskId không hợp lệ: " + taskId);
+    }
+    seen.add(taskId);
+    return { taskId, feedback: nonempty(action.feedback, "remediation.feedback", 4000) };
+  });
+  return { summary: nonempty(data.summary, "remediation.summary", 5000), rework };
+}
+
+/** Strictly validate Lead's response to missing evidence. Never turn unverified into pass. */
+export function validateLeadVerificationDecision(
+  value: unknown, peerIds: string[], automatedAllowed: boolean
+): LeadVerificationDecision {
+  const data = object(value);
+  const allowed = ["collect_evidence", "run_verification", "request_human", "blocked"];
+  if (!allowed.includes(String(data.decision))) {
+    throw new Error("LeadVerification.decision không hợp lệ");
+  }
+  const decision = data.decision as LeadVerificationDecision["decision"];
+  if (!automatedAllowed && (decision === "collect_evidence" || decision === "run_verification")) {
+    throw new Error("Đã hết giới hạn xác minh tự động; Lead phải request_human hoặc blocked");
+  }
+  const tasks = array(data.taskIds, "LeadVerification.taskIds");
+  const taskIds = tasks.map((value) => nonempty(value, "LeadVerification.taskId", 48));
+  if (new Set(taskIds).size !== taskIds.length || taskIds.some((id) => !peerIds.includes(id))) {
+    throw new Error("LeadVerification.taskIds không thuộc Peer của Workflow hoặc bị trùng");
+  }
+  if ((decision === "collect_evidence" || decision === "run_verification") && taskIds.length === 0) {
+    throw new Error("LeadVerification cần ít nhất một Peer để thực hiện xác minh");
+  }
+  if ((decision === "request_human" || decision === "blocked") && taskIds.length !== 0) {
+    throw new Error("LeadVerification request_human/blocked không được dispatch Peer");
+  }
+  return {
+    decision, taskIds,
+    reason: nonempty(data.reason, "LeadVerification.reason", 3000),
+    instructions: nonempty(data.instructions, "LeadVerification.instructions", 4000)
+  };
 }

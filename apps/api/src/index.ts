@@ -91,7 +91,9 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/tasks") {
-      json(res, 201, store.add(createTask(await readJson(req), config)));
+      const body = await readJson(req) as Record<string, unknown>;
+      if (body.role === "reviewer") throw new Error("Final Reviewer is reserved for workflow quality gate");
+      json(res, 201, store.add(createTask(body, config)));
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/workflows") {

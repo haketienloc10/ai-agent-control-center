@@ -65,7 +65,7 @@ async function setup() {
         peerRuns.push(task.moduleId!);
         output = JSON.stringify({ summary: "Made changes", changedFiles: [],
           tests: [{ status: "not_run" }], risks: [] });
-      } else if (task.title.startsWith("Lead: final integration review")) {
+      } else if (task.role === "reviewer") {
         output = JSON.stringify({ summary: "Mock integration verified", verdict: "pass",
           checks: [{ criterionId: "ac1", status: "passed", evidence: "Mock verification" }],
           contractChecks: [], rework: [] });

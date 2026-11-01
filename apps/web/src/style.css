@@ -111,3 +111,8 @@ footer { color: #8191a2; font-size: 12px; margin-top: 18px; }
 .worktree-path { overflow-wrap: anywhere; width: 100%; color: #a3bfe4; }
 .recovery-detail { width: 100%; overflow-wrap: anywhere; }
 .recovery-followup { flex-basis: 100%; display: grid; gap: 8px; border-top: 1px solid #304052; padding: 9px 0; }
+
+.lead-verification { border: 1px solid #3c6387; border-radius: 9px; padding: 14px; margin: 12px 0; background: #15283b; }
+.lead-verification h3 { margin: 0 0 8px; font-size: 15px; }
+.lead-verification p { margin: 6px 0; overflow-wrap: anywhere; }
+.status.blocked { background: #7b4545; }

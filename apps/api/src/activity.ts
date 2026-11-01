@@ -155,14 +155,54 @@ export function projectActivity(entries: ActivityEntry[], event: ActivityEvent):
     add("workflow", "Lead đã đánh giá kết quả", accepted + " chấp nhận · " + (reviews.length - accepted) + " cần sửa lại", "completed");
     return true;
   }
+  if (kind === "workflow/reviewer_started") {
+    add("workflow", "Final Reviewer mở Codex Session độc lập",
+      "Task reviewer: " + string(data.taskId), "running");
+    return true;
+  }
+  if (kind === "workflow/lead_remediation") {
+    add("workflow", "Lead quyết định giao Peer khắc phục",
+      string(data.summary), "completed");
+    return true;
+  }
+  if (kind === "workflow/remediation_validation_failed") {
+    add("workflow", "Lead đang sửa quyết định khắc phục",
+      string(data.reason), "info");
+    return true;
+  }
+  if (kind === "workflow/lead_verification_decision") {
+    const decisions: Record<string, string> = {
+      collect_evidence: "Lead giao Peer bổ sung bằng chứng",
+      run_verification: "Lead yêu cầu chạy test độc lập",
+      request_human: "Lead yêu cầu người dùng xác minh",
+      blocked: "Lead báo vấn đề chưa thể tiếp tục"
+    };
+    add("workflow", decisions[string(data.decision)] ?? "Lead đã quyết định cách xác minh",
+      string(data.reason) + " · " + string(data.instructions), "info");
+    return true;
+  }
+  if (kind === "workflow/verification_test_result") {
+    const result = record(data.test);
+    add("workflow", "Đã chạy kiểm chứng độc lập",
+      string(data.peerId) + " · " + string(result.status), result.status === "failed" ? "failed" : "completed");
+    return true;
+  }
+  if (kind === "workflow/verification_blocked") {
+    add("workflow", "Xác minh bị chặn", string(data.reason), "failed");
+    return true;
+  }
+  if (kind === "workflow/verification_validation_failed") {
+    add("workflow", "Lead đang sửa quyết định xác minh", string(data.reason), "info");
+    return true;
+  }
   if (kind === "workflow/integration_review_started") {
-    add("workflow", "Lead đang kiểm tra tích hợp tổng thể", "Đối chiếu acceptance criteria và kết quả các module", "running");
+    add("workflow", "Final Reviewer đang kiểm tra tích hợp tổng thể", "Đối chiếu acceptance criteria và kết quả các module", "running");
     return true;
   }
   if (kind === "workflow/integration_review") {
     const verdict = string(data.verdict);
     const title = verdict === "pass" ? "Tích hợp tổng thể đã đạt" :
-      verdict === "rework" ? "Tích hợp cần sửa lại" : "Cần xác minh thủ công";
+      verdict === "rework" ? "Tích hợp cần sửa lại" : "Chưa đủ bằng chứng — chuyển Lead quyết định";
     add("workflow", title, string(data.summary), verdict === "pass" ? "completed" : "info");
     return true;
   }
@@ -175,7 +215,7 @@ export function projectActivity(entries: ActivityEntry[], event: ActivityEvent):
     return true;
   }
   if (kind === "workflow/integration_validation_failed") {
-    add("workflow", "Lead đang điều chỉnh báo cáo kiểm tra cuối", string(data.reason), "info");
+    add("workflow", "Final Reviewer đang điều chỉnh báo cáo", string(data.reason), "info");
     return true;
   }
   if (kind === "workflow/manual_verification_confirmed") {

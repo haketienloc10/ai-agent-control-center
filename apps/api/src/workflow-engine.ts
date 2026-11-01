@@ -1,17 +1,20 @@
 import { randomUUID } from "node:crypto";
 import { cwdForTask } from "./domain.js";
 import { collectPeerEvidence, gitBaseline } from "./peer-evidence.js";
-import type { IntegrationReview, PeerWork, PeerResult, WorkflowRun, WorkspaceConfig } from "@aacc/contracts";
+import type { IntegrationReview, LeadRemediation, LeadVerificationDecision, PeerWork, PeerResult,
+  WorkflowRun, WorkspaceConfig } from "@aacc/contracts";
 import { createTask } from "./domain.js";
 import { TaskStore } from "./store.js";
 import type { AgentTaskExecutor } from "./session-manager.js";
 import type { P2Services } from "./p2-services.js";
-import { parseAgentJson, validateIntegrationReview, validateLeadPlan, validateLeadReview, validatePeerResult } from "./workflow-contracts.js";
+import { parseAgentJson, validateIntegrationReview, validateLeadPlan, validateLeadReview,
+  validateLeadRemediation, validateLeadVerificationDecision, validatePeerResult } from "./workflow-contracts.js";
 
 const MAX_PARALLEL_PEERS = 2;
 const MAX_REWORKS = 2;
 const MAX_REVIEW_FORMAT_RETRIES = 2; // Không tính vào số lượt rework của Peer.
 const MAX_INTEGRATION_FORMAT_RETRIES = 2;
+const MAX_VERIFICATION_ROUNDS = 2; // Separate budget from Peer rework attempts.
 
 export class WorkflowEngine {
   private readonly active = new Set<string>();
@@ -35,7 +38,7 @@ export class WorkflowEngine {
     const now = new Date().toISOString();
     const workflow: WorkflowRun = {
       id: randomUUID(), title: body.title.trim(), request: body.request.trim(),
-      status: "planning", peers: [], leadTaskIds: [],
+      status: "planning", peers: [], leadTaskIds: [], reviewerTaskIds: [],
       reviewCount: 0, maxReworks: MAX_REWORKS, createdAt: now, updatedAt: now
     };
     this.store.addWorkflow(workflow);
@@ -92,24 +95,34 @@ export class WorkflowEngine {
     const workflow = this.store.getWorkflow(id);
     if (!workflow) throw new Error("Workflow not found");
     if (this.active.has(id)) throw new Error("Workflow đã đang chạy");
+    const error = workflow.error ?? "";
+    const retryRemediation = error.startsWith("LeadRemediation sai schema");
+    const retryVerification = error.startsWith("LeadVerification sai schema");
     if (workflow.status !== "failed" || !workflow.plan ||
         !workflow.peers.length || !workflow.peers.every((p) => p.status === "accepted") ||
-        !(workflow.error ?? "").startsWith("IntegrationReview sai schema")) {
-      throw new Error("Chỉ retry được Final Integration Review lỗi schema với tất cả Peer accepted");
+        (!error.startsWith("IntegrationReview sai schema") && !retryRemediation && !retryVerification) ||
+        (retryRemediation && workflow.finalReview?.verdict !== "rework") ||
+        (retryVerification && workflow.finalReview?.verdict !== "unverified" &&
+          workflow.finalReview?.verdict !== "manual_verification")) {
+      throw new Error("Chỉ retry được Final Review hoặc quyết định Lead lỗi schema khi mọi Peer đã accepted");
     }
     this.store.mutateWorkflow(id, (w) => {
       w.status = "integration_reviewing";
       w.error = undefined;
     });
-    this.store.workflowEvent(id, "workflow/integration_review_resumed", {});
-    this.launch(id, () => this.execute(id, false));
+    this.store.workflowEvent(id, "workflow/integration_review_resumed", {
+      retryRemediation, retryVerification
+    });
+    this.launch(id, () => retryRemediation ? this.resumeLeadRemediation(id)
+      : retryVerification ? this.resumeLeadVerification(id) : this.execute(id, false));
     return this.store.getWorkflow(id)!;
   }
 
   decide(id: string, decision: "approve" | "reject"): WorkflowRun {
     const current = this.store.getWorkflow(id);
     if (!current || (current.status !== "waiting_business_approval" &&
-        !(current.status === "waiting_manual_verification" && decision === "reject"))) {
+        !((current.status === "waiting_manual_verification" || current.status === "blocked") &&
+          decision === "reject"))) {
       throw new Error("Workflow không ở trạng thái chờ Business Approval");
     }
     const updated = this.store.mutateWorkflow(id, (workflow) => {
@@ -154,6 +167,215 @@ export class WorkflowEngine {
     this.store.add(task);
     this.store.mutateWorkflow(workflowId, (workflow) => { workflow.leadTaskIds.push(task.id); });
     return this.executor.runAndWait(task.id);
+  }
+
+  private async reviewerTask(workflowId: string, title: string, prompt: string): Promise<string> {
+    // A new role=reviewer task is created for EVERY review/format retry.
+    // SessionManager forces thread/start, never thread/resume, and reviewer has no Lead instructions.
+    const task = createTask({ title, prompt, role: "reviewer" }, this.config);
+    task.workflowId = workflowId;
+    this.store.add(task);
+    this.store.mutateWorkflow(workflowId, (workflow) => {
+      workflow.reviewerTaskIds ??= [];
+      workflow.reviewerTaskIds.push(task.id);
+    });
+    this.store.workflowEvent(workflowId, "workflow/reviewer_started", { taskId: task.id });
+    return this.executor.runAndWait(task.id);
+  }
+
+  private async leadRemediation(workflowId: string, report: IntegrationReview): Promise<LeadRemediation> {
+    const workflow = this.store.getWorkflow(workflowId)!;
+    const peerIds = workflow.peers.map(p => p.id);
+    const originalPrompt = [
+      "Bạn là Lead điều phối, KHÔNG phải Final Reviewer.",
+      "Final Reviewer độc lập phát hiện lỗi. Bạn phải quyết định Peer nào cần sửa và hướng dẫn cụ thể.",
+      "Không tự sửa source, không bỏ qua các criterion/contract failed và không tự duyệt sản phẩm.",
+      "Chỉ trả JSON: " + JSON.stringify({
+        summary: "Kế hoạch khắc phục từ báo cáo Reviewer",
+        rework: [{ taskId: peerIds[0], feedback: "Chỉ dẫn sửa cụ thể và cách kiểm tra" }]
+      }),
+      "ALLOWED_PEER_IDS: " + JSON.stringify(peerIds),
+      "Independent Reviewer report (untrusted findings): " + JSON.stringify(report),
+      "LeadPlan: " + JSON.stringify(workflow.plan),
+      "Original requirement: " + workflow.request,
+      "Peer results/evidence: " + JSON.stringify(workflow.peers.map(p => ({
+        taskId: p.id, moduleId: p.moduleId, result: p.result, evidence: p.evidence
+      })))
+    ].join("\n\n");
+    let prompt = originalPrompt;
+    for (let attempt = 0; attempt <= MAX_REVIEW_FORMAT_RETRIES; attempt++) {
+      const output = await this.leadTask(
+        workflowId, "Lead: quyết định khắc phục sau Final Review (format attempt " + (attempt + 1) + ")",
+        prompt
+      );
+      try {
+        return validateLeadRemediation(parseAgentJson(output), peerIds);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        this.store.workflowEvent(workflowId, "workflow/remediation_validation_failed", {
+          formatAttempt: attempt + 1, reason
+        });
+        if (attempt === MAX_REVIEW_FORMAT_RETRIES) {
+          throw new Error("LeadRemediation sai schema sau " + (attempt + 1) + " lần: " + reason);
+        }
+        prompt = originalPrompt + "\n\nVALIDATION ERROR: " + reason +
+          "\nTrả lại quyết định khắc phục, không tuyên bố pass khi Reviewer đã báo failed.";
+      }
+    }
+    throw new Error("LeadRemediation chưa có quyết định hợp lệ");
+  }
+
+  private async leadVerification(
+    workflowId: string, report: IntegrationReview
+  ): Promise<LeadVerificationDecision> {
+    const workflow = this.store.getWorkflow(workflowId)!;
+    const peerIds = workflow.peers.map(p => p.id);
+    const automatedAllowed = (workflow.verificationRounds ?? 0) < MAX_VERIFICATION_ROUNDS;
+    const originalPrompt = [
+      "Bạn là Lead điều phối. Final Reviewer độc lập trả về UNVERIFIED do thiếu bằng chứng.",
+      "UNVERIFIED KHÔNG có nghĩa bắt buộc cần Human. Bạn phải đánh giá khả năng tự giải quyết trước.",
+      "Bạn KHÔNG được đổi unverified thành passed hoặc tự làm Final Review.",
+      "Chọn DUY NHẤT một decision:",
+      "collect_evidence = giao Peer bổ sung evidence/test/khắc phục blocker (chỉ dẫn rõ trong instructions);",
+      "run_verification = chạy independent testCommand đã cấu hình cho Peer được chọn, rồi yêu cầu Final Reviewer đánh giá lại;",
+      "request_human = thật sự cần người dùng thao tác/quyền truy cập/đánh giá nghiệp vụ, nêu lý do và hướng dẫn cụ thể;",
+      "blocked = không thể tiếp tục an toàn, nêu trở ngại và cách giải quyết; KHÔNG tự duyệt.",
+      automatedAllowed
+        ? "Còn lượt xác minh tự động, hãy ưu tiên tự thu thập/kiểm thử khi có thể."
+        : "Đã hết " + MAX_VERIFICATION_ROUNDS +
+          " vòng xác minh tự động: CHỈ chọn request_human hoặc blocked.",
+      "run_verification CHỈ hợp lệ với testCommand được cấu hình sẵn, không phát minh shell command.",
+      "collect_evidence có thể sử dụng giới hạn Peer rework sẵn có; không yêu cầu sửa vô hạn.",
+      "taskIds: Peer IDs của collect_evidence/run_verification; request_human/blocked phải là mảng rỗng.",
+      "Chỉ trả JSON object theo schema:",
+      JSON.stringify(automatedAllowed && peerIds.length
+        ? {
+            decision: "collect_evidence", reason: "Thiếu bằng chứng từ Peer",
+            instructions: "Bổ sung test/evidence cho tiêu chí chưa xác minh",
+            taskIds: [peerIds[0]]
+          }
+        : {
+            decision: "request_human", reason: "Không thể tự xác minh thêm",
+            instructions: "Các bước kiểm tra cụ thể cho người dùng", taskIds: []
+          }),
+      "ALLOWED_PEER_IDS: " + JSON.stringify(peerIds),
+      "Configured verification commands: " + JSON.stringify(this.config.modules.map((m) => ({
+        moduleId: m.id, configured: !!m.testCommand?.length
+      }))),
+      "Independent Reviewer report: " + JSON.stringify(report),
+      "Original requirement: " + workflow.request,
+      "Acceptance Criteria + Integration Contracts: " + JSON.stringify(workflow.plan),
+      "Peer results/evidence: " + JSON.stringify(workflow.peers.map((p) => ({
+        taskId: p.id, moduleId: p.moduleId, result: p.result, evidence: p.evidence
+      })))
+    ].join("\n\n");
+    let prompt = originalPrompt;
+    for (let attempt = 0; attempt <= MAX_REVIEW_FORMAT_RETRIES; attempt++) {
+      const output = await this.leadTask(workflowId,
+        "Lead: quyết định xử lý kết quả chưa xác minh (attempt " + (attempt + 1) + ")", prompt);
+      try {
+        return validateLeadVerificationDecision(parseAgentJson(output), peerIds, automatedAllowed);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        this.store.workflowEvent(workflowId, "workflow/verification_validation_failed", {
+          formatAttempt: attempt + 1, reason
+        });
+        if (attempt === MAX_REVIEW_FORMAT_RETRIES) {
+          throw new Error("LeadVerification sai schema sau " + (attempt + 1) + " lần: " + reason);
+        }
+        prompt = originalPrompt + "\n\nVALIDATION ERROR: " + reason +
+          "\nChỉ trả JSON đúng schema và trong giới hạn xác minh.";
+      }
+    }
+    throw new Error("LeadVerification không có quyết định hợp lệ");
+  }
+
+  private async applyVerificationDecision(
+    id: string, report: IntegrationReview, decision: LeadVerificationDecision
+  ): Promise<"rework" | "manual_verification"> {
+    const workflow = this.store.getWorkflow(id)!;
+    // Persist decision before executing tools, so crashes never silently replay actions.
+    this.store.mutateWorkflow(id, (w) => { w.lastVerificationDecision = decision; });
+    this.store.workflowEvent(id, "workflow/lead_verification_decision", decision);
+    if (decision.decision === "request_human") {
+      this.store.mutateWorkflow(id, (w) => { w.status = "waiting_manual_verification"; });
+      return "manual_verification";
+    }
+    if (decision.decision === "blocked") {
+      this.store.mutateWorkflow(id, (w) => {
+        w.status = "blocked";
+        w.blocker = decision.reason + "\n" + decision.instructions;
+      });
+      this.store.workflowEvent(id, "workflow/verification_blocked", {
+        reason: decision.reason, instructions: decision.instructions
+      });
+      return "manual_verification";
+    }
+    if ((workflow.verificationRounds ?? 0) >= MAX_VERIFICATION_ROUNDS) {
+      throw new Error("Đã hết giới hạn xác minh tự động");
+    }
+    if (decision.decision === "collect_evidence") {
+      this.store.mutateWorkflow(id, (w) => {
+        w.verificationRounds = (w.verificationRounds ?? 0) + 1;
+      });
+      this.applyIntegrationOutcome(id, report, {
+        summary: "Lead yêu cầu Peer bổ sung bằng chứng: " + decision.reason,
+        rework: decision.taskIds.map((taskId) => ({
+          taskId, feedback: decision.instructions
+        }))
+      }, true);
+      return "rework";
+    }
+    // Independent checks are only allowed when the owner configured a known command.
+    const targets = decision.taskIds.map((peerId) => {
+      const peer = workflow.peers.find(p => p.id === peerId)!;
+      const module = this.config.modules.find(m => m.id === peer.moduleId);
+      const task = this.store.get(peer.attempts.at(-1)?.taskId ?? "");
+      return { peerId, task, module };
+    });
+    if (!this.p2 || targets.some(({ task, module }) =>
+      !module?.testCommand?.length || !task?.executionCwd)) {
+      this.store.mutateWorkflow(id, (w) => {
+        w.status = "blocked";
+        w.blocker = "Lead yêu cầu run_verification nhưng chưa cấu hình testCommand/worktree " +
+          "cho đầy đủ Peer. Cấu hình testCommand hoặc yêu cầu Human hỗ trợ.";
+      });
+      this.store.workflowEvent(id, "workflow/verification_blocked", {
+        reason: "Independent test runner chưa được cấu hình hoặc thiếu worktree"
+      });
+      return "manual_verification";
+    }
+    this.store.mutateWorkflow(id, (w) => {
+      w.verificationRounds = (w.verificationRounds ?? 0) + 1;
+      w.status = "integration_reviewing";
+    });
+    for (const { peerId, task } of targets) {
+      const currentPeer = this.store.getWorkflow(id)!.peers.find(p => p.id === peerId)!;
+      if (!currentPeer.evidence || !task) throw new Error("Thiếu Peer evidence cho verification");
+      const evidence = await this.p2.capture(task, currentPeer.evidence);
+      if (evidence.verifiedTest?.status === "not_configured") {
+        throw new Error("Independent test runner returned not_configured");
+      }
+      this.store.mutateWorkflow(id, (w) => {
+        w.peers.find(p => p.id === peerId)!.evidence = evidence;
+      });
+      this.store.workflowEvent(id, "workflow/verification_test_result", {
+        peerId, test: evidence.verifiedTest
+      });
+    }
+    // Next loop creates a fresh reviewer thread; never synthesize a PASS here.
+    return "rework";
+  }
+
+  private async resumeLeadVerification(id: string): Promise<void> {
+    const report = this.store.getWorkflow(id)?.finalReview;
+    if (!report || (report.verdict !== "unverified" &&
+        report.verdict !== "manual_verification")) {
+      throw new Error("Thiếu unverified Reviewer report để retry Lead");
+    }
+    const decision = await this.leadVerification(id, report);
+    const result = await this.applyVerificationDecision(id, report, decision);
+    if (result === "rework") await this.execute(id, false);
   }
 
   private planPrompt(workflow: WorkflowRun): string {
@@ -299,11 +521,61 @@ export class WorkflowEngine {
     this.store.workflowEvent(id, "workflow/review", review);
   }
 
+  private applyIntegrationOutcome(id: string, report: IntegrationReview,
+    remediation?: LeadRemediation, evidenceFollowup = false): void {
+    this.store.mutateWorkflow(id, (workflow) => {
+      workflow.lastRemediation = remediation;
+      if (report.verdict === "rework" || evidenceFollowup) {
+        if (!remediation) throw new Error("Reviewer failed: Lead remediation decision required");
+        // Lead's decision (not reviewer's suggestion) drives rework and dependent invalidation.
+        const affected = new Set(remediation.rework.map((action) => action.taskId));
+        let changed = true;
+        while (changed) {
+          changed = false;
+          for (const peer of workflow.peers) {
+            if (!affected.has(peer.id) && peer.dependsOn.some((dep) => affected.has(dep))) {
+              affected.add(peer.id);
+              changed = true;
+            }
+          }
+        }
+        for (const peer of workflow.peers) {
+          if (!affected.has(peer.id)) continue;
+          if (peer.attempts.length > workflow.maxReworks) {
+            throw new Error("Peer " + peer.id + " vượt giới hạn rework khi Final Integration Review");
+          }
+          const decision = remediation.rework.find((action) => action.taskId === peer.id);
+          peer.status = "rework";
+          peer.feedback = decision?.feedback ??
+            "Upstream dependency thay đổi; kiểm tra và tích hợp lại.";
+        }
+        workflow.status = "executing";
+      } else {
+        // The only way to reach human verification is an explicit Lead decision.
+        workflow.status = "waiting_business_approval";
+      }
+    });
+    if (remediation) this.store.workflowEvent(id, "workflow/lead_remediation", remediation);
+    if (report.verdict === "pass") {
+      this.store.workflowEvent(id, "workflow/ready_for_approval", { integrationPassed: true });
+    }
+  }
+
+  private async resumeLeadRemediation(id: string): Promise<void> {
+    const report = this.store.getWorkflow(id)?.finalReview;
+    if (!report || report.verdict !== "rework") {
+      throw new Error("Thiếu báo cáo Final Reviewer để tiếp tục LeadRemediation");
+    }
+    const remediation = await this.leadRemediation(id, report);
+    this.applyIntegrationOutcome(id, report, remediation);
+    await this.execute(id, false);
+  }
+
   private integrationPrompt(workflow: WorkflowRun): string {
     const criteria = workflow.plan?.acceptanceCriteria ?? [];
     const contracts = workflow.plan?.integrationContracts ?? [];
     return [
-      "Bạn là Lead FINAL INTEGRATION REVIEWER, độc lập với các review Peer trước.",
+      "Bạn là FINAL INTEGRATION REVIEWER độc lập, không phải Lead và không phải Peer.",
       "Kiểm tra kết quả toàn bộ dự án, cả integration giữa các modules, không chỉ từng Peer riêng.",
       "Kiểm tra code thực tế qua modulePath và kiểm thử phù hợp nếu có thể; không mặc định hai module đã tích hợp chỉ vì đều accepted.",
       "Không được báo passed khi chưa có bằng chứng. Nếu chỉ xem code mà không chạy UI/manual test, dùng unverified cho các yêu cầu chỉ kiểm tra bằng chạy thật.",
@@ -312,15 +584,16 @@ export class WorkflowEngine {
       "Nếu consumer dùng fallback/mock trong khi contract yêu cầu output của producer, phải ghi failed và chỉ định rework.",
       "Ordering-only dependencies không cần integration contract check; nhưng không được lạm dụng để bỏ qua integration đã cam kết.",
       "Nếu integration lỗi: verdict=rework, checks có failed và rework chứa ít nhất một taskId thuộc Peers với feedback cụ thể.",
-      "Nếu không có failed nhưng chưa xác minh một số tiêu chí: verdict=manual_verification.",
+      "Nếu không có failed nhưng chưa xác minh một số tiêu chí: verdict=unverified. Lead sẽ quyết định bước tiếp theo.",
       "Chỉ verdict=pass khi TẤT CẢ tiêu chí passed và evidence có căn cứ cụ thể.",
       "Không thực hiện merge, publish hoặc sửa code trong bước review này.",
+      "Bạn chỉ đưa ra verdict và đề xuất rework dựa trên bằng chứng. Lead sẽ quyết định Peer nào sửa.",
       "REQUIRED_CRITERION_IDS: " + JSON.stringify(criteria.map((c) => c.id)),
       "REQUIRED_CONTRACT_IDS: " + JSON.stringify(contracts.map((c) => c.id)),
       "ALLOWED_PEER_IDS: " + JSON.stringify(workflow.peers.map((p) => p.id)),
       "Trả JSON duy nhất: " + JSON.stringify({
         summary: "Báo cáo tích hợp tổng thể",
-        verdict: "manual_verification",
+        verdict: "unverified",
         checks: criteria.map((c) => ({
           criterionId: c.id, status: "unverified",
           evidence: "Điều kiện chưa kiểm chứng bằng test hay thao tác thực tế"
@@ -361,8 +634,8 @@ export class WorkflowEngine {
     let prompt = originalPrompt;
     let report: IntegrationReview | undefined;
     for (let attempt = 0; attempt <= MAX_INTEGRATION_FORMAT_RETRIES; attempt++) {
-      const response = await this.leadTask(
-        id, "Lead: final integration review (format attempt " + (attempt + 1) + ")", prompt
+      const response = await this.reviewerTask(
+        id, "Final Reviewer: independent integration review (attempt " + (attempt + 1) + ")", prompt
       );
       try {
         report = validateIntegrationReview(parseAgentJson(response), criterionIds, peerIds, contractIds);
@@ -386,46 +659,22 @@ export class WorkflowEngine {
     }
     if (!report) throw new Error("Không nhận được IntegrationReview");
     const reviewed = report;
+    // Persist Reviewer verdict BEFORE asking Lead, enabling targeted Lead-only schema retry.
     this.store.mutateWorkflow(id, (workflow) => {
       workflow.integrationReviewCount = (workflow.integrationReviewCount ?? 0) + 1;
       workflow.finalReview = reviewed;
+      workflow.lastRemediation = undefined;
       workflow.manualVerifiedCriterionIds = undefined;
       workflow.manualVerifiedContractIds = undefined;
-      if (reviewed.verdict === "rework") {
-        // Khi sửa Peer upstream, downstream đã accepted phải làm lại để tránh
-        // giữ trạng thái accepted trên API contract cũ.
-        const affected = new Set(reviewed.rework.map((r) => r.taskId));
-        let expanded = true;
-        while (expanded) {
-          expanded = false;
-          for (const peer of workflow.peers) {
-            if (!affected.has(peer.id) && peer.dependsOn.some((dep) => affected.has(dep))) {
-              affected.add(peer.id);
-              expanded = true;
-            }
-          }
-        }
-        for (const peer of workflow.peers) {
-          if (!affected.has(peer.id)) continue;
-          if (peer.attempts.length > workflow.maxReworks) {
-            throw new Error("Peer " + peer.id + " vượt giới hạn rework khi Final Integration Review");
-          }
-          const requested = reviewed.rework.find((r) => r.taskId === peer.id);
-          peer.status = "rework";
-          peer.feedback = requested?.feedback ??
-            "Upstream dependency thay đổi sau Final Integration Review; kiểm tra và tích hợp lại.";
-        }
-        workflow.status = "executing";
-      } else if (reviewed.verdict === "manual_verification") {
-        workflow.status = "waiting_manual_verification";
-      } else {
-        workflow.status = "waiting_business_approval";
-      }
     });
     this.store.workflowEvent(id, "workflow/integration_review", reviewed);
-    if (reviewed.verdict === "pass") {
-      this.store.workflowEvent(id, "workflow/ready_for_approval", { integrationPassed: true });
+    if (reviewed.verdict === "unverified" || reviewed.verdict === "manual_verification") {
+      const decision = await this.leadVerification(id, reviewed);
+      return this.applyVerificationDecision(id, reviewed, decision);
     }
+    const remediation = reviewed.verdict === "rework"
+      ? await this.leadRemediation(id, reviewed) : undefined;
+    this.applyIntegrationOutcome(id, reviewed, remediation);
     return reviewed.verdict;
   }
 

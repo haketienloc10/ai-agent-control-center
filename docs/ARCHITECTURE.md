@@ -181,3 +181,7 @@ Quy trình: Module Registry → WorktreeManager.ensure(workflowId, moduleId) →
 Module chung repository chia sẻ worktree theo workflow; độc lập repo có worktree riêng. Module repo chưa commit hoặc dirty fail closed. Git worktree không chặn Codex YOLO ra ngoài, sandbox tùy chọn là ranh giới quyền ghi chặt chẽ hơn. Backend vẫn không áp MCP allowlist cho nội bộ Codex; phải kiểm soát qua cấu hình Codex bên ngoài.
 
 Chi tiết và lệnh chạy: `docs/P2.md`.
+
+## Role separation — Final Reviewer độc lập
+
+`SessionManager` chạy `role=lead` và `role=reviewer` với sandbox read-only. `WorkflowEngine` tạo reviewer Task/Thread mới cho mỗi Final Integration Review, lưu `reviewerTaskIds` tách khỏi `leadTaskIds`. Input reviewer gồm yêu cầu, plan và evidence chứ không có Lead chat history. `IntegrationReview.rework` chỉ là đề xuất; **Lead** trả `LeadRemediation` quyết định Peer nào phải sửa. Backend kiểm tra schema, không để LLM bỏ qua failed findings và vẫn giữ DAG/rework budget. Tham khảo `docs/AGENT_ROLES.md`.

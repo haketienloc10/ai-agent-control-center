@@ -19,6 +19,15 @@ export function loadWorkspaceConfig(file = process.env.WORKSPACE_CONFIG ?? defau
   if (!raw.lead || !Array.isArray(raw.modules)) throw new Error("Config thiếu lead hoặc modules");
   if (typeof raw.lead.instructions !== "string") throw new Error("lead.instructions không hợp lệ");
   const lead = { cwd: directory(raw.lead.cwd, "lead.cwd"), instructions: raw.lead.instructions };
+  const reviewer = raw.reviewer === undefined ? undefined : {
+    cwd: directory(raw.reviewer.cwd, "reviewer.cwd"),
+    instructions: (() => {
+      if (typeof raw.reviewer?.instructions !== "string") {
+        throw new Error("reviewer.instructions không hợp lệ");
+      }
+      return raw.reviewer.instructions;
+    })()
+  };
   const ids = new Set<string>();
   const modules = raw.modules.map((m, index) => {
     if (!m || typeof m.id !== "string" || !/^[a-z0-9_-]+$/.test(m.id) ||
@@ -36,5 +45,5 @@ export function loadWorkspaceConfig(file = process.env.WORKSPACE_CONFIG ?? defau
       ...(m.testCommand ? { testCommand: m.testCommand } : {})
     };
   });
-  return { lead, modules };
+  return { lead, ...(reviewer ? { reviewer } : {}), modules };
 }
