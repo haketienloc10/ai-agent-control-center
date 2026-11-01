@@ -16,6 +16,7 @@ const FILTERS: Array<{ key: ActivityFilter; label: string }> = [
   { key: "all", label: "Tất cả" },
   { key: "lead", label: "Lead" },
   { key: "peer", label: "Peer" },
+  { key: "reviewer", label: "Final Reviewer" },
   { key: "workflow", label: "Workflow" }
 ];
 
@@ -29,11 +30,22 @@ const STATUS: Record<ActivityEntry["status"], string> = {
 export function ActivityPanel({ activities, events, tasks, workflows, selectedTask, onSelectTask }: Props) {
   const [filter, setFilter] = useState<ActivityFilter>("all");
   const [technical, setTechnical] = useState(false);
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("");
+  const [period, setPeriod] = useState("all");
 
   const selectedName = tasks.find((task) => task.id === selectedTask)?.title;
-  const visible = useMemo(() => activities
-    .filter((entry) => matchesActivityFilter(entry, tasks, filter, selectedTask))
-    .slice(-100).reverse(), [activities, tasks, filter, selectedTask]);
+  const visible = useMemo(() => {
+    const cutoff = period === "1h" ? Date.now() - 3600000 :
+      period === "24h" ? Date.now() - 86400000 : 0;
+    const term = search.toLocaleLowerCase("vi-VN").trim();
+    return activities.filter(entry =>
+      matchesActivityFilter(entry, tasks, filter, selectedTask) &&
+      (!status || entry.status === status) &&
+      (!cutoff || new Date(entry.updatedAt).getTime() >= cutoff) &&
+      (!term || (entry.title + " " + entry.detail).toLocaleLowerCase("vi-VN").includes(term))
+    ).slice(-100).reverse();
+  }, [activities, tasks, filter, selectedTask, status, search, period]);
 
   const raw = useMemo(() => events.filter((event) =>
     !selectedTask || event.taskId === selectedTask).slice(-40).reverse(), [events, selectedTask]);
@@ -66,6 +78,19 @@ export function ActivityPanel({ activities, events, tasks, workflows, selectedTa
         {FILTERS.map(({ key, label }) => <button type="button" key={key}
           className={filter === key ? "active-control" : ""} aria-pressed={filter === key}
           onClick={() => setFilter(key)}>{label}</button>)}
+      </div>
+      <div className="p3-filter-grid">
+        <label>Từ khóa <input value={search} maxLength={100}
+          onChange={event => setSearch(event.target.value)} placeholder="Tìm theo nội dung…" /></label>
+        <label>Trạng thái <select value={status} onChange={event => setStatus(event.target.value)}>
+          <option value="">Tất cả</option>
+          {(["info", "running", "completed", "failed"] as const).map(v =>
+            <option key={v} value={v}>{STATUS[v]}</option>)}
+        </select></label>
+        <label>Thời gian <select value={period} onChange={event => setPeriod(event.target.value)}>
+          <option value="all">Toàn bộ lịch sử đang hiển thị</option>
+          <option value="1h">1 giờ qua</option><option value="24h">24 giờ qua</option>
+        </select></label>
       </div>
       {visible.length === 0 ? <div className="activity-empty">
         <strong>Chưa có hoạt động phù hợp</strong>

@@ -2,7 +2,7 @@
 
 Dashboard **cá nhân, chạy trên máy local** để thay thế việc quản lý nhiều terminal Codex. Mục tiêu là giữ nguyên mô hình làm việc hiện có: **Lead Agent trong workspace chung → giao việc cho Peer ở các source module bên ngoài → nhận kết quả → Lead review / yêu cầu sửa → người dùng quyết định**.
 
-> Trạng thái: P2 **Isolation & Recovery** trên nhánh tính năng. Codex **YOLO mode** vẫn là mặc định theo lựa chọn P1; có tùy chọn bật sandbox. Chưa phải production hoặc E2E verified trên máy người dùng.
+> Trạng thái: P3 **Experience & Observability** trên nhánh tính năng. Codex **YOLO mode** vẫn là mặc định theo lựa chọn P1; có tùy chọn bật sandbox. Chưa phải production hoặc E2E verified trên máy người dùng.
 
 ## Bắt đầu
 
@@ -28,6 +28,7 @@ Nếu chưa cài/đăng nhập Codex, API vẫn có thể khởi chạy nhưng *
 - `docs/ROADMAP.md`: các giai đoạn thực hiện, acceptance criteria.
 - `docs/WORKFLOW_P1.md`: hợp đồng JSON, luồng triển khai P1, API, giới hạn.
 - `docs/P2.md`: worktree, SQLite, artifact, recovery và security mode.
+- `docs/P3.md`: bản đồ Agent, lịch sử session, notifications, journal và metrics.
 - `AGENTS.md`: quy tắc dành cho contributor/Agent.
 - `apps/api`: Backend, WorkflowEngine, Task Store, SessionManager và Codex JSON-RPC adapter.
 - `apps/web`: Dashboard có timeline hoạt động dễ đọc và tab kỹ thuật, SSE, Run/Interrupt/Approval.
@@ -94,3 +95,11 @@ Xem [docs/P2.md](docs/P2.md) để biết quy trình áp dụng patch thủ côn
 ## Agent roles — Independent Final Reviewer
 
 Lead chỉ điều phối Peer và ra quyết định accept/rework hoặc khắc phục blocker; không tự làm Final Integration Review. Sau các Peer được Lead chấp nhận, một **Final Reviewer riêng** (`role=reviewer`) kiểm tra Product + Integration Acceptance trên **Codex Thread mới, read-only**. Nếu có failed findings, Lead nhận báo cáo và quyết định Peer cần sửa. Mỗi lần review lại sau rework tạo một Thread mới. Xem [docs/AGENT_ROLES.md](docs/AGENT_ROLES.md).
+
+## P3 — Trải nghiệm điều phối và quan sát
+
+Dashboard có **Agent Map dạng 2.5D** (Lead, Peer theo module, Final Reviewer), hiển thị trạng thái thực từ Task trong workflow; chọn Agent để xem session tương ứng. **Session History** lọc theo role/status/workflow và tải trang cũ hơn theo cursor. **Activity Timeline** có thêm bộ lọc từ khóa/trạng thái/thời gian và một **Event Journal Explorer** đọc từ SQLite, không phụ thuộc cửa sổ timeline giới hạn.
+
+Backend tạo **notification** khi Task thất bại/gián đoạn hoặc Workflow chuyển trạng thái cần người dùng xử lý. Thông báo được lưu qua restart và có nút đánh dấu đã đọc. Dashboard polling `/api/metrics` mỗi 8 giây để hiển thị bộ nhớ RSS/heap, CPU time tích lũy và uptime của **tiến trình Backend** cùng các bộ đếm Task/Workflow. Không suy diễn CPU/RAM riêng của Codex/Agent.
+
+Các API mới: `GET /api/sessions`, `GET /api/journal/history`, `GET /api/notifications`, `POST /api/notifications/:id/read`, `GET /api/metrics`. Claude Code Adapter đang là tùy chọn, chưa triển khai vì workflow hiện sử dụng Codex CLI subscription. Xem [docs/P3.md](docs/P3.md).

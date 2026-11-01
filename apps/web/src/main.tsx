@@ -4,6 +4,9 @@ import type { AgentRole, Snapshot, Task, WorkflowRun } from "@aacc/contracts";
 import "./style.css";
 import { ActivityPanel } from "./ActivityPanel.js";
 import { ArtifactViewer } from "./ArtifactViewer.js";
+import { AgentMap } from "./AgentMap.js";
+import { ObservabilityPanel, SessionHistory, JournalExplorer } from "./ExperiencePanels.js";
+import "./p3.css";
 
 async function api<T>(path: string, method: "GET" | "POST" = "GET", body?: unknown): Promise<T> {
   const response = await fetch("/api" + path, {
@@ -34,7 +37,7 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onR
   const unverifiedChecks = workflow.finalReview?.checks.filter((check) => check.status === "unverified") ?? [];
   const unverifiedContracts = (workflow.finalReview?.contractChecks ?? [])
     .filter((check) => check.status === "unverified");
-  return <div className="workflow">
+  return <div className="workflow" id={"workflow-" + workflow.id}>
     <div className="panel-heading">
       <div><strong>{workflow.title}</strong><p>{workflow.request}</p></div>
       <span className={"status " + workflow.status}>{workflow.status.replaceAll("_", " ")}</span>
@@ -287,14 +290,21 @@ function App() {
   return <main>
     <header>
       <div>
-        <p className="eyebrow">PERSONAL AI WORKSPACE · P2</p>
+        <p className="eyebrow">PERSONAL AI WORKSPACE · P3</p>
         <h1>AI Agent Control Center</h1>
-        <p>Lead lập kế hoạch, phân công Peer tại source modules, review và chuyển kết quả cho bạn duyệt.</p>
+        <p>Lead điều phối Peer, Final Reviewer đánh giá độc lập và bạn duyệt kết quả cuối.</p>
       </div>
       <span className="tag">Local · Codex YOLO</span>
     </header>
     <p className="error" role="status">YOLO mode: Codex được quyền chạy lệnh và sửa file không cần Runtime Approval, kể cả ngoài module. Chỉ chạy trên máy cá nhân với repo tin cậy; Business Approval cuối workflow vẫn được giữ.</p>
     {error && <aside className="error" role="alert">{error} <button onClick={() => setError("")}>Đóng</button></aside>}
+    <AgentMap modules={snapshot.modules} tasks={snapshot.tasks}
+      workflows={snapshot.workflows} onSelectTask={setSelectedTask}/>
+    <ObservabilityPanel notifications={snapshot.notifications ?? []}
+      onAcknowledge={id => void runAction("/notifications/" + id + "/read")}
+      onInspectTask={id => setSelectedTask(id)}
+      onInspectWorkflow={id =>
+        document.getElementById("workflow-" + id)?.scrollIntoView({ behavior: "smooth" })}/>
     <section className="columns">
       <article className="panel">
         <h2>Chạy Workflow Lead → Peer → Review</h2>
@@ -401,6 +411,7 @@ function App() {
             {task.error && <small className="error-text">{task.error}</small>}
           </div>)}</div>}
     </section>
+    <SessionHistory workflows={snapshot.workflows} onInspectTask={setSelectedTask}/>
     <ActivityPanel
       activities={snapshot.activities ?? []}
       events={snapshot.events}
@@ -410,7 +421,8 @@ function App() {
       selectedTask={selectedTask}
       onSelectTask={setSelectedTask}
     />
-    <footer>P2 — Lead điều phối · Peer triển khai · Final Reviewer độc lập trong fresh session · Bạn duyệt.</footer>
+    <JournalExplorer />
+    <footer>P3 — Agent Map · Session History · Notifications · Event Journal · Backend Metrics. Codex vẫn là runtime chính.</footer>
   </main>;
 }
 
