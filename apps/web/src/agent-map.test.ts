@@ -35,3 +35,25 @@ test("Agent Map uses latest completed task when no active task, also handles no 
   assert.equal(nodes[1].task?.id, "review-1");
   assert.equal(nodes[0].status, "idle");
 });
+
+test("Agent Map shows skipped planned Peer without Task, and failed preflight instead of idle", () => {
+  const modules: ModuleConfig[] = [
+    { id: "api", label: "API", path: "/repo/api" },
+    { id: "web", label: "Web", path: "/repo/web" }
+  ];
+  const wf = {
+    id: "w1", status: "failed", peers: [
+      { id: "api1", moduleId: "api", status: "skipped",
+        feedback: "Workflow stopped before API was dispatched" },
+      { id: "web1", moduleId: "web", status: "failed",
+        feedback: "Source repository has uncommitted/untracked files" }
+    ]
+  } as import("@aacc/contracts").WorkflowRun;
+  const tasks = [task("web-preflight", "peer", "failed", "w1", "web")];
+  const nodes = agentMapNodes(modules, tasks, "w1", [wf]);
+  assert.equal(nodes.find(n => n.moduleId === "api")?.status, "skipped");
+  assert.equal(nodes.find(n => n.moduleId === "api")?.task, undefined);
+  assert.match(nodes.find(n => n.moduleId === "api")?.detail ?? "", /stopped/);
+  assert.equal(nodes.find(n => n.moduleId === "web")?.status, "failed");
+  assert.match(nodes.find(n => n.moduleId === "web")?.detail ?? "", /uncommitted/);
+});

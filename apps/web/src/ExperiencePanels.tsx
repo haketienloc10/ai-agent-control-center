@@ -126,7 +126,7 @@ export function SessionHistory({ workflows, onInspectTask }: {
       </select></label>
       <label>Status <select value={status} onChange={e => setStatus(e.target.value)}>
         <option value="">Tất cả</option>
-        {["queued","starting","running","completed","failed","interrupted","waiting_runtime_approval"]
+        {["queued","starting","running","completed","failed","interrupted","cancelled","waiting_runtime_approval"]
           .map(s => <option key={s} value={s}>{s}</option>)}
       </select></label>
       <label>Workflow <select value={workflowId} onChange={e => setWorkflowId(e.target.value)}>

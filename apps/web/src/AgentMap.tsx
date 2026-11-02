@@ -3,12 +3,12 @@ import type { AgentRole, ModuleConfig, Task, WorkflowRun } from "@aacc/contracts
 
 export interface AgentMapNode {
   id: string; role: AgentRole; label: string; moduleId?: string;
-  task?: Task; status: string; count: number;
+  task?: Task; status: string; count: number; detail?: string;
 }
 const running = new Set(["starting", "running", "waiting_runtime_approval"]);
 /** Pure projection of persisted tasks, never fabricate activity for an idle agent. */
 export function agentMapNodes(modules: ModuleConfig[], tasks: Task[],
-  workflowId?: string): AgentMapNode[] {
+  workflowId?: string, workflows: WorkflowRun[] = []): AgentMapNode[] {
   const scoped = tasks.filter(t => !workflowId || t.workflowId === workflowId);
   const nodes: AgentMapNode[] = [
     { id: "lead", role: "lead", label: "Lead · Điều phối", status: "idle", count: 0 },
@@ -22,8 +22,18 @@ export function agentMapNodes(modules: ModuleConfig[], tasks: Task[],
     const matches = scoped.filter(t => t.role === node.role &&
       (node.role !== "peer" || t.moduleId === node.moduleId));
     const task = matches.find(t => running.has(t.status)) ?? matches[0];
+    const current = workflows.find(w => w.id === workflowId);
+    const peers = node.role === "peer"
+      ? current?.peers.filter(peer => peer.moduleId === node.moduleId) ?? [] : [];
+    const failed = peers.find(peer => peer.status === "failed");
+    const skipped = peers.find(peer => peer.status === "skipped");
+    const outcome = failed ?? skipped;
+    // Module status reflects PeerWork even if the Task never reached Codex.
+    // An actual running Task has priority, otherwise show the failed/skipped handoff.
+    const status = task && running.has(task.status) ? task.status :
+      outcome?.status ?? task?.status ?? "idle";
     return { ...node, task, count: matches.filter(t => running.has(t.status)).length,
-      status: task?.status ?? "idle" };
+      status, detail: outcome?.feedback };
   });
 }
 
@@ -34,8 +44,8 @@ export function AgentMap({ modules, tasks, workflows, onSelectTask }: {
   const [selectedWorkflow, setSelectedWorkflow] = useState("");
   const current = selectedWorkflow && workflows.some(w => w.id === selectedWorkflow)
     ? selectedWorkflow : workflows[0]?.id ?? "";
-  const nodes = useMemo(() => agentMapNodes(modules, tasks, current || undefined),
-    [modules, tasks, current]);
+  const nodes = useMemo(() => agentMapNodes(modules, tasks, current || undefined, workflows),
+    [modules, tasks, current, workflows]);
   const lead = nodes.filter(n => n.role === "lead");
   const peers = nodes.filter(n => n.role === "peer");
   const reviewers = nodes.filter(n => n.role === "reviewer");
@@ -48,7 +58,11 @@ export function AgentMap({ modules, tasks, workflows, onSelectTask }: {
         node.role === "reviewer" ? "R" : "P"}</span>
       <span className="agent-tile-info">
         <strong>{node.label}</strong>
-        <small>{node.task?.title ?? "Chưa có session"}</small>
+        <small>{node.task?.title ?? (node.status === "skipped"
+          ? "Bị bỏ qua trước khi tạo session" : "Chưa có session")}</small>
+        {node.detail && <small className="agent-failure-detail" title={node.detail}>
+          {node.detail.length > 150 ? node.detail.slice(0, 150) + "…" : node.detail}
+        </small>}
         <span className={"agent-tile-status agent-status-" + node.status}>
           {node.count > 0 ? node.count + " đang chạy" : node.status}
         </span>

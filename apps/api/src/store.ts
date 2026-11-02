@@ -58,6 +58,19 @@ export class TaskStore extends EventEmitter {
           task.title + ": " + task.error);
       }
     }
+    // Migrate legacy failed/interrupted workflows with orphaned queued Tasks.
+    // A queued Task has not started a Codex turn; cancelling it is side-effect free.
+    const terminalWorkflows = new Set(this.state.workflows
+      .filter(w => ["failed", "rejected", "completed", "interrupted", "blocked"].includes(w.status))
+      .map(w => w.id));
+    for (const task of this.state.tasks) {
+      if (task.status === "queued" && task.workflowId && terminalWorkflows.has(task.workflowId)) {
+        task.status = "cancelled";
+        task.error = "Workflow already terminated before this Task started";
+        task.updatedAt = new Date().toISOString();
+        task.finishedAt = task.updatedAt;
+      }
+    }
     for (const approval of this.state.approvals) {
       if (approval.status === "pending") approval.status = "expired";
     }
@@ -149,7 +162,7 @@ export class TaskStore extends EventEmitter {
       throw new Error("Invalid session role");
     }
     if (query.status && !["queued", "starting", "running", "waiting_runtime_approval",
-      "completed", "failed", "interrupted"].includes(query.status)) {
+      "completed", "failed", "interrupted", "cancelled"].includes(query.status)) {
       throw new Error("Invalid session status");
     }
     const filtered = this.list().filter(t => (!query.role || t.role === query.role) &&
@@ -229,7 +242,7 @@ export class TaskStore extends EventEmitter {
     const now = new Date().toISOString();
     Object.assign(task, patch, { updatedAt: now });
     if (status === "starting" && !task.startedAt) task.startedAt = now;
-    if (status && ["completed", "failed", "interrupted"].includes(status)) {
+    if (status && ["completed", "failed", "interrupted", "cancelled"].includes(status)) {
       task.finishedAt = now;
       if (status === "failed" || status === "interrupted") {
         this.notify("task", id, status === "failed" ? "task_failed" : "task_interrupted",
@@ -293,7 +306,10 @@ export class TaskStore extends EventEmitter {
       };
       const notice = notices[next.status];
       if (notice) this.notify("workflow", id, notice.kind, notice.title,
-        next.title + (next.blocker ? ": " + next.blocker : next.error ? ": " + next.error : ""));
+        next.title + (next.blocker ? ": " + next.blocker : next.error ? ": " + next.error : "") +
+          (next.failureHint?.code === "dirty_source"
+            ? " · Kiểm tra Git status tại " + next.failureHint.path +
+              "; commit hoặc stash -u các thay đổi, rồi tạo Workflow mới. Không tự clean." : ""));
     }
     this.state.workflows[index] = next;
     this.save(); this.emit("change");

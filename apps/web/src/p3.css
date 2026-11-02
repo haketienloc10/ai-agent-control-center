@@ -78,3 +78,10 @@
   .map-workflow-label { min-width: 125px; }
   .agent-map-stage { padding: 16px 8px; } }
 @media (prefers-reduced-motion: reduce) { .agent-tile { transition: none; } }
+
+.p3-dirty-git-guide { margin: 12px 0; padding: 13px 15px; border-radius: 10px;
+  border: 1px solid #8b6a44; background: #302717; line-height: 1.55; }
+.p3-dirty-git-guide strong { color: #f2cb92; }
+.p3-dirty-git-guide code { overflow-wrap: anywhere; }
+.status.cancelled, .status.skipped { color: #aebfd1; background: #293547; }
+.agent-status-cancelled, .agent-status-skipped { color: #aebfd1; }

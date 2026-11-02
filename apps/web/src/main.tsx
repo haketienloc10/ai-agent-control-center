@@ -161,11 +161,24 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onR
         <p>{peer.evidence.verifiedTest.command || "Chưa cấu hình testCommand cho module"}</p>
         {peer.evidence.verifiedTest.output && <pre>{peer.evidence.verifiedTest.output}</pre>}
       </div>}
-      {peer.feedback && <p className="muted"><strong>Lead feedback:</strong> {peer.feedback}</p>}
+      {peer.status === "skipped" && <p className="muted">
+        <strong>Không thực thi/duyệt:</strong> Workflow đã dừng trước khi Peer tiếp tục.
+      </p>}
+      {peer.feedback && <p className="muted">
+        <strong>{peer.status === "failed" || peer.status === "skipped"
+          ? "Lý do:" : "Lead feedback:"}</strong> {peer.feedback}</p>}
       {peer.attempts.map((attempt) => <button key={attempt.taskId} className="link-button"
         onClick={() => onSelect(attempt.taskId)}>Xem Task attempt #{attempt.iteration}</button>)}
     </div>)}</div>
     {workflow.error && <p className="error-text">{workflow.error}</p>}
+    {workflow.failureHint?.code === "dirty_source" && <div className="p3-dirty-git-guide">
+      <strong>Git repository chưa sạch — Peer không được khởi chạy</strong>
+      <p>Source: <code>{workflow.failureHint.path}</code></p>
+      <p>Kiểm tra bằng <code>git -C &lt;source-path&gt; status --short --untracked-files=all</code>.
+        Commit các thay đổi cần giữ hoặc dùng <code>git stash push -u</code> trong repository
+        trước khi tạo <strong>Workflow mới</strong>.</p>
+      <p className="muted">Không tự động clean, reset hoặc stash để tránh mất dữ liệu.</p>
+    </div>}
     {workflow.status === "failed" && workflow.peers.length > 0 &&
       workflow.peers.every((p) => p.status === "accepted") &&
       (workflow.error?.startsWith("IntegrationReview sai schema") ||

@@ -1,7 +1,7 @@
 export type AgentRole = "lead" | "peer" | "reviewer";
 export type TaskStatus =
   | "queued" | "starting" | "running" | "waiting_runtime_approval"
-  | "completed" | "failed" | "interrupted";
+  | "completed" | "failed" | "interrupted" | "cancelled";
 export interface ModuleConfig { id: string; label: string; path: string; testCommand?: string[] }
 export interface WorkspaceConfig {
   lead: { cwd: string; instructions: string };
@@ -135,15 +135,20 @@ export interface PeerAttempt {
 }
 export interface PeerWork {
   id: string; moduleId: string; title: string; instructions: string; dependsOn: string[];
-  status: "pending" | "running" | "review_pending" | "accepted" | "rework" | "failed";
+  status: "pending" | "running" | "review_pending" | "accepted" | "rework" | "failed" | "skipped";
   attempts: PeerAttempt[]; result?: PeerResult; evidence?: PeerEvidence; feedback?: string;
 }
 export type WorkflowStatus =
   | "planning" | "executing" | "reviewing" | "integration_reviewing"
   | "waiting_manual_verification" | "waiting_business_approval" | "blocked"
   | "completed" | "rejected" | "failed" | "interrupted";
+export interface WorkflowFailureHint {
+  code: "dirty_source";
+  path: string;
+}
 export interface WorkflowRun {
   id: string; title: string; request: string; status: WorkflowStatus;
+  failureHint?: WorkflowFailureHint;
   plan?: LeadPlan; peers: PeerWork[]; leadTaskIds: string[];
   reviewerTaskIds?: string[];
   lastRemediation?: LeadRemediation;
