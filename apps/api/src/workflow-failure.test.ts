@@ -124,10 +124,15 @@ test("P3 legacy terminal workflow queued Task reconciled on restart without exec
     const now = new Date().toISOString();
     const wf: WorkflowRun = {
       id: "w-legacy", title: "Legacy", request: "Old job", status: "failed",
-      peers: [{ id: "web1", title: "Web", moduleId: "web",
-        instructions: "Write", dependsOn: [], status: "failed", attempts: [] }],
+      peers: [
+        { id: "web1", title: "Web", moduleId: "web",
+          instructions: "Write", dependsOn: [], status: "running", attempts: [] },
+        { id: "api1", title: "API", moduleId: "api",
+          instructions: "Build", dependsOn: [], status: "pending", attempts: [] }
+      ],
       leadTaskIds: [], reviewCount: 0, maxReworks: 2,
-      createdAt: now, updatedAt: now, error: "Old error"
+      createdAt: now, updatedAt: now,
+      error: "Source repository has uncommitted/untracked files; commit or clean before P2 isolation: /tmp/old-web"
     };
     store.addWorkflow(wf);
     const task = createTask({ title: "Queued orphan", role: "lead", prompt: "Do not run" },
@@ -139,6 +144,8 @@ test("P3 legacy terminal workflow queued Task reconciled on restart without exec
     store = new TaskStore(root);
     assert.equal(store.get(task.id)?.status, "cancelled");
     assert.equal(store.getWorkflow(wf.id)?.status, "failed");
+    assert.equal(store.getWorkflow(wf.id)?.failureHint?.path, "/tmp/old-web");
+    assert.deepEqual(store.getWorkflow(wf.id)?.peers.map(p => p.status), ["failed", "skipped"]);
     assert.equal(store.sessions({ status: "cancelled" }).items[0]?.id, task.id);
     store.close();
     store = new TaskStore(root);

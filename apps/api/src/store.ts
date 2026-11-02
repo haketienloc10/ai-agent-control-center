@@ -60,6 +60,24 @@ export class TaskStore extends EventEmitter {
     }
     // Migrate legacy failed/interrupted workflows with orphaned queued Tasks.
     // A queued Task has not started a Codex turn; cancelling it is side-effect free.
+    // Heal P2-era persisted dirty-Git failures without touching source files
+    // or changing retryable review failures.
+    for (const workflow of this.state.workflows) {
+      if (workflow.status !== "failed") continue;
+      const pathMatch = /^Source repository has uncommitted\/untracked files; commit or clean before P2 isolation: (.+)$/m
+        .exec(workflow.error ?? "");
+      if (!pathMatch) continue;
+      workflow.failureHint ??= { code: "dirty_source", path: pathMatch[1].trim() };
+      for (const peer of workflow.peers) {
+        if (peer.status === "running") {
+          peer.status = "failed";
+          peer.feedback ??= workflow.error;
+        } else if (["pending", "rework", "review_pending"].includes(peer.status)) {
+          peer.status = "skipped";
+          peer.feedback ??= "Workflow đã dừng trước khi Peer được thực thi/duyệt: " + workflow.error;
+        }
+      }
+    }
     const terminalWorkflows = new Set(this.state.workflows
       .filter(w => ["failed", "rejected", "completed", "interrupted", "blocked"].includes(w.status))
       .map(w => w.id));
