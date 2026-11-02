@@ -4,6 +4,9 @@ import type { AgentRole, Snapshot, Task, WorkflowRun } from "@aacc/contracts";
 import "./style.css";
 import { ActivityPanel } from "./ActivityPanel.js";
 import { ArtifactViewer } from "./ArtifactViewer.js";
+import { AgentMap } from "./AgentMap.js";
+import { ObservabilityPanel, SessionHistory, JournalExplorer } from "./ExperiencePanels.js";
+import "./p3.css";
 
 async function api<T>(path: string, method: "GET" | "POST" = "GET", body?: unknown): Promise<T> {
   const response = await fetch("/api" + path, {
@@ -34,7 +37,7 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onR
   const unverifiedChecks = workflow.finalReview?.checks.filter((check) => check.status === "unverified") ?? [];
   const unverifiedContracts = (workflow.finalReview?.contractChecks ?? [])
     .filter((check) => check.status === "unverified");
-  return <div className="workflow">
+  return <div className="workflow" id={"workflow-" + workflow.id}>
     <div className="panel-heading">
       <div><strong>{workflow.title}</strong><p>{workflow.request}</p></div>
       <span className={"status " + workflow.status}>{workflow.status.replaceAll("_", " ")}</span>
@@ -158,11 +161,24 @@ function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onR
         <p>{peer.evidence.verifiedTest.command || "Chưa cấu hình testCommand cho module"}</p>
         {peer.evidence.verifiedTest.output && <pre>{peer.evidence.verifiedTest.output}</pre>}
       </div>}
-      {peer.feedback && <p className="muted"><strong>Lead feedback:</strong> {peer.feedback}</p>}
+      {peer.status === "skipped" && <p className="muted">
+        <strong>Không thực thi/duyệt:</strong> Workflow đã dừng trước khi Peer tiếp tục.
+      </p>}
+      {peer.feedback && <p className="muted">
+        <strong>{peer.status === "failed" || peer.status === "skipped"
+          ? "Lý do:" : "Lead feedback:"}</strong> {peer.feedback}</p>}
       {peer.attempts.map((attempt) => <button key={attempt.taskId} className="link-button"
         onClick={() => onSelect(attempt.taskId)}>Xem Task attempt #{attempt.iteration}</button>)}
     </div>)}</div>
     {workflow.error && <p className="error-text">{workflow.error}</p>}
+    {workflow.failureHint?.code === "dirty_source" && <div className="p3-dirty-git-guide">
+      <strong>Git repository chưa sạch — Peer không được khởi chạy</strong>
+      <p>Source: <code>{workflow.failureHint.path}</code></p>
+      <p>Kiểm tra bằng <code>git -C &lt;source-path&gt; status --short --untracked-files=all</code>.
+        Commit các thay đổi cần giữ hoặc dùng <code>git stash push -u</code> trong repository
+        trước khi tạo <strong>Workflow mới</strong>.</p>
+      <p className="muted">Không tự động clean, reset hoặc stash để tránh mất dữ liệu.</p>
+    </div>}
     {workflow.status === "failed" && workflow.peers.length > 0 &&
       workflow.peers.every((p) => p.status === "accepted") &&
       (workflow.error?.startsWith("IntegrationReview sai schema") ||
@@ -256,6 +272,11 @@ function App() {
     return () => events.close();
   }, []);
 
+  const inspectTask = (id: string) => {
+    setSelectedTask(id);
+    document.getElementById("tasks-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   const runAction = async (path: string, body?: unknown) => {
     try {
       setError("");
@@ -287,14 +308,21 @@ function App() {
   return <main>
     <header>
       <div>
-        <p className="eyebrow">PERSONAL AI WORKSPACE · P2</p>
+        <p className="eyebrow">PERSONAL AI WORKSPACE · P3</p>
         <h1>AI Agent Control Center</h1>
-        <p>Lead lập kế hoạch, phân công Peer tại source modules, review và chuyển kết quả cho bạn duyệt.</p>
+        <p>Lead điều phối Peer, Final Reviewer đánh giá độc lập và bạn duyệt kết quả cuối.</p>
       </div>
       <span className="tag">Local · Codex YOLO</span>
     </header>
     <p className="error" role="status">YOLO mode: Codex được quyền chạy lệnh và sửa file không cần Runtime Approval, kể cả ngoài module. Chỉ chạy trên máy cá nhân với repo tin cậy; Business Approval cuối workflow vẫn được giữ.</p>
     {error && <aside className="error" role="alert">{error} <button onClick={() => setError("")}>Đóng</button></aside>}
+    <AgentMap modules={snapshot.modules} tasks={snapshot.tasks}
+      workflows={snapshot.workflows} onSelectTask={inspectTask}/>
+    <ObservabilityPanel notifications={snapshot.notifications ?? []}
+      onAcknowledge={id => void runAction("/notifications/" + id + "/read")}
+      onInspectTask={inspectTask}
+      onInspectWorkflow={id =>
+        document.getElementById("workflow-" + id)?.scrollIntoView({ behavior: "smooth" })}/>
     <section className="columns">
       <article className="panel">
         <h2>Chạy Workflow Lead → Peer → Review</h2>
@@ -361,7 +389,7 @@ function App() {
           </div>)}
       </article>
     </section>
-    <section className="panel">
+    <section className="panel" id="tasks-panel">
       <div className="panel-heading"><h2>Tasks / Codex Sessions</h2><button onClick={() => void refresh()}>Làm mới</button></div>
       {snapshot.tasks.length === 0 ? <p className="muted">Chưa có Task.</p> :
         <div className="task-list">{snapshot.tasks.map((task) =>
@@ -401,6 +429,7 @@ function App() {
             {task.error && <small className="error-text">{task.error}</small>}
           </div>)}</div>}
     </section>
+    <SessionHistory workflows={snapshot.workflows} onInspectTask={inspectTask}/>
     <ActivityPanel
       activities={snapshot.activities ?? []}
       events={snapshot.events}
@@ -410,7 +439,8 @@ function App() {
       selectedTask={selectedTask}
       onSelectTask={setSelectedTask}
     />
-    <footer>P2 — Lead điều phối · Peer triển khai · Final Reviewer độc lập trong fresh session · Bạn duyệt.</footer>
+    <JournalExplorer />
+    <footer>P3 — Agent Map · Session History · Notifications · Event Journal · Backend Metrics. Codex vẫn là runtime chính.</footer>
   </main>;
 }
 

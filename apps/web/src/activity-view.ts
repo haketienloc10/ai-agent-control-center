@@ -1,6 +1,6 @@
 import type { ActivityEntry, Task, WorkflowRun } from "@aacc/contracts";
 
-export type ActivityFilter = "all" | "lead" | "peer" | "workflow";
+export type ActivityFilter = "all" | "lead" | "peer" | "reviewer" | "workflow";
 
 export function activitySource(entry: ActivityEntry, tasks: Task[], workflows: WorkflowRun[]): string {
   if (entry.taskId.startsWith("workflow:")) {
@@ -9,7 +9,9 @@ export function activitySource(entry: ActivityEntry, tasks: Task[], workflows: W
   }
   const task = tasks.find((t) => t.id === entry.taskId);
   if (!task) return "Agent";
-  return task.role === "lead" ? "Lead · " + task.title : "Peer" + (task.moduleId ? " · " + task.moduleId : "") + " · " + task.title;
+  return task.role === "lead" ? "Lead · " + task.title :
+    task.role === "reviewer" ? "Final Reviewer · " + task.title :
+    "Peer" + (task.moduleId ? " · " + task.moduleId : "") + " · " + task.title;
 }
 
 export function matchesActivityFilter(

@@ -35,13 +35,14 @@ export function createTask(input: unknown, config: WorkspaceConfig): Task {
 }
 
 const transitions: Record<TaskStatus, readonly TaskStatus[]> = {
-  queued: ["starting"],
+  queued: ["starting", "failed", "cancelled"],
   starting: ["running", "failed", "interrupted"],
   running: ["waiting_runtime_approval", "completed", "failed", "interrupted"],
   waiting_runtime_approval: ["running", "failed", "interrupted"],
   completed: [],
   failed: [],
-  interrupted: []
+  interrupted: [],
+  cancelled: []
 };
 
 export function assertTransition(from: TaskStatus, to: TaskStatus): void {

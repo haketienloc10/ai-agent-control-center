@@ -2,7 +2,7 @@
 
 Dashboard **cá nhân, chạy trên máy local** để thay thế việc quản lý nhiều terminal Codex. Mục tiêu là giữ nguyên mô hình làm việc hiện có: **Lead Agent trong workspace chung → giao việc cho Peer ở các source module bên ngoài → nhận kết quả → Lead review / yêu cầu sửa → người dùng quyết định**.
 
-> Trạng thái: P2 **Isolation & Recovery** trên nhánh tính năng. Codex **YOLO mode** vẫn là mặc định theo lựa chọn P1; có tùy chọn bật sandbox. Chưa phải production hoặc E2E verified trên máy người dùng.
+> Trạng thái: P3 **Experience & Observability** trên nhánh tính năng. Codex **YOLO mode** vẫn là mặc định theo lựa chọn P1; có tùy chọn bật sandbox. Chưa phải production hoặc E2E verified trên máy người dùng.
 
 ## Bắt đầu
 
@@ -28,6 +28,7 @@ Nếu chưa cài/đăng nhập Codex, API vẫn có thể khởi chạy nhưng *
 - `docs/ROADMAP.md`: các giai đoạn thực hiện, acceptance criteria.
 - `docs/WORKFLOW_P1.md`: hợp đồng JSON, luồng triển khai P1, API, giới hạn.
 - `docs/P2.md`: worktree, SQLite, artifact, recovery và security mode.
+- `docs/P3.md`: bản đồ Agent, lịch sử session, notifications, journal và metrics.
 - `AGENTS.md`: quy tắc dành cho contributor/Agent.
 - `apps/api`: Backend, WorkflowEngine, Task Store, SessionManager và Codex JSON-RPC adapter.
 - `apps/web`: Dashboard có timeline hoạt động dễ đọc và tab kỹ thuật, SSE, Run/Interrupt/Approval.
@@ -59,7 +60,7 @@ Tài liệu giao thức: https://developers.openai.com/codex/app-server
 
 ## Codex YOLO mode (local-only)
 
-Nhánh này dùng `approvalPolicy: "never"` và `sandbox: "danger-full-access"` / `sandboxPolicy.type: "dangerFullAccess"` cho mọi Thread và Turn. Tương đương `codex --yolo`. **Codex không hỏi cấp quyền từng lệnh, có quyền filesystem/network theo tài khoản chạy Backend**, kể cả bên ngoài source module; `cwd` chỉ định tuyến công việc chứ không chặn truy cập. Hãy sao lưu/commit các source modules và chỉ chạy với workspace tin cậy. Backend chưa có authentication và chỉ bind `127.0.0.1`.
+Chỉ Peer mặc định chạy `approvalPolicy: "never"`, `sandbox: "danger-full-access"` và `sandboxPolicy.type: "dangerFullAccess"`, tương đương Codex YOLO. Lead và Final Reviewer dùng `read-only` để điều phối/kiểm tra. Có thể bật `CODEX_SECURITY_MODE=sandbox` cho Peer. **Git worktree không phải OS sandbox:** Peer ở YOLO vẫn có quyền filesystem/network theo tài khoản Backend; `cwd` chỉ định tuyến công việc. Chỉ chạy trên máy tin cậy; Backend không có authentication và bind `127.0.0.1`. 
 
 **Business Approval** ở cuối workflow vẫn cần bạn bấm duyệt; khác với Runtime Approval vốn đã bỏ qua trong YOLO mode.
 
@@ -69,7 +70,7 @@ Dashboard mặc định hiển thị **Activity Timeline** (Lead/Peer, thời gi
 
 ## Final Integration Review + Acceptance Criteria
 
-Sau khi tất cả Peer được Lead accept, Workflow **chưa** tự chuyển sang Business Approval: Lead chạy Final Integration Review, đối chiếu `acceptanceCriteria` của kế hoạch, kiểm tra việc kết nối giữa source modules và kết quả test/evidence. Final reviewer trả `pass`, `rework` hoặc `manual_verification`. Khi `rework`, Backend dispatch Peer được chỉ định và invalidate các Peer phụ thuộc upstream đã thay đổi. Khi `manual_verification`, UI hiển thị từng tiêu chí chưa được xác minh để người dùng tự kiểm tra và xác nhận, trước khi duyệt kết quả cuối.
+Sau khi tất cả Peer được Lead accept, một **Final Reviewer Agent riêng** mở Codex Thread mới, read-only, đối chiếu `acceptanceCriteria`, kết nối giữa các module và test evidence. Reviewer trả `pass`, `rework` hoặc `unverified`. Khi `rework`, **Lead** quyết định Peer nào sửa, Backend invalidates các downstream phụ thuộc. Khi `unverified`, **Lead** quyết định `collect_evidence`, `run_verification`, `request_human` hoặc `blocked`. Chỉ `request_human` mới mở Human Verification; Lead không được tự tuyên bố passed.
 
 Không có claim rằng test/browser đã được chạy nếu không có bằng chứng; review của LLM không thay thế E2E tự động. Xem `docs/WORKFLOW_P1.md`.
 
@@ -77,7 +78,7 @@ Không có claim rằng test/browser đã được chạy nếu không có bằn
 
 Mỗi dependency xuyên module trong LeadPlan phải được phân loại: **integrationContracts** (có artifact/API được bàn giao, nơi sử dụng và cách kiểm chứng) hoặc **orderingOnlyDependencies** (chỉ yêu cầu thứ tự, có lý do). Một dependency không đồng nghĩa với tích hợp; tuy nhiên Lead không được tự lờ đi một contract đã cam kết.
 
-Final Integration Review duy nhất đánh giá đồng thời **Product Acceptance** (`checks`) và **Integration Acceptance** (`contractChecks`), đều có evidence. PASS chỉ khi cả hai nhóm đều passed. Nếu UI chạy bằng mock/fallback trong khi plan cam kết Web dùng API, reviewer phải đánh dấu contract failed và yêu cầu rework; nếu chưa kiểm chứng, yêu cầu người dùng xác nhận contract trước Business Approval. Đây vẫn là review dựa vào bằng chứng do Agent báo cáo, không đảm bảo chứng thực kỹ thuật độc lập.
+Final Integration Review duy nhất đánh giá đồng thời **Product Acceptance** (`checks`) và **Integration Acceptance** (`contractChecks`), đều có evidence. PASS chỉ khi cả hai nhóm đều passed. Nếu UI chạy bằng mock/fallback trong khi plan cam kết Web dùng API, reviewer phải đánh dấu contract failed và yêu cầu rework; nếu chưa kiểm chứng, Reviewer báo `unverified` và Lead điều phối thu thập bằng chứng hoặc quyết định có cần Human Verification.  Đây vẫn là review dựa vào bằng chứng do Agent báo cáo, không đảm bảo chứng thực kỹ thuật độc lập.
 
 ## P2 — Worktree, SQLite, Recovery và Artifact Viewer
 
@@ -94,3 +95,11 @@ Xem [docs/P2.md](docs/P2.md) để biết quy trình áp dụng patch thủ côn
 ## Agent roles — Independent Final Reviewer
 
 Lead chỉ điều phối Peer và ra quyết định accept/rework hoặc khắc phục blocker; không tự làm Final Integration Review. Sau các Peer được Lead chấp nhận, một **Final Reviewer riêng** (`role=reviewer`) kiểm tra Product + Integration Acceptance trên **Codex Thread mới, read-only**. Nếu có failed findings, Lead nhận báo cáo và quyết định Peer cần sửa. Mỗi lần review lại sau rework tạo một Thread mới. Xem [docs/AGENT_ROLES.md](docs/AGENT_ROLES.md).
+
+## P3 — Trải nghiệm điều phối và quan sát
+
+Dashboard có **Agent Map dạng 2.5D** (Lead, Peer theo module, Final Reviewer), hiển thị trạng thái thực từ Task trong workflow; chọn Agent để xem session tương ứng. **Session History** lọc theo role/status/workflow và tải trang cũ hơn theo cursor. **Activity Timeline** có thêm bộ lọc từ khóa/trạng thái/thời gian và một **Event Journal Explorer** đọc từ SQLite, không phụ thuộc cửa sổ timeline giới hạn.
+
+Backend tạo **notification** khi Task thất bại/gián đoạn hoặc Workflow chuyển trạng thái cần người dùng xử lý. Thông báo được lưu qua restart và có nút đánh dấu đã đọc. Dashboard polling `/api/metrics` mỗi 8 giây để hiển thị bộ nhớ RSS/heap, CPU time tích lũy và uptime của **tiến trình Backend** cùng các bộ đếm Task/Workflow. Không suy diễn CPU/RAM riêng của Codex/Agent.
+
+Các API mới: `GET /api/sessions`, `GET /api/journal/history`, `GET /api/notifications`, `POST /api/notifications/:id/read`, `GET /api/metrics`. Claude Code Adapter đang là tùy chọn, chưa triển khai vì workflow hiện sử dụng Codex CLI subscription. Xem [docs/P3.md](docs/P3.md).

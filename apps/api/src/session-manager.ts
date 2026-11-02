@@ -108,7 +108,21 @@ export class SessionManager implements AgentTaskExecutor {
       if (next < 0) break;
       const entry = this.queue.splice(next, 1)[0];
       const task = this.store.get(entry.taskId);
-      if (!task) { entry.reject(new Error("Task not found")); continue; }
+      if (!task) {
+        this.pending.delete(entry.taskId);
+        entry.reject(new Error("Task not found"));
+        continue;
+      }
+      const workflowStatus = task.workflowId ? this.store.getWorkflow(task.workflowId)?.status : undefined;
+      if (task.status !== "queued" || (workflowStatus &&
+          ["failed", "interrupted", "rejected", "completed", "blocked"].includes(workflowStatus))) {
+        if (task.status === "queued") {
+          this.store.update(task.id, { error: "Workflow ended before Task dispatch" }, "cancelled");
+        }
+        this.pending.delete(entry.taskId);
+        entry.reject(new Error("Task is no longer eligible for dispatch"));
+        continue;
+      }
       this.active.add(entry.taskId);
       this.store.update(task.id, {}, "starting");
       void this.execute(task).then(entry.resolve, (error: unknown) => {

@@ -1,7 +1,7 @@
 export type AgentRole = "lead" | "peer" | "reviewer";
 export type TaskStatus =
   | "queued" | "starting" | "running" | "waiting_runtime_approval"
-  | "completed" | "failed" | "interrupted";
+  | "completed" | "failed" | "interrupted" | "cancelled";
 export interface ModuleConfig { id: string; label: string; path: string; testCommand?: string[] }
 export interface WorkspaceConfig {
   lead: { cwd: string; instructions: string };
@@ -16,6 +16,7 @@ export interface Task {
   sourceModule?: string; moduleRelative?: string; baseHead?: string;
   reconciliation?: { status: "pending" | "completed" | "active" | "unknown"; detail: string };
   createdAt: string; updatedAt: string;
+  startedAt?: string; finishedAt?: string;
 }
 export interface RuntimeApproval {
   id: string; taskId: string; requestId: string | number;
@@ -134,15 +135,20 @@ export interface PeerAttempt {
 }
 export interface PeerWork {
   id: string; moduleId: string; title: string; instructions: string; dependsOn: string[];
-  status: "pending" | "running" | "review_pending" | "accepted" | "rework" | "failed";
+  status: "pending" | "running" | "review_pending" | "accepted" | "rework" | "failed" | "skipped";
   attempts: PeerAttempt[]; result?: PeerResult; evidence?: PeerEvidence; feedback?: string;
 }
 export type WorkflowStatus =
   | "planning" | "executing" | "reviewing" | "integration_reviewing"
   | "waiting_manual_verification" | "waiting_business_approval" | "blocked"
   | "completed" | "rejected" | "failed" | "interrupted";
+export interface WorkflowFailureHint {
+  code: "dirty_source";
+  path: string;
+}
 export interface WorkflowRun {
   id: string; title: string; request: string; status: WorkflowStatus;
+  failureHint?: WorkflowFailureHint;
   plan?: LeadPlan; peers: PeerWork[]; leadTaskIds: string[];
   reviewerTaskIds?: string[];
   lastRemediation?: LeadRemediation;
@@ -161,8 +167,48 @@ export interface ArtifactDescriptor {
   kind: "patch" | "test-output";
   bytes: number; sha256: string; createdAt: string;
 }
+export interface NotificationEntry {
+  id: string;
+  scope: "task" | "workflow";
+  targetId: string;
+  kind: "task_failed" | "task_interrupted" | "business_approval" |
+    "manual_verification" | "workflow_blocked" | "workflow_failed" | "workflow_interrupted";
+  title: string;
+  message: string;
+  createdAt: string;
+  readAt?: string;
+}
+
+export interface SessionHistoryItem {
+  id: string; threadId?: string; turnId?: string;
+  role: AgentRole; title: string; moduleId?: string; workflowId?: string;
+  status: TaskStatus; createdAt: string; startedAt?: string;
+  finishedAt?: string; updatedAt: string; durationMs?: number;
+}
+export interface SessionHistoryPage {
+  items: SessionHistoryItem[];
+  nextCursor?: string;
+}
+export interface JournalRecord {
+  seq: number; id: string; taskId: string; kind: string; data: unknown; createdAt: string;
+}
+export interface JournalPage {
+  items: JournalRecord[]; nextCursor?: number;
+}
+export interface RuntimeMetrics {
+  observedAt: string;
+  backend: {
+    uptimeSeconds: number; rssBytes: number; heapUsedBytes: number;
+    cpuUserSeconds: number; cpuSystemSeconds: number;
+  };
+  tasks: { total: number; active: number; queued: number; failed: number; interrupted: number };
+  workflows: { total: number; active: number; waitingHuman: number; failed: number };
+  alerts: { unread: number };
+}
+
 export interface Snapshot {
   tasks: Task[]; approvals: RuntimeApproval[]; events: ActivityEvent[];
   modules: ModuleConfig[]; workflows: WorkflowRun[]; activities: ActivityEntry[];
   artifacts?: ArtifactDescriptor[];
+  notifications?: NotificationEntry[];
 }

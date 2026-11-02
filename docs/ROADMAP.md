@@ -36,10 +36,16 @@
 
 **Nghiệm thu P2:** Peer chỉ ghi vào detached worktree; nguồn gốc sạch, artifact patch truy vết được; restart không phát lại lệnh tự động. Xem docs/P2.md.
 
-## P3 — Experience
+## P3 — Experience (PR #10)
 
-- [ ] Bản đồ Agent/isometric UI.
-- [ ] Runtime Adapter cho Claude Code (nếu cần).
-- [ ] Lịch sử session, filter event, thông báo và quan sát tài nguyên.
+- [x] Bản đồ Agent kiểu isometric/2.5D tương tác: Lead → Peer modules → Final Reviewer; dữ liệu đến từ Task và Workflow đã lưu, có thể chọn Task để xem chi tiết.
+- [x] Lịch sử Codex session có phân trang keyset, lọc role/status/workflow và thời gian thực thi (khi có timestamps).
+- [x] Activity Timeline lọc theo Agent role, từ khóa, trạng thái, khoảng thời gian; SQLite Event Journal riêng có lọc prefix kind/task ID/từ khóa và cursor.
+- [x] Thông báo trong ứng dụng được SQLite lưu bền cho Task failed/interrupted và Workflow chờ duyệt/cần xác minh/blocked/failed; có đánh dấu đã đọc.
+- [x] Quan sát tiến trình Backend: RSS/heap, CPU time tích lũy, uptime; tổng Task active/queued và Workflow đang chờ người dùng.
+- [x] Unit tests và CI cho projections, notification persistence/restart, filters, journal cursor và metrics.
+- [—] Claude Code Adapter: **không cần trong P3 hiện tại** vì runtime đã đăng nhập bằng Codex CLI. Không bổ sung provider credentials hoặc mô phỏng Claude trong Codex Adapter.
 
-Mỗi phase phải có test minh chứng, không coi checklist là bằng chứng chạy được trên máy thật.
+**Nghiệm thu P3:** bản đồ không hiển thị Agent đang chạy khi không có Task; lỗi và bước chờ người dùng xuất hiện trong thông báo; lịch sử session và journal đọc được sau restart; metrics được gắn nhãn Backend, không ngụ ý là CPU/RAM từng Agent. Xem `docs/P3.md`.
+
+Mỗi phase phải có test minh chứng; CI không thay thế live Codex E2E trên máy thực.

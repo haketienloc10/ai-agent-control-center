@@ -15,6 +15,13 @@ const MAX_REWORKS = 2;
 const MAX_REVIEW_FORMAT_RETRIES = 2; // Không tính vào số lượt rework của Peer.
 const MAX_INTEGRATION_FORMAT_RETRIES = 2;
 const MAX_VERIFICATION_ROUNDS = 2; // Separate budget from Peer rework attempts.
+const dirtySourceHint = (message: string): WorkflowRun["failureHint"] => {
+  const match = /^Source repository has uncommitted\/untracked files; commit or clean before P2 isolation: (.+)$/m.exec(message);
+  return match ? { code: "dirty_source", path: match[1].trim() } : undefined;
+};
+const isReviewSchemaFailure = (message: string) =>
+  /^(LeadReview|Agent output phải là JSON|Unexpected review taskId|Invalid review decision|review\.|Expected JSON object|IntegrationReview sai schema|LeadRemediation sai schema|LeadVerification sai schema)/.test(message);
+
 
 export class WorkflowEngine {
   private readonly active = new Set<string>();
@@ -53,11 +60,32 @@ export class WorkflowEngine {
       const message = error instanceof Error ? error.message : String(error);
       const current = this.store.getWorkflow(id);
       if (current && ["planning", "executing", "reviewing", "integration_reviewing"].includes(current.status)) {
+        const retryable = isReviewSchemaFailure(message) &&
+          !current.peers.some(peer => peer.status === "failed");
         this.store.mutateWorkflow(id, (w) => {
           w.status = "failed";
           w.error = message;
-          for (const peer of w.peers) if (peer.status === "running") peer.status = "failed";
+          w.failureHint = dirtySourceHint(message);
+          if (!retryable) {
+            for (const peer of w.peers) {
+              if (peer.status === "running") {
+                peer.status = "failed";
+                peer.feedback ??= message;
+              } else if (["pending", "rework", "review_pending"].includes(peer.status)) {
+                peer.status = "skipped";
+                peer.feedback ??= "Workflow đã dừng trước khi Peer được thực thi/duyệt: " + message;
+              }
+            }
+          }
         });
+        // No queued Task may survive a terminal workflow. Preserve completed Tasks
+        // and retryable review_pending Peer results; no speculative replay.
+        for (const task of this.store.list()) {
+          if (task.workflowId === id && task.status === "queued") {
+            this.store.update(task.id, { error: "Workflow failed before Task started: " + message },
+              "cancelled");
+          }
+        }
       }
       this.store.workflowEvent(id, "workflow/failed", { message });
     }).finally(() => this.active.delete(id));
@@ -758,19 +786,36 @@ export class WorkflowEngine {
       p.status = "running";
       p.attempts.push({ taskId: task.id, iteration: p.attempts.length + 1 });
     });
-    const cwd = await this.executor.prepare?.(task.id) ?? cwdForTask(task, this.config);
-    const baseline = await gitBaseline(cwd);
-    const output = await this.executor.runAndWait(task.id);
-    const result: PeerResult = validatePeerResult(parseAgentJson(output));
-    const evidence = await collectPeerEvidence(cwd, baseline, result, this.store, task.id);
-    if (this.p2) await this.p2.capture(this.store.get(task.id)!, evidence);
-    this.store.mutateWorkflow(workflowId, (w) => {
-      const p = w.peers.find((v) => v.id === peerId)!;
-      p.result = result;
-      p.evidence = evidence;
-      p.status = "review_pending";
-      p.attempts.at(-1)!.result = result;
-    });
-    this.store.workflowEvent(workflowId, "workflow/peer_result", { peerId, taskId: task.id, result, evidence });
+    try {
+      const cwd = await this.executor.prepare?.(task.id) ?? cwdForTask(task, this.config);
+      const baseline = await gitBaseline(cwd);
+      const output = await this.executor.runAndWait(task.id);
+      const result: PeerResult = validatePeerResult(parseAgentJson(output));
+      const evidence = await collectPeerEvidence(cwd, baseline, result, this.store, task.id);
+      if (this.p2) await this.p2.capture(this.store.get(task.id)!, evidence);
+      this.store.mutateWorkflow(workflowId, (w) => {
+        const p = w.peers.find((v) => v.id === peerId)!;
+        p.result = result;
+        p.evidence = evidence;
+        p.status = "review_pending";
+        p.attempts.at(-1)!.result = result;
+      });
+      this.store.workflowEvent(workflowId, "workflow/peer_result", { peerId, taskId: task.id, result, evidence });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const current = this.store.get(task.id);
+      // prepare() can reject before SessionManager starts; queued must become failed
+      // rather than remain a misleading pending task in the P3 Agent Map.
+      if (current && ["queued", "starting", "running", "waiting_runtime_approval"].includes(current.status)) {
+        this.store.update(task.id, { error: message }, "failed");
+      }
+      this.store.mutateWorkflow(workflowId, (w) => {
+        const p = w.peers.find(v => v.id === peerId)!;
+        p.status = "failed";
+        p.feedback = message;
+      });
+      this.store.workflowEvent(workflowId, "workflow/peer_failed", { peerId, taskId: task.id, message });
+      throw error;
+    }
   }
 }

@@ -11,6 +11,7 @@ import { P2Services } from "./p2-services.js";
 import { RecoveryManager } from "./recovery.js";
 import { SingleInstanceLock } from "./single-instance.js";
 import { WorkflowEngine } from "./workflow-engine.js";
+import { runtimeMetrics } from "./metrics.js";
 
 const config = loadWorkspaceConfig();
 const dataDir = process.env.APP_DATA_DIR ?? fileURLToPath(new URL("../../../.data", import.meta.url));
@@ -54,8 +55,41 @@ const server = createServer(async (req, res) => {
       json(res, 200, {
         tasks: store.list(), events: store.events(), approvals: store.approvals(),
         modules: config.modules, workflows: store.workflows(), activities: store.activities(),
-        artifacts: artifacts.list()
+        artifacts: artifacts.list(), notifications: store.notifications()
       });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/metrics") {
+      json(res, 200, runtimeMetrics(store.list(), store.workflows(), store.unreadNotifications()));
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/sessions") {
+      json(res, 200, store.sessions({
+        limit: Number(url.searchParams.get("limit") ?? "30"),
+        cursor: url.searchParams.get("cursor") ?? undefined,
+        role: url.searchParams.get("role") ?? undefined,
+        status: url.searchParams.get("status") ?? undefined,
+        workflowId: url.searchParams.get("workflowId") ?? undefined
+      }));
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/journal/history") {
+      json(res, 200, store.journalPage({
+        before: Number(url.searchParams.get("before") ?? String(Number.MAX_SAFE_INTEGER)),
+        limit: Number(url.searchParams.get("limit") ?? "50"),
+        taskId: url.searchParams.get("taskId") ?? undefined,
+        kind: url.searchParams.get("kind") ?? undefined,
+        search: url.searchParams.get("search") ?? undefined
+      }));
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/notifications") {
+      json(res, 200, store.notifications());
+      return;
+    }
+    const ackNotification = /^\/api\/notifications\/([a-f0-9-]{36})\/read$/.exec(url.pathname);
+    if (req.method === "POST" && ackNotification) {
+      json(res, 200, store.acknowledge(ackNotification[1]));
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/journal") {
