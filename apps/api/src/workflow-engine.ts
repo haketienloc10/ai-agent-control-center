@@ -60,7 +60,8 @@ export class WorkflowEngine {
       const message = error instanceof Error ? error.message : String(error);
       const current = this.store.getWorkflow(id);
       if (current && ["planning", "executing", "reviewing", "integration_reviewing"].includes(current.status)) {
-        const retryable = isReviewSchemaFailure(message);
+        const retryable = isReviewSchemaFailure(message) &&
+          !current.peers.some(peer => peer.status === "failed");
         this.store.mutateWorkflow(id, (w) => {
           w.status = "failed";
           w.error = message;
