@@ -1,214 +1,40 @@
-export type AgentRole = "lead" | "peer" | "reviewer";
-export type TaskStatus =
-  | "queued" | "starting" | "running" | "waiting_runtime_approval"
-  | "completed" | "failed" | "interrupted" | "cancelled";
-export interface ModuleConfig { id: string; label: string; path: string; testCommand?: string[] }
+/** MVP: trao đổi giữa người dùng, Lead và các Peer, không có workflow gate. */
+export interface ModuleConfig { id: string; label: string; path: string; }
 export interface WorkspaceConfig {
   lead: { cwd: string; instructions: string };
-  reviewer?: { cwd: string; instructions: string };
   modules: ModuleConfig[];
 }
-export interface Task {
-  id: string; title: string; prompt: string; role: AgentRole;
-  moduleId?: string; workflowId?: string; output?: string;
-  status: TaskStatus; threadId?: string; turnId?: string; error?: string;
-  executionCwd?: string; worktreeRoot?: string; sourceRoot?: string;
-  sourceModule?: string; moduleRelative?: string; baseHead?: string;
-  reconciliation?: { status: "pending" | "completed" | "active" | "unknown"; detail: string };
-  createdAt: string; updatedAt: string;
-  startedAt?: string; finishedAt?: string;
+export type AgentRole = "lead" | "peer";
+export type SessionStatus = "idle" | "running" | "interrupted";
+export interface Conversation {
+  id: string; title: string; status: "active" | "finished";
+  leadSessionId: string; createdAt: string; updatedAt: string;
 }
-export interface RuntimeApproval {
-  id: string; taskId: string; requestId: string | number;
-  method: string; params: Record<string, unknown>;
-  status: "pending" | "accepted" | "declined" | "expired"; createdAt: string;
+export interface AgentSession {
+  id: string; conversationId: string; role: AgentRole;
+  moduleId?: string; label: string; threadId?: string; turnId?: string;
+  status: SessionStatus; error?: string; createdAt: string; updatedAt: string;
 }
-export interface ActivityEvent {
-  id: string; taskId: string; kind: string; data: unknown; createdAt: string;
+export type MessageAuthor = "user" | "lead" | "peer" | "system";
+export interface Message {
+  id: string; conversationId: string; from: MessageAuthor;
+  to: "user" | "lead" | "peer";
+  text: string; peerSessionId?: string; createdAt: string;
 }
-export interface ActivityEntry {
-  id: string;
-  taskId: string;
-  type: "message" | "command" | "file" | "tool" | "workflow" | "status" | "error";
-  title: string;
-  detail: string;
-  status: "info" | "running" | "completed" | "failed";
-  source: string;
-  itemId?: string;
-  createdAt: string;
-  updatedAt: string;
+export interface Delivery {
+  id: string; conversationId: string; sessionId: string; messageId: string;
+  status: "queued" | "running" | "completed" | "interrupted";
+  error?: string; createdAt: string; updatedAt: string;
 }
-export interface AcceptanceCriterion {
-  id: string;
-  description: string;
-  verification: string;
-}
-export interface IntegrationContract {
-  id: string;
-  producerTaskId: string;
-  consumerTaskId: string;
-  deliverable: string;
-  consumerUsage: string;
-  verification: string;
-}
-export interface OrderingDependency {
-  producerTaskId: string;
-  consumerTaskId: string;
-  reason: string;
-}
-export interface IntegrationCheck {
-  criterionId: string;
-  status: "passed" | "failed" | "unverified";
-  evidence: string;
-}
-export interface ContractCheck {
-  contractId: string;
-  status: "passed" | "failed" | "unverified";
-  evidence: string;
-}
-export interface IntegrationReview {
-  summary: string;
-  verdict: "pass" | "rework" | "unverified" | "manual_verification"; // legacy alias accepted for old workflows
-  checks: IntegrationCheck[];
-  contractChecks: ContractCheck[];
-  rework: Array<{ taskId: string; feedback: string }>;
-}
-export interface LeadPlan {
-  summary: string;
-  acceptanceCriteria: AcceptanceCriterion[];
-  integrationContracts: IntegrationContract[];
-  orderingOnlyDependencies: OrderingDependency[];
-  tasks: Array<{
-    id: string; title: string; moduleId: string;
-    instructions: string; dependsOn: string[];
-  }>;
-}
-export interface PeerResult {
-  summary: string; changedFiles: string[];
-  tests: Array<{ command?: string; status: "passed" | "failed" | "not_run"; details?: string }>;
-  risks: string[];
-}
-export interface PeerEvidence {
-  patchArtifactId?: string;
-  verifiedTest?: {
-    status: "passed" | "failed" | "not_configured";
-    command?: string;
-    exitCode?: number;
-    output?: string;
-  };
-  git: {
-    supported: boolean;
-    statusBefore: string;
-    statusAfter: string;
-    diffStat: string;
-    diffPreview: string;
-    truncated: boolean;
-  };
-  files: Array<{
-    path: string;
-    exists: boolean;
-    insideWorkspace: boolean;
-    contentPreview?: string;
-    truncated?: boolean;
-    previewNote?: string;
-  }>;
-  commands: Array<{ command: string; exitCode?: number }>;
-}
-export interface LeadReview {
-  summary: string;
-  reviews: Array<{ taskId: string; decision: "accept" | "rework"; feedback: string }>;
-}
-export interface LeadRemediation {
-  summary: string;
-  rework: Array<{ taskId: string; feedback: string }>;
-}
-
-/** Unverified is a missing-evidence finding, never implicit human approval. */
-export interface LeadVerificationDecision {
-  decision: "collect_evidence" | "run_verification" | "request_human" | "blocked";
-  reason: string;
-  instructions: string;
-  taskIds: string[];
-}
-export interface PeerAttempt {
-  taskId: string; iteration: number; result?: PeerResult; feedback?: string;
-}
-export interface PeerWork {
-  id: string; moduleId: string; title: string; instructions: string; dependsOn: string[];
-  status: "pending" | "running" | "review_pending" | "accepted" | "rework" | "failed" | "skipped";
-  attempts: PeerAttempt[]; result?: PeerResult; evidence?: PeerEvidence; feedback?: string;
-}
-export type WorkflowStatus =
-  | "planning" | "executing" | "reviewing" | "integration_reviewing"
-  | "waiting_manual_verification" | "waiting_business_approval" | "blocked"
-  | "completed" | "rejected" | "failed" | "interrupted";
-export interface WorkflowFailureHint {
-  code: "dirty_source";
-  path: string;
-}
-export interface WorkflowRun {
-  id: string; title: string; request: string; status: WorkflowStatus;
-  failureHint?: WorkflowFailureHint;
-  plan?: LeadPlan; peers: PeerWork[]; leadTaskIds: string[];
-  reviewerTaskIds?: string[];
-  lastRemediation?: LeadRemediation;
-  lastVerificationDecision?: LeadVerificationDecision;
-  verificationRounds?: number;
-  blocker?: string;
-  reviewCount: number; integrationReviewCount?: number;
-  finalReview?: IntegrationReview;
-  manualVerifiedCriterionIds?: string[];
-  manualVerifiedContractIds?: string[];
-  maxReworks: number; error?: string;
-  createdAt: string; updatedAt: string;
-}
-export interface ArtifactDescriptor {
-  id: string; workflowId: string; moduleId: string; taskId?: string;
-  kind: "patch" | "test-output";
-  bytes: number; sha256: string; createdAt: string;
-}
-export interface NotificationEntry {
-  id: string;
-  scope: "task" | "workflow";
-  targetId: string;
-  kind: "task_failed" | "task_interrupted" | "business_approval" |
-    "manual_verification" | "workflow_blocked" | "workflow_failed" | "workflow_interrupted";
-  title: string;
-  message: string;
-  createdAt: string;
-  readAt?: string;
-}
-
-export interface SessionHistoryItem {
-  id: string; threadId?: string; turnId?: string;
-  role: AgentRole; title: string; moduleId?: string; workflowId?: string;
-  status: TaskStatus; createdAt: string; startedAt?: string;
-  finishedAt?: string; updatedAt: string; durationMs?: number;
-}
-export interface SessionHistoryPage {
-  items: SessionHistoryItem[];
-  nextCursor?: string;
-}
-export interface JournalRecord {
-  seq: number; id: string; taskId: string; kind: string; data: unknown; createdAt: string;
-}
-export interface JournalPage {
-  items: JournalRecord[]; nextCursor?: number;
-}
-export interface RuntimeMetrics {
-  observedAt: string;
-  backend: {
-    uptimeSeconds: number; rssBytes: number; heapUsedBytes: number;
-    cpuUserSeconds: number; cpuSystemSeconds: number;
-  };
-  tasks: { total: number; active: number; queued: number; failed: number; interrupted: number };
-  workflows: { total: number; active: number; waitingHuman: number; failed: number };
-  alerts: { unread: number };
-}
-
 export interface Snapshot {
-  tasks: Task[]; approvals: RuntimeApproval[]; events: ActivityEvent[];
-  modules: ModuleConfig[]; workflows: WorkflowRun[]; activities: ActivityEntry[];
-  artifacts?: ArtifactDescriptor[];
-  notifications?: NotificationEntry[];
+  modules: ModuleConfig[];
+  conversations: Conversation[];
+  sessions: AgentSession[];
+  messages: Message[];
+  deliveries: Delivery[];
 }
+export type LeadCommand =
+  | { type: "spawn_peer"; moduleId: string; message: string; label?: string }
+  | { type: "send_peer"; sessionId: string; message: string }
+  | { type: "finish"; summary?: string };
+export interface LeadResponse { reply?: string; commands: LeadCommand[]; }

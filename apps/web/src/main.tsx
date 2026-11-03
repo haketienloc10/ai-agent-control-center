@@ -1,447 +1,213 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type { AgentRole, Snapshot, Task, WorkflowRun } from "@aacc/contracts";
+import type { AgentSession, Conversation, Message, Snapshot } from "@aacc/contracts";
+import { visibleMessages, peerMessages } from "./message-view.js";
 import "./style.css";
-import { ActivityPanel } from "./ActivityPanel.js";
-import { ArtifactViewer } from "./ArtifactViewer.js";
-import { AgentMap } from "./AgentMap.js";
-import { ObservabilityPanel, SessionHistory, JournalExplorer } from "./ExperiencePanels.js";
-import "./p3.css";
 
-async function api<T>(path: string, method: "GET" | "POST" = "GET", body?: unknown): Promise<T> {
-  const response = await fetch("/api" + path, {
-    method,
-    headers: body === undefined ? {} : { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body)
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || "API request failed");
-  return data as T;
+const empty: Snapshot = { modules: [], conversations: [], sessions: [], messages: [], deliveries: [] };
+const time = (iso: string) => new Date(iso).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+async function api<T>(path: string, data?: unknown): Promise<T> {
+  const res = await fetch("/api" + path, data === undefined
+    ? { cache: "no-store" }
+    : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+  const json = await res.json() as T & { error?: string };
+  if (!res.ok) throw new Error(json.error ?? "HTTP " + res.status);
+  return json;
 }
-const empty: Snapshot = { tasks: [], approvals: [], events: [], modules: [], workflows: [], activities: [] };
 
-function WorkflowCard({ workflow, onDecision, onRetryReview, onManualVerify, onRetryIntegration, onSelect }: {
-  workflow: WorkflowRun;
-  onDecision: (id: string, decision: "approve" | "reject") => void;
-  onRetryReview: (id: string) => void;
-  onManualVerify: (id: string, criterionIds: string[], contractIds: string[]) => void;
-  onRetryIntegration: (id: string) => void;
-  onSelect: (id: string) => void;
-}) {
-  const [verifiedCriteria, setVerifiedCriteria] = useState<string[]>([]);
-  const [verifiedContracts, setVerifiedContracts] = useState<string[]>([]);
-  useEffect(() => {
-    setVerifiedCriteria([]);
-    setVerifiedContracts([]);
-  }, [workflow.integrationReviewCount, workflow.status]);
-  const unverifiedChecks = workflow.finalReview?.checks.filter((check) => check.status === "unverified") ?? [];
-  const unverifiedContracts = (workflow.finalReview?.contractChecks ?? [])
-    .filter((check) => check.status === "unverified");
-  return <div className="workflow" id={"workflow-" + workflow.id}>
-    <div className="panel-heading">
-      <div><strong>{workflow.title}</strong><p>{workflow.request}</p></div>
-      <span className={"status " + workflow.status}>{workflow.status.replaceAll("_", " ")}</span>
-    </div>
-    <p className="muted">Lead reviews: {workflow.reviewCount} · Independent Final Reviews: {workflow.integrationReviewCount ?? 0} · Verification rounds: {workflow.verificationRounds ?? 0}/2 · Max reworks / Peer: {workflow.maxReworks}</p>
-    {(workflow.reviewerTaskIds ?? []).length > 0 && <details className="acceptance-details">
-      <summary>Final Reviewer · Fresh Codex Sessions ({workflow.reviewerTaskIds!.length})</summary>
-      <p className="muted">Reviewer là role riêng, mỗi lượt có Codex Thread mới, không sử dụng session Lead.</p>
-      {workflow.reviewerTaskIds!.map((taskId, i) =>
-        <button type="button" className="link-button" key={taskId}
-          onClick={() => onSelect(taskId)}>Xem Final Reviewer session #{i + 1}</button>
-      )}
-    </details>}
-    {workflow.plan?.acceptanceCriteria && <details className="acceptance-details">
-      <summary>Acceptance Criteria ({workflow.plan.acceptanceCriteria.length})</summary>
-      <ol>{workflow.plan.acceptanceCriteria.map((criterion) => <li key={criterion.id}>
-        <strong>{criterion.description}</strong>
-        <p className="muted">Cách xác minh: {criterion.verification}</p>
-      </li>)}</ol>
-    </details>}
-    {workflow.plan && <details className="acceptance-details">
-      <summary>Integration Contracts ({(workflow.plan.integrationContracts ?? []).length}) ·
-        {(workflow.plan.orderingOnlyDependencies ?? []).length} phụ thuộc chỉ theo thứ tự</summary>
-      {(workflow.plan.integrationContracts ?? []).length === 0 && <p className="muted">Không có hợp đồng bàn giao xuyên module.</p>}
-      {(workflow.plan.integrationContracts ?? []).map((contract) => <div key={contract.id} className="integration-check">
-        <strong>{contract.producerTaskId} → {contract.consumerTaskId}: {contract.deliverable}</strong>
-        <p className="muted">Cách sử dụng: {contract.consumerUsage}</p>
-        <p className="muted">Cách kiểm tra: {contract.verification}</p>
-      </div>)}
-    </details>}
-    {workflow.finalReview && <div className="integration-report">
-      <h3>Final Integration Review · Independent Reviewer</h3>
-      <p>{workflow.finalReview.summary}</p>
-      <h3>Product Acceptance</h3>
-      {workflow.finalReview.checks.map((check) => {
-        const criterion = workflow.plan?.acceptanceCriteria.find((c) => c.id === check.criterionId);
-        return <div key={check.criterionId} className="integration-check">
-          <span className={"status " + (check.status === "passed" ? "accepted" : check.status === "failed" ? "failed" : "waiting_business_approval")}>
-            {check.status === "passed" ? "Đạt" : check.status === "failed" ? "Chưa đạt" : "Chưa xác minh"}
-          </span>
-          <strong>{criterion?.description ?? check.criterionId}</strong>
-          <p className="muted">{check.evidence}</p>
-        </div>;
-      })}
-      {(workflow.finalReview.contractChecks ?? []).length > 0 && <h3>Integration Acceptance</h3>}
-      {(workflow.finalReview.contractChecks ?? []).map((check) => {
-        const contract = workflow.plan?.integrationContracts?.find((c) => c.id === check.contractId);
-        return <div key={check.contractId} className="integration-check">
-          <span className={"status " + (check.status === "passed" ? "accepted" : check.status === "failed" ? "failed" : "waiting_business_approval")}>
-            {check.status === "passed" ? "Đạt" : check.status === "failed" ? "Chưa đạt" : "Chưa xác minh"}
-          </span>
-          <strong>{contract ? contract.producerTaskId + " → " + contract.consumerTaskId : check.contractId}</strong>
-          <p className="muted">{contract?.deliverable} · {check.evidence}</p>
-        </div>;
-      })}
-      {workflow.finalReview.rework.map((item) => <p key={item.taskId} className="error-text">
-        Reviewer đề xuất sửa {item.taskId}: {item.feedback}
-      </p>)}
-      {workflow.lastRemediation && <div className="independent-test">
-        <strong>Lead quyết định khắc phục:</strong> {workflow.lastRemediation.summary}
-        {workflow.lastRemediation.rework.map((action) =>
-          <p key={action.taskId}>Giao lại {action.taskId}: {action.feedback}</p>)}
-      </div>}
-    </div>}
-    {workflow.lastVerificationDecision && <section className="lead-verification">
-      <h3>Lead xử lý kết quả chưa xác minh</h3>
-      <p><strong>Quyết định:</strong> {({
-        collect_evidence: "Yêu cầu Peer bổ sung bằng chứng",
-        run_verification: "Chạy kiểm chứng độc lập",
-        request_human: "Cần người dùng hỗ trợ",
-        blocked: "Đang bị chặn"
-      } as const)[workflow.lastVerificationDecision.decision]}</p>
-      <p><strong>Lý do:</strong> {workflow.lastVerificationDecision.reason}</p>
-      <p><strong>Hướng xử lý:</strong> {workflow.lastVerificationDecision.instructions}</p>
-      {workflow.lastVerificationDecision.taskIds.length > 0 &&
-        <p className="muted">Peer: {workflow.lastVerificationDecision.taskIds.join(", ")}</p>}
-    </section>}
-    {workflow.status === "blocked" && <section className="manual-verification">
-      <strong>Workflow đang bị chặn, chưa thể duyệt</strong>
-      <p>{workflow.blocker}</p>
-      <div className="actions">
-        <button type="button" onClick={() => onDecision(workflow.id, "reject")}>Đóng workflow bị chặn</button>
-      </div>
-    </section>}
-    {workflow.plan && <p><strong>Lead Plan:</strong> {workflow.plan.summary}</p>}
-    <div className="peers">{workflow.peers.map((peer) => <div key={peer.id} className="peer">
-      <div className="panel-heading">
-        <strong>{peer.title} · {peer.moduleId}</strong>
-        <span className={"status " + peer.status}>{peer.status}</span>
-      </div>
-      <small>{peer.attempts.length} lần chạy · dependsOn: {peer.dependsOn.join(", ") || "none"}</small>
-      {peer.result && <details>
-        <summary>Kết quả & test evidence</summary>
-        <p>{peer.result.summary}</p>
-        <strong>Changed files</strong>
-        <pre>{peer.result.changedFiles.join("\n") || "(none)"}</pre>
-        <strong>Tests</strong>
-        <pre>{JSON.stringify(peer.result.tests, null, 2)}</pre>
-        <strong>Risks</strong>
-        <pre>{JSON.stringify(peer.result.risks, null, 2)}</pre>
-      </details>}
-      {peer.evidence && <details>
-        <summary>Git / Command evidence</summary>
-        <strong>Git status trước / sau</strong>
-        <pre>{peer.evidence.git.supported ? peer.evidence.git.statusBefore + "\\n--- AFTER ---\\n" +
-          peer.evidence.git.statusAfter : "Git unavailable"}</pre>
-        <strong>Diff stat & preview {peer.evidence.git.truncated ? "(truncated)" : ""}</strong>
-        <pre>{peer.evidence.git.diffStat + "\\n" + peer.evidence.git.diffPreview}</pre>
-        <strong>Artifact paths (đã kiểm tra)</strong>
-        <pre>{JSON.stringify(peer.evidence.files, null, 2)}</pre>
-        <strong>Tool command events</strong>
-        <pre>{JSON.stringify(peer.evidence.commands, null, 2)}</pre>
-      </details>}
-      {peer.evidence?.patchArtifactId && <ArtifactViewer id={peer.evidence.patchArtifactId}/>}
-      {peer.evidence?.verifiedTest && <div className="independent-test">
-        <strong>Independent test runner:</strong>{" "}
-        <span className={"status " + (peer.evidence.verifiedTest.status === "passed" ? "accepted" :
-          peer.evidence.verifiedTest.status === "failed" ? "failed" : "")}>
-          {peer.evidence.verifiedTest.status}
-        </span>
-        <p>{peer.evidence.verifiedTest.command || "Chưa cấu hình testCommand cho module"}</p>
-        {peer.evidence.verifiedTest.output && <pre>{peer.evidence.verifiedTest.output}</pre>}
-      </div>}
-      {peer.status === "skipped" && <p className="muted">
-        <strong>Không thực thi/duyệt:</strong> Workflow đã dừng trước khi Peer tiếp tục.
-      </p>}
-      {peer.feedback && <p className="muted">
-        <strong>{peer.status === "failed" || peer.status === "skipped"
-          ? "Lý do:" : "Lead feedback:"}</strong> {peer.feedback}</p>}
-      {peer.attempts.map((attempt) => <button key={attempt.taskId} className="link-button"
-        onClick={() => onSelect(attempt.taskId)}>Xem Task attempt #{attempt.iteration}</button>)}
-    </div>)}</div>
-    {workflow.error && <p className="error-text">{workflow.error}</p>}
-    {workflow.failureHint?.code === "dirty_source" && <div className="p3-dirty-git-guide">
-      <strong>Git repository chưa sạch — Peer không được khởi chạy</strong>
-      <p>Source: <code>{workflow.failureHint.path}</code></p>
-      <p>Kiểm tra bằng <code>git -C &lt;source-path&gt; status --short --untracked-files=all</code>.
-        Commit các thay đổi cần giữ hoặc dùng <code>git stash push -u</code> trong repository
-        trước khi tạo <strong>Workflow mới</strong>.</p>
-      <p className="muted">Không tự động clean, reset hoặc stash để tránh mất dữ liệu.</p>
-    </div>}
-    {workflow.status === "failed" && workflow.peers.length > 0 &&
-      workflow.peers.every((p) => p.status === "accepted") &&
-      (workflow.error?.startsWith("IntegrationReview sai schema") ||
-        workflow.error?.startsWith("LeadRemediation sai schema") ||
-        workflow.error?.startsWith("LeadVerification sai schema")) &&
-      <div className="actions">
-        <button className="primary" onClick={() => onRetryIntegration(workflow.id)}>
-          {workflow.error?.startsWith("LeadRemediation sai schema") ||
-           workflow.error?.startsWith("LeadVerification sai schema")
-            ? "Thử lại quyết định Lead (không chạy lại Reviewer/Peer)"
-            : "Thử lại Final Reviewer (fresh session, không chạy lại Peer)"}
-        </button>
-      </div>}
-    {workflow.status === "failed" && workflow.peers.some((p) => p.status === "review_pending") &&
-      <div className="actions">
-        <button className="primary" onClick={() => onRetryReview(workflow.id)}>
-          Thử lại Lead Review (không chạy lại Peer)
-        </button>
-      </div>}
-    {workflow.status === "waiting_manual_verification" && workflow.finalReview &&
-      <div className="manual-verification">
-        <p><strong>Lead đã yêu cầu bạn hỗ trợ xác minh:</strong> chỉ sau khi Lead đánh giá việc kiểm chứng tự động không phù hợp hoặc chưa đủ.</p>
-        {workflow.lastVerificationDecision?.decision === "request_human" &&
-          <p>{workflow.lastVerificationDecision.instructions}</p>}
-        <p className="muted">Chỉ xác nhận sau khi bạn tự thử nghiệm các chức năng liên quan. Đây không phải xác nhận test tự động đã chạy.</p>
-        {unverifiedChecks.map((check) => {
-          const criterion = workflow.plan?.acceptanceCriteria.find((c) => c.id === check.criterionId);
-          return <label key={check.criterionId} className="manual-check">
-            <input type="checkbox" checked={verifiedCriteria.includes(check.criterionId)}
-              onChange={(event) => setVerifiedCriteria((previous) =>
-                event.target.checked ? [...previous, check.criterionId] : previous.filter((id) => id !== check.criterionId))} />
-            <span><strong>{criterion?.description ?? check.criterionId}</strong>
-              <small>Cách kiểm tra: {criterion?.verification ?? "Thử nghiệm thủ công"}</small>
-            </span>
-          </label>;
-        })}
-        {unverifiedContracts.map((check) => {
-          const contract = workflow.plan?.integrationContracts?.find((c) => c.id === check.contractId);
-          return <label key={check.contractId} className="manual-check">
-            <input type="checkbox" checked={verifiedContracts.includes(check.contractId)}
-              onChange={(event) => setVerifiedContracts((previous) => event.target.checked
-                ? [...previous, check.contractId] : previous.filter((id) => id !== check.contractId))} />
-            <span><strong>Tích hợp: {contract?.producerTaskId} → {contract?.consumerTaskId}</strong>
-              <small>{contract?.verification ?? "Xác minh hợp đồng tích hợp"}</small>
-              <small>{check.evidence}</small>
-            </span>
-          </label>;
-        })}
-        <div className="actions">
-          <button onClick={() => onDecision(workflow.id, "reject")}>Từ chối kết quả</button>
-          <button className="primary" disabled={
-            unverifiedChecks.some((c) => !verifiedCriteria.includes(c.criterionId)) ||
-            unverifiedContracts.some((c) => !verifiedContracts.includes(c.contractId))
-          }
-            onClick={() => onManualVerify(workflow.id,
-              unverifiedChecks.map((c) => c.criterionId),
-              unverifiedContracts.map((c) => c.contractId))}>
-            Xác nhận đã kiểm tra các tiêu chí
-          </button>
-        </div>
-      </div>}
-    {workflow.status === "waiting_business_approval" &&
-      <div className="actions">
-        <button onClick={() => onDecision(workflow.id, "reject")}>Từ chối kết quả</button>
-        <button className="primary" onClick={() => onDecision(workflow.id, "approve")}>Duyệt kết quả</button>
-      </div>}
-  </div>;
+function displayFrom(message: Message, sessions: AgentSession[]): string {
+  if (message.from === "user") return "Bạn";
+  if (message.from === "lead") return "Lead";
+  if (message.from === "system") return "Hệ thống";
+  return sessions.find(s => s.id === message.peerSessionId)?.label ?? "Peer";
+}
+function MessageItem({ message, sessions }: { message: Message; sessions: AgentSession[] }) {
+  const label = displayFrom(message, sessions);
+  return <article className={"bubble bubble-" + message.from}>
+    <div className="bubble-heading"><strong>{label}</strong><span className="route">
+      {message.to === "peer" ? "→ Peer" : message.to === "lead" ? "→ Lead" : "→ Bạn"}
+    </span><time>{time(message.createdAt)}</time></div>
+    <div className="bubble-body">{message.text}</div>
+  </article>;
 }
 
 function App() {
-  const [snapshot, setSnapshot] = useState<Snapshot>(empty);
-  const [title, setTitle] = useState("");
-  const [prompt, setPrompt] = useState("");
-  const [role, setRole] = useState<AgentRole>("lead");
-  const [moduleId, setModuleId] = useState("");
-  const [wfTitle, setWfTitle] = useState("");
-  const [wfRequest, setWfRequest] = useState("");
+  const [data, setData] = useState<Snapshot>(empty);
+  const [selected, setSelected] = useState<string>("");
+  const [peerFocus, setPeerFocus] = useState<string>("");
+  const [draft, setDraft] = useState("");
+  const [newRequest, setNewRequest] = useState("");
+  const [showNew, setShowNew] = useState(false);
+  const [showRouting, setShowRouting] = useState(false);
+  const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
-  const [selectedTask, setSelectedTask] = useState("");
-  const [followupPrompt, setFollowupPrompt] = useState("");
-
+  const lastMessage = useRef<HTMLDivElement>(null);
   const refresh = async () => {
-    try { setSnapshot(await api<Snapshot>("/snapshot")); }
-    catch (err) { setError(String(err)); }
+    try { const next = await api<Snapshot>("/snapshot"); setData(next); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   };
   useEffect(() => {
     void refresh();
     const events = new EventSource("/api/events");
     events.onmessage = () => { void refresh(); };
-    events.onerror = () => setError("Mất kết nối SSE. Kiểm tra Backend.");
+    events.onerror = () => setError("Mất kết nối Backend, đang thử kết nối lại…");
     return () => events.close();
   }, []);
-
-  const inspectTask = (id: string) => {
-    setSelectedTask(id);
-    document.getElementById("tasks-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-
-  const runAction = async (path: string, body?: unknown) => {
+  const conversations = useMemo(() => [...data.conversations].reverse(), [data.conversations]);
+  const activeId = selected && data.conversations.some(c => c.id === selected)
+    ? selected : conversations[0]?.id ?? "";
+  const conversation = data.conversations.find(c => c.id === activeId);
+  const sessions = data.sessions.filter(s => s.conversationId === activeId);
+  const peers = sessions.filter(s => s.role === "peer");
+  const allMessages = data.messages.filter(m => m.conversationId === activeId);
+  const feed = visibleMessages(data.messages, activeId, showRouting);
+  const focussedPeer = peers.find(s => s.id === peerFocus);
+  const selectedPeerMessages = peerMessages(allMessages, focussedPeer?.id ?? "");
+  const working = sessions.filter(s => s.status === "running");
+  const waiting = data.deliveries.filter(d => d.conversationId === activeId && d.status === "queued");
+  useEffect(() => { lastMessage.current?.scrollIntoView({ block: "end", behavior: "smooth" }); },
+    [activeId, feed.length, showRouting]);
+  const submitNew = async () => {
+    if (!newRequest.trim() || sending) return;
+    setSending(true); setError("");
     try {
-      setError("");
-      await api(path, "POST", body);
+      const next = await api<Conversation>("/conversations", { text: newRequest });
+      setSelected(next.id); setNewRequest(""); setShowNew(false); setPeerFocus("");
       await refresh();
-    } catch (err) { setError(String(err)); }
+    } catch (cause) { setError(String(cause)); }
+    finally { setSending(false); }
   };
-  const createManual = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const sendMessage = async () => {
+    if (!draft.trim() || !activeId || sending) return;
+    setSending(true); setError("");
     try {
-      setError("");
-      const task = await api<Task>("/tasks", "POST", {
-        title, prompt, role, ...(role === "peer" ? { moduleId } : {})
-      });
-      setSelectedTask(task.id);
-      setTitle(""); setPrompt("");
-      await refresh();
-    } catch (err) { setError(String(err)); }
+      await api("/conversations/" + activeId + "/messages", { text: draft });
+      setDraft(""); await refresh();
+    } catch (cause) { setError(String(cause)); }
+    finally { setSending(false); }
   };
-  const createWorkflow = async (event: React.FormEvent) => {
-    event.preventDefault();
-    try {
-      setError("");
-      await api<WorkflowRun>("/workflows", "POST", { title: wfTitle, request: wfRequest });
-      setWfTitle(""); setWfRequest(""); setSelectedTask("");
-      await refresh();
-    } catch (err) { setError(String(err)); }
-  };
-  return <main>
-    <header>
-      <div>
-        <p className="eyebrow">PERSONAL AI WORKSPACE · P3</p>
-        <h1>AI Agent Control Center</h1>
-        <p>Lead điều phối Peer, Final Reviewer đánh giá độc lập và bạn duyệt kết quả cuối.</p>
+  return <div className="shell">
+    <aside className="sidebar">
+      <div className="brand"><span className="brand-icon">AC</span>
+        <div><strong>Agent Control Center</strong><small>LEAD ↔ PEER · LOCAL MVP</small></div></div>
+      <button type="button" className="primary full" onClick={() => setShowNew(true)}>
+        + Yêu cầu mới cho Lead
+      </button>
+      <div className="side-heading">Các cuộc việc <span>{conversations.length}</span></div>
+      <nav className="conversation-list" aria-label="Conversations">
+        {conversations.map(c => <button key={c.id} type="button"
+          className={"conversation-link " + (c.id === activeId ? "chosen" : "")}
+          onClick={() => { setSelected(c.id); setPeerFocus(""); }}>
+          <span className="conversation-icon">⌘</span>
+          <span className="conversation-meta"><strong>{c.title}</strong>
+            <small>{c.status === "finished" ? "Lead đã kết thúc" : "Đang trao đổi"}</small></span>
+        </button>)}
+        {!conversations.length && <p className="hint">Bắt đầu bằng cách giao việc cho Lead.</p>}
+      </nav>
+      <div className="sidebar-footer">
+        <span className="live-dot"/> Codex app-server · localhost
+        <small>Không Workflow gate · Không Git worktree</small>
       </div>
-      <span className="tag">Local · Codex YOLO</span>
-    </header>
-    <p className="error" role="status">YOLO mode: Codex được quyền chạy lệnh và sửa file không cần Runtime Approval, kể cả ngoài module. Chỉ chạy trên máy cá nhân với repo tin cậy; Business Approval cuối workflow vẫn được giữ.</p>
-    {error && <aside className="error" role="alert">{error} <button onClick={() => setError("")}>Đóng</button></aside>}
-    <AgentMap modules={snapshot.modules} tasks={snapshot.tasks}
-      workflows={snapshot.workflows} onSelectTask={inspectTask}/>
-    <ObservabilityPanel notifications={snapshot.notifications ?? []}
-      onAcknowledge={id => void runAction("/notifications/" + id + "/read")}
-      onInspectTask={inspectTask}
-      onInspectWorkflow={id =>
-        document.getElementById("workflow-" + id)?.scrollIntoView({ behavior: "smooth" })}/>
-    <section className="columns">
-      <article className="panel">
-        <h2>Chạy Workflow Lead → Peer → Review</h2>
-        <form onSubmit={createWorkflow}>
-          <label>Tiêu đề <input required maxLength={200} value={wfTitle}
-            onChange={(e) => setWfTitle(e.target.value)} placeholder="Triển khai authentication" /></label>
-          <label>Yêu cầu <textarea required rows={6} maxLength={20000} value={wfRequest}
-            onChange={(e) => setWfRequest(e.target.value)} placeholder="Lead phân tích và giao việc cho các module..." /></label>
-          <button type="submit" className="primary">Tạo & chạy Workflow</button>
-        </form>
-        <p className="muted">Lead tạo plan JSON, Peer chạy theo dependency, Lead review tối đa 2 reworks/Peer.</p>
-      </article>
-      <article className="panel">
-        <h2>Workspace & Modules</h2>
-        <p className="muted">P2 dùng Git worktree tách khỏi source gốc. Module phải nằm trong Git repo đã commit sạch; thay đổi được xuất thành patch, không tự merge.</p>
-        <div className="module"><strong>Lead Workspace</strong><span>config/workspace.local.json → lead.cwd</span></div>
-        {snapshot.modules.map((m) => <div className="module" key={m.id}>
-          <strong>{m.label}</strong><code>{m.path}</code>
-        </div>)}
-      </article>
-    </section>
-    <section className="panel">
-      <h2>Workflows</h2>
-      {snapshot.workflows.length === 0 && <p className="muted">Chưa có Workflow.</p>}
-      {snapshot.workflows.map((workflow) => <WorkflowCard key={workflow.id} workflow={workflow}
-        onDecision={(id, decision) => void runAction("/workflows/" + id + "/decision", { decision })}
-        onRetryReview={(id) => void runAction("/workflows/" + id + "/retry-review")}
-        onManualVerify={(id, criterionIds, contractIds) => void runAction("/workflows/" + id + "/confirm-verification", { criterionIds, contractIds })}
-        onRetryIntegration={(id) => void runAction("/workflows/" + id + "/retry-integration")}
-        onSelect={setSelectedTask} />)}
-    </section>
-    <section className="columns">
-      <article className="panel">
-        <h2>Chạy Agent riêng (Manual)</h2>
-        <form onSubmit={createManual}>
-          <label>Tiêu đề <input required maxLength={200} value={title}
-            onChange={(e) => setTitle(e.target.value)} /></label>
-          <label>Agent <select value={role} onChange={(e) => setRole(e.target.value as AgentRole)}>
-            <option value="lead">Lead (workspace chung)</option>
-            <option value="peer">Peer (source module)</option>
-          </select></label>
-          {role === "peer" && <label>Module <select required value={moduleId}
-            onChange={(e) => setModuleId(e.target.value)}>
-            <option value="">Chọn module</option>
-            {snapshot.modules.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-          </select></label>}
-          <label>Prompt <textarea required rows={4} maxLength={20000} value={prompt}
-            onChange={(e) => setPrompt(e.target.value)} /></label>
-          <button className="primary" type="submit">Tạo Task</button>
-        </form>
-      </article>
-      <article className="panel">
-        <h2>Runtime Approvals (bỏ qua khi YOLO)</h2>
-        {snapshot.approvals.filter((a) => a.status === "pending").length === 0 &&
-          <p className="muted">Không có yêu cầu chờ duyệt.</p>}
-        {snapshot.approvals.filter((a) => a.status === "pending").map((approval) =>
-          <div className="approval" key={approval.id}>
-            <strong>{approval.method}</strong>
-            <pre>{JSON.stringify(approval.params, null, 2)}</pre>
-            <div className="actions">
-              <button onClick={() => void runAction("/approvals/" + approval.id + "/decision", { decision: "decline" })}>Từ chối</button>
-              <button className="primary" onClick={() => void runAction("/approvals/" + approval.id + "/decision", { decision: "accept" })}>Cho phép</button>
+    </aside>
+    <main className="workspace">
+      <header className="topbar">
+        <div><small className="eyebrow">WORKSPACE / LEAD</small>
+          <h1>{conversation?.title ?? "Điều phối nhiều AI Agents"}</h1>
+          <p>{conversation
+            ? "Bạn trao đổi với Lead. Lead quản lý các Peer sessions trong từng module."
+            : "Một Lead ở workspace; nhiều Peer sessions ở các module; không Peer-to-Peer."}</p>
+        </div>
+        {conversation && <span className={"pill " + (working.length ? "busy" : "")}>
+          <span className="live-dot"/> {working.length
+            ? working.length + " Agent đang chạy" : conversation.status === "finished"
+            ? "Lead đã kết thúc" : "Sẵn sàng"}</span>}
+      </header>
+      {error && <div role="alert" className="error">{error}
+        <button onClick={() => { setError(""); void refresh(); }}>Thử lại</button></div>}
+      {!conversation ? <section className="welcome">
+        <div className="welcome-mark">L</div>
+        <h2>Chỉ cần nói chuyện với Lead</h2>
+        <p>Lead tự mở Peer sessions, giao việc, đọc kết quả, xử lý blocker và quyết định hoàn thành.</p>
+        <div className="welcome-example">Ví dụ: “Xem module Web và tạo file README.md”</div>
+        <button className="primary" onClick={() => setShowNew(true)}>Giao việc đầu tiên</button>
+      </section> : <>
+        <div className="content">
+          <section className="chat-panel" aria-label="Hội thoại với Lead">
+            <div className="section-header"><div><h2>Hội thoại</h2>
+              <span className="hint">Mọi công việc đều được Lead điều phối</span></div>
+              <label className="routing-toggle">
+                <input type="checkbox" checked={showRouting}
+                  onChange={e => setShowRouting(e.target.checked)}/>
+                Xem cả luồng Lead ↔ Peer
+              </label>
             </div>
-          </div>)}
-      </article>
-    </section>
-    <section className="panel" id="tasks-panel">
-      <div className="panel-heading"><h2>Tasks / Codex Sessions</h2><button onClick={() => void refresh()}>Làm mới</button></div>
-      {snapshot.tasks.length === 0 ? <p className="muted">Chưa có Task.</p> :
-        <div className="task-list">{snapshot.tasks.map((task) =>
-          <div key={task.id} className={"task " + (selectedTask === task.id ? "selected" : "")}>
-            <button className="task-title" onClick={() => setSelectedTask(task.id)}>
-              <strong>{task.title}</strong><small>{task.role.toUpperCase()} {task.moduleId ? " · " + task.moduleId : ""}
-                {task.workflowId ? " · Workflow " + task.workflowId.slice(0, 8) : ""}
-              </small>
-            </button>
-            <span className={"status " + task.status}>{task.status}</span>
-            {task.status === "queued" && !task.workflowId &&
-              <button onClick={() => void runAction("/tasks/" + task.id + "/run")}>Run</button>}
-            {["running", "waiting_runtime_approval"].includes(task.status) &&
-              <button onClick={() => void runAction("/tasks/" + task.id + "/interrupt")}>Interrupt</button>}
-            {task.executionCwd && <small className="worktree-path">Worktree: {task.executionCwd}</small>}
-            {task.status === "completed" && task.role === "peer" && !task.workflowId && task.executionCwd &&
-              <button type="button" onClick={() =>
-                void runAction("/tasks/" + task.id + "/export-patch")}>Xuất patch</button>}
-            {(snapshot.artifacts ?? []).filter((a) => a.taskId === task.id && a.kind === "patch").map(
-              (a) => <ArtifactViewer key={a.id} id={a.id} label="Xem patch đã lưu" />
-            )}
-            {task.status === "interrupted" && <button type="button" onClick={() =>
-              void runAction("/tasks/" + task.id + "/reconcile")}>Reconcile</button>}
-            {task.reconciliation && <small className="recovery-detail">
-              Recovery: {task.reconciliation.status} — {task.reconciliation.detail}</small>}
-            {task.role !== "reviewer" && task.reconciliation?.status === "completed" && selectedTask === task.id &&
-              <div className="recovery-followup">
-                <label>Follow-up mới trên Thread cũ (không chạy lại prompt trước)
-                  <textarea rows={2} value={followupPrompt} onChange={(event) => setFollowupPrompt(event.target.value)}
-                    placeholder="Tiếp tục kiểm tra, không lặp các thay đổi đã hoàn thành…" />
-                </label>
-                <button disabled={!followupPrompt.trim()} onClick={() => {
-                  void runAction("/tasks/" + task.id + "/continue", { prompt: followupPrompt });
-                  setFollowupPrompt("");
-                }}>Chạy follow-up có chủ đích</button>
-              </div>}
-            {task.error && <small className="error-text">{task.error}</small>}
-          </div>)}</div>}
-    </section>
-    <SessionHistory workflows={snapshot.workflows} onInspectTask={inspectTask}/>
-    <ActivityPanel
-      activities={snapshot.activities ?? []}
-      events={snapshot.events}
-      tasks={snapshot.tasks}
-      workflows={snapshot.workflows}
-      modules={snapshot.modules}
-      selectedTask={selectedTask}
-      onSelectTask={setSelectedTask}
-    />
-    <JournalExplorer />
-    <footer>P3 — Agent Map · Session History · Notifications · Event Journal · Backend Metrics. Codex vẫn là runtime chính.</footer>
-  </main>;
+            <div className="chat-feed">
+              {feed.map(m => <MessageItem key={m.id} message={m} sessions={sessions}/>)}
+              <div ref={lastMessage}/>
+            </div>
+            <form className="composer" onSubmit={e => { e.preventDefault(); void sendMessage(); }}>
+              <label htmlFor="message-input" className="sr-only">Nhắn Lead</label>
+              <textarea id="message-input" placeholder="Nhắn Lead: hỏi tiến độ, giao thêm việc, giải quyết vấn đề…"
+                value={draft} rows={3} onChange={e => setDraft(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault(); void sendMessage();
+                } }}/>
+              <div className="composer-footer"><span>Enter gửi · Shift+Enter xuống dòng</span>
+                <button className="primary" disabled={sending || !draft.trim()}>Gửi Lead</button></div>
+            </form>
+          </section>
+          <aside className="agents-panel">
+            <div className="section-header"><div><h2>Agent Sessions</h2>
+              <span className="hint">{peers.length} Peer · {waiting.length} message chờ</span></div></div>
+            <div className="lead-card">
+              <span className="avatar lead-avatar">L</span>
+              <div><strong>Lead Agent</strong><small>Workspace chung</small>
+                <span className={"session-status " + (sessions.find(s => s.role === "lead")?.status ?? "idle")}>
+                  {sessions.find(s => s.role === "lead")?.status ?? "idle"}</span>
+              </div></div>
+            <div className="module-heading">Peer sessions</div>
+            <div className="peer-list">
+              {peers.map(peer => <button key={peer.id} type="button"
+                className={"peer-card " + (peerFocus === peer.id ? "active" : "")}
+                onClick={() => setPeerFocus(peerFocus === peer.id ? "" : peer.id)}>
+                <span className="avatar">P</span>
+                <span><strong>{peer.label}</strong><small>{peer.moduleId} · {peer.id.slice(0, 8)}</small>
+                  <span className={"session-status " + peer.status}>{peer.status}</span></span>
+              </button>)}
+              {!peers.length && <div className="empty-peers">Lead chưa mở Peer session nào.</div>}
+            </div>
+            {focussedPeer && <div className="peer-transcript">
+              <div className="section-header"><h3>{focussedPeer.label}</h3>
+                <button onClick={() => setPeerFocus("")}>Đóng</button></div>
+              <p>Chỉ Lead có quyền gửi yêu cầu đến Peer này.</p>
+              {selectedPeerMessages.map(m => <div className="transcript-message" key={m.id}>
+                <strong>{displayFrom(m, sessions)} → {m.to === "lead" ? "Lead" : "Peer"}</strong>
+                <p>{m.text}</p></div>)}
+              {focussedPeer.error && <p className="peer-error">{focussedPeer.error}</p>}
+            </div>}
+            <div className="module-heading">Modules đã cấu hình</div>
+            {data.modules.map(m => <div className="module-row" key={m.id}>
+              <strong>{m.label}</strong><code title={m.path}>{m.path}</code>
+            </div>)}
+          </aside>
+        </div>
+      </>}
+    </main>
+    {showNew && <div className="modal-backdrop" role="presentation">
+      <section className="modal" role="dialog" aria-modal="true" aria-label="Giao yêu cầu mới">
+        <div className="section-header"><h2>Yêu cầu mới cho Lead</h2>
+          <button onClick={() => setShowNew(false)}>Đóng</button></div>
+        <p>Lead sẽ chủ động chọn các Peer sessions và điều phối đến khi hoàn thành.</p>
+        <form onSubmit={e => { e.preventDefault(); void submitNew(); }}>
+          <label htmlFor="new-request">Yêu cầu</label>
+          <textarea id="new-request" autoFocus rows={6}
+            placeholder="Ví dụ: Xem module Web và tạo README.md…" value={newRequest}
+            onChange={e => setNewRequest(e.target.value)}/>
+          <button className="primary full" disabled={sending || !newRequest.trim()}>
+            {sending ? "Đang gửi…" : "Gửi Lead"}</button>
+        </form>
+      </section>
+    </div>}
+  </div>;
 }
-
-createRoot(document.getElementById("root")!).render(<React.StrictMode><App /></React.StrictMode>);
+createRoot(document.getElementById("root")!).render(<App/>);

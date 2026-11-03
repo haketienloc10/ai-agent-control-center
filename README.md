@@ -1,105 +1,82 @@
-# AI Agent Control Center
+# AI Agent Control Center — Lead ↔ Peer MVP
 
-Dashboard **cá nhân, chạy trên máy local** để thay thế việc quản lý nhiều terminal Codex. Mục tiêu là giữ nguyên mô hình làm việc hiện có: **Lead Agent trong workspace chung → giao việc cho Peer ở các source module bên ngoài → nhận kết quả → Lead review / yêu cầu sửa → người dùng quyết định**.
+**Mục tiêu:** bạn chỉ nói chuyện với một Lead Agent. Lead giữ Codex Thread trong workspace và tự điều phối nhiều Peer Agents ở các module. Các Peer **không giao tiếp trực tiếp với nhau**; mọi kết quả, câu hỏi, blocker và yêu cầu bổ sung đều được chuyển về Lead.
 
-> Trạng thái: P3 **Experience & Observability** trên nhánh tính năng. Codex **YOLO mode** vẫn là mặc định theo lựa chọn P1; có tùy chọn bật sandbox. Chưa phải production hoặc E2E verified trên máy người dùng.
+Không còn P1/P2/P3 Workflow Engine, acceptance gates, DAG, Final Review bắt buộc, human approval gate, rework limit, Git worktree hay tự động xuất patch. **Peer sửa trực tiếp module source** theo quyền Codex CLI trên máy local. Nhiều Peer có thể cùng sửa một module; MVP **không tự chống xung đột ghi file hoặc Git**. Bạn nên dùng workspace/module tin cậy và chủ động quản lý Git khi cần.
 
-## Bắt đầu
+## Yêu cầu
 
-Yêu cầu: Node.js >= 22, npm và Codex CLI đã cài, đăng nhập hợp lệ qua `codex login`.
+- Node.js 22+, npm.
+- Codex CLI đã cài và đăng nhập bằng subscription của bạn; cần hỗ trợ `codex app-server --listen stdio://`.
+- Các thư mục workspace và module phải tồn tại.
+
+## Cài đặt
 
 ```bash
 npm install
 cp config/workspace.example.json config/workspace.local.json
-# Sửa lead.cwd và modules[].path thành các đường dẫn tuyệt đối có thật trên máy
+```
+
+Sửa `config/workspace.local.json` bằng **đường dẫn tuyệt đối** đến workspace Lead và các module.
+
+```bash
 npm run dev:api
-# Trong terminal khác:
+# Terminal khác
 npm run dev:web
 ```
 
-Mở http://localhost:5173; Backend mặc định http://127.0.0.1:4317. Tại Dashboard, chọn **Tạo & chạy Workflow** để Lead tự lập kế hoạch → Backend dispatch Peer → Lead review/rework → người dùng duyệt. Chức năng Task thủ công vẫn còn. Hệ thống tạo Codex thread ở `cwd` đã cấu hình, stream event lên UI và lưu trạng thái trong `.data/`.
+Mở [http://localhost:5173](http://localhost:5173). Backend chỉ bind `127.0.0.1:4317`.
 
-Nếu chưa cài/đăng nhập Codex, API vẫn có thể khởi chạy nhưng **Run sẽ lỗi có thể quan sát được**. App chỉ dành cho localhost; không expose cổng trực tiếp ra Internet.
+Có thể truyền `WORKSPACE_CONFIG=/path/to/config.json`, `APP_DATA_DIR=/path/to/data` và `PORT=4317`.
 
-## Định hướng kỹ thuật
+## Quy trình
 
-- `docs/GOALS.md`: mục tiêu, phạm vi, thành công và giới hạn.
-- `docs/ARCHITECTURE.md`: module boundaries, data flow, lifecycle và security.
-- `docs/ROADMAP.md`: các giai đoạn thực hiện, acceptance criteria.
-- `docs/WORKFLOW_P1.md`: hợp đồng JSON, luồng triển khai P1, API, giới hạn.
-- `docs/P2.md`: worktree, SQLite, artifact, recovery và security mode.
-- `docs/P3.md`: bản đồ Agent, lịch sử session, notifications, journal và metrics.
-- `AGENTS.md`: quy tắc dành cho contributor/Agent.
-- `apps/api`: Backend, WorkflowEngine, Task Store, SessionManager và Codex JSON-RPC adapter.
-- `apps/web`: Dashboard có timeline hoạt động dễ đọc và tab kỹ thuật, SSE, Run/Interrupt/Approval.
-- `packages/contracts`: kiểu dữ liệu dùng chung.
+1. Người dùng gửi message mới tới Lead.
+2. Lead có thể trả lời, `spawn_peer` trong module, `send_peer` tới session cũ, hoặc `finish`.
+3. App chạy Codex CLI cho Peer ở đúng `cwd`, và giữ Thread ID để tiếp tục khi Lead giao thêm việc.
+4. Peer trả văn bản tự nhiên về Lead; app tự chuyển tin nhắn đó đến Lead và chạy lượt Lead tiếp theo.
+5. Lead chủ động quyết định đã đủ hay cần giao thêm việc. User có thể gửi message tiếp vào cuộc việc đã kết thúc để mở lại.
 
-## Kiểm tra
+Ví dụ: “Xem module Web và tạo README.md”. Lead mở Peer Web, Peer viết file trực tiếp trong module, báo kết quả. Nếu còn thiếu cách build, Lead gửi tiếp vào **cùng Peer session**. Không có gate bắt buộc.
+
+## API local
+
+- `GET /api/health` — trạng thái Backend.
+- `GET /api/snapshot` — danh sách conversations, sessions, messages, deliveries, modules.
+- `GET /api/events` — SSE thông báo cập nhật.
+- `POST /api/conversations` — `{"text":"Xem module Web và tạo README.md"}`.
+- `POST /api/conversations/:id/messages` — `{"text":"Kiểm tra thêm phần cài đặt"}`.
+
+Các tác vụ điều phối của Lead dùng một JSON envelope đơn giản chỉ để **định tuyến message**, không phải schema đánh giá chất lượng:
+
+```json
+{
+  "reply": "Tôi giao Peer Web thực hiện.",
+  "commands": [
+    { "type": "spawn_peer", "moduleId": "web", "label": "README Web",
+      "message": "Đọc module Web và tạo README.md" }
+  ]
+}
+```
+
+Lead cũng có thể dùng `send_peer(sessionId,message)` hoặc `finish(summary)`. App không cho client/Peer gọi trực tiếp các action của Lead.
+
+## Persistence, crash và bảo mật
+
+SQLite trong `APP_DATA_DIR/coordination.sqlite` lưu toàn bộ hội thoại, session/thread ID, message và delivery. Sau restart, delivery đang chạy chuyển thành `interrupted`, **không tự replay** Codex turn. Delivery vẫn `queued` chưa hề chạy được phép tiếp tục. Người dùng có thể nhắn Lead để điều phối lại.
+
+Dữ liệu P1–P3 cũ **không được import hoặc chạy lại**; file DB cũ được để nguyên trên đĩa. Đây là breaking change về API/data model.
+
+Lead chạy read-only. Peer mặc định dùng `approvalPolicy: "never"`, `danger-full-access` (YOLO) và ghi thẳng module source. Có thể chọn `CODEX_SECURITY_MODE=sandbox`, nhưng **không có OS-level isolation**, không có xác thực mạng và không bảo đảm ngăn Codex truy cập ngoài module khi YOLO. Chỉ chạy trên máy tin cậy; không expose Backend.
+
+Xem [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) và [docs/GOALS.md](docs/GOALS.md).
+
+## Kiểm chứng
 
 ```bash
 npm run typecheck
 npm test
-curl http://127.0.0.1:4317/api/health
+npm run build
 ```
 
-Các lệnh trên là **cách kiểm chứng**, không phải kết quả kiểm thử đã được xác nhận trong repo.
-
-Tài liệu giao thức: https://developers.openai.com/codex/app-server
-
-## P1: Lead → Peer → Review
-
-- POST `/api/workflows` với `{ "title": "...", "request": "..." }`: tự chạy Lead lập kế hoạch.
-- Lead trả `LeadPlan` JSON: `summary`, `tasks[]` có `id`, `moduleId`, `dependsOn`, `instructions`.
-- Backend validation module/dependency DAG, chạy tối đa 2 Peer cùng lúc và chỉ **1 Peer/module**.
-- Peer trả `PeerResult` JSON gồm `summary`, `changedFiles`, `tests`, `risks`. Backend bổ sung `PeerEvidence`: Git status trước/sau, Git diff preview, kiểm tra artifact path và command execution events.
-- Lead review từng batch, chọn `accept` / `rework`; tối đa 2 lần làm lại/Peer.
-- Khi tất cả Peer được chấp nhận, workflow dừng tại `waiting_business_approval`; người dùng quyết định tại Dashboard.
-- POST `/api/workflows/:id/decision` với `{ "decision": "approve" }` hoặc `reject`.
-
-**Lưu ý:** P1 cho phép ghi trực tiếp vào source module ngoài repo. Sao lưu/commit code của bạn trước khi chạy, và dùng module riêng hoặc worktree thủ công nếu cần cách ly. Worktree tự động, xác minh test độc lập và resume an toàn nằm ở P2. P1 không tự merge.
-
-## Codex YOLO mode (local-only)
-
-Chỉ Peer mặc định chạy `approvalPolicy: "never"`, `sandbox: "danger-full-access"` và `sandboxPolicy.type: "dangerFullAccess"`, tương đương Codex YOLO. Lead và Final Reviewer dùng `read-only` để điều phối/kiểm tra. Có thể bật `CODEX_SECURITY_MODE=sandbox` cho Peer. **Git worktree không phải OS sandbox:** Peer ở YOLO vẫn có quyền filesystem/network theo tài khoản Backend; `cwd` chỉ định tuyến công việc. Chỉ chạy trên máy tin cậy; Backend không có authentication và bind `127.0.0.1`. 
-
-**Business Approval** ở cuối workflow vẫn cần bạn bấm duyệt; khác với Runtime Approval vốn đã bỏ qua trong YOLO mode.
-
-## Nhật ký hoạt động dễ đọc
-
-Dashboard mặc định hiển thị **Activity Timeline** (Lead/Peer, thời gian, hành động, trạng thái, nội dung). Token stream `item/agentMessage/delta` được gom theo `itemId` thành một message; `commandExecution`, `fileChange` và các sự kiện Workflow có nhãn dễ hiểu. Chế độ **Kỹ thuật** vẫn cho xem event JSON khi debug; raw token delta không còn được lưu từng mẩu. Backend lưu timeline trong `.data/state.json`, có migration từ event journal cũ và giới hạn lịch sử. Streaming được flush định kỳ 250ms để tránh ghi đĩa/liên tục gọi SSE từng token.
-
-## Final Integration Review + Acceptance Criteria
-
-Sau khi tất cả Peer được Lead accept, một **Final Reviewer Agent riêng** mở Codex Thread mới, read-only, đối chiếu `acceptanceCriteria`, kết nối giữa các module và test evidence. Reviewer trả `pass`, `rework` hoặc `unverified`. Khi `rework`, **Lead** quyết định Peer nào sửa, Backend invalidates các downstream phụ thuộc. Khi `unverified`, **Lead** quyết định `collect_evidence`, `run_verification`, `request_human` hoặc `blocked`. Chỉ `request_human` mới mở Human Verification; Lead không được tự tuyên bố passed.
-
-Không có claim rằng test/browser đã được chạy nếu không có bằng chứng; review của LLM không thay thế E2E tự động. Xem `docs/WORKFLOW_P1.md`.
-
-## Integration Contracts (thuộc Final Integration Review)
-
-Mỗi dependency xuyên module trong LeadPlan phải được phân loại: **integrationContracts** (có artifact/API được bàn giao, nơi sử dụng và cách kiểm chứng) hoặc **orderingOnlyDependencies** (chỉ yêu cầu thứ tự, có lý do). Một dependency không đồng nghĩa với tích hợp; tuy nhiên Lead không được tự lờ đi một contract đã cam kết.
-
-Final Integration Review duy nhất đánh giá đồng thời **Product Acceptance** (`checks`) và **Integration Acceptance** (`contractChecks`), đều có evidence. PASS chỉ khi cả hai nhóm đều passed. Nếu UI chạy bằng mock/fallback trong khi plan cam kết Web dùng API, reviewer phải đánh dấu contract failed và yêu cầu rework; nếu chưa kiểm chứng, Reviewer báo `unverified` và Lead điều phối thu thập bằng chứng hoặc quyết định có cần Human Verification.  Đây vẫn là review dựa vào bằng chứng do Agent báo cáo, không đảm bảo chứng thực kỹ thuật độc lập.
-
-## P2 — Worktree, SQLite, Recovery và Artifact Viewer
-
-Peer phải chạy trong Git repository có ít nhất 1 commit và working tree sạch. P2 tạo detached worktree riêng cho workflow, theo từng Git repo. Nếu hai module cùng Git repository, chúng dùng chung worktree trong một workflow và được serialize khi ghi.
-
-- File thay đổi của Peer không tự ghi vào source repo; Dashboard hiển thị patch và nút tải artifact. P2 **không tự merge**.
-- Trạng thái được lưu trong `.data/state.sqlite` (WAL); `.data/state.json` được giữ làm mirror tương thích dữ liệu cũ. Backend có event journal phân trang.
-- Khi restart, Task đang chạy thành `interrupted`; Codex Thread được đối chiếu read-only. Không có hành vi retry tác vụ cũ tự động.
-- Module có thể cấu hình `testCommand`, ví dụ `["npm","test"]` trong `config/workspace.local.json`, để Backend kiểm thử riêng.
-- `CODEX_SECURITY_MODE=sandbox npm run dev:api` để dùng sandbox cho Codex. Nếu không đặt, YOLO được giữ lại và không thể coi là cô lập quyền truy cập file/network.
-
-Xem [docs/P2.md](docs/P2.md) để biết quy trình áp dụng patch thủ công và các giới hạn bảo mật.
-
-## Agent roles — Independent Final Reviewer
-
-Lead chỉ điều phối Peer và ra quyết định accept/rework hoặc khắc phục blocker; không tự làm Final Integration Review. Sau các Peer được Lead chấp nhận, một **Final Reviewer riêng** (`role=reviewer`) kiểm tra Product + Integration Acceptance trên **Codex Thread mới, read-only**. Nếu có failed findings, Lead nhận báo cáo và quyết định Peer cần sửa. Mỗi lần review lại sau rework tạo một Thread mới. Xem [docs/AGENT_ROLES.md](docs/AGENT_ROLES.md).
-
-## P3 — Trải nghiệm điều phối và quan sát
-
-Dashboard có **Agent Map dạng 2.5D** (Lead, Peer theo module, Final Reviewer), hiển thị trạng thái thực từ Task trong workflow; chọn Agent để xem session tương ứng. **Session History** lọc theo role/status/workflow và tải trang cũ hơn theo cursor. **Activity Timeline** có thêm bộ lọc từ khóa/trạng thái/thời gian và một **Event Journal Explorer** đọc từ SQLite, không phụ thuộc cửa sổ timeline giới hạn.
-
-Backend tạo **notification** khi Task thất bại/gián đoạn hoặc Workflow chuyển trạng thái cần người dùng xử lý. Thông báo được lưu qua restart và có nút đánh dấu đã đọc. Dashboard polling `/api/metrics` mỗi 8 giây để hiển thị bộ nhớ RSS/heap, CPU time tích lũy và uptime của **tiến trình Backend** cùng các bộ đếm Task/Workflow. Không suy diễn CPU/RAM riêng của Codex/Agent.
-
-Các API mới: `GET /api/sessions`, `GET /api/journal/history`, `GET /api/notifications`, `POST /api/notifications/:id/read`, `GET /api/metrics`. Claude Code Adapter đang là tùy chọn, chưa triển khai vì workflow hiện sử dụng Codex CLI subscription. Xem [docs/P3.md](docs/P3.md).
+CI dùng fake Codex transport, không thay thế E2E với Codex thật trên máy bạn.
