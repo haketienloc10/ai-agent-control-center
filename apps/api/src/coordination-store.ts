@@ -159,6 +159,18 @@ export class CoordinationStore extends EventEmitter {
       delivery.status = "completed"; delivery.updatedAt = now();
       lead.status = "idle"; lead.updatedAt = now();
       if (output.reply?.trim()) message(data, conversation.id, "lead", "user", output.reply.trim());
+      // Routing errors are tool results for Lead, not hidden decisions by Backend.
+      // Only the first identical error is delivered automatically to avoid
+      // infinite, costly retry loops when the model repeatedly chooses a bad ID.
+      const routingError = (detail: string) => {
+        message(data, conversation.id, "system", "user", detail);
+        const errorText = "Routing error: " + detail;
+        const previous = data.messages.some(m =>
+          m.conversationId === conversation.id && m.from === "system" &&
+          m.to === "lead" && m.text === errorText);
+        const info = message(data, conversation.id, "system", "lead", errorText);
+        if (!previous) deliver(data, conversation.id, conversation.leadSessionId, info.id);
+      };
       for (const command of output.commands) {
         if (command.type === "finish") {
           conversation.status = "finished";
@@ -170,8 +182,7 @@ export class CoordinationStore extends EventEmitter {
         let peer: AgentSession | undefined;
         if (command.type === "spawn_peer") {
           if (!allowedModuleIds.includes(command.moduleId)) {
-            message(data, conversation.id, "system", "user",
-              "Lead chọn module không tồn tại: " + command.moduleId);
+            routingError("Lead chọn module không tồn tại: " + command.moduleId);
             continue;
           }
           peer = {
@@ -185,15 +196,14 @@ export class CoordinationStore extends EventEmitter {
           peer = data.sessions.find(s => s.id === command.sessionId &&
             s.conversationId === conversation.id && s.role === "peer");
           if (!peer) {
-            message(data, conversation.id, "system", "user",
-              "Lead gửi tin nhắn đến Peer session không tồn tại: " + command.sessionId);
+            routingError("Lead gửi tin nhắn đến Peer session không tồn tại: " + command.sessionId);
             continue;
           }
         }
         if (!peer) continue;
         const body = command.message?.trim();
         if (!body) {
-          message(data, conversation.id, "system", "user", "Lead gửi tin nhắn Peer trống");
+          routingError("Lead gửi tin nhắn Peer trống");
           continue;
         }
         const item = message(data, conversation.id, "lead", "peer", body, peer.id);

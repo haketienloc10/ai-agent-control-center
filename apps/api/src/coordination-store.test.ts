@@ -89,7 +89,9 @@ test("Reject forged Peer session and unknown module without dispatching wrong ag
       { type: "send_peer", sessionId: second.leadSessionId, message: "Try bypass" }
     ] }, ["web"]);
     assert.equal(ctx.store.snapshot().sessions.filter(s => s.role === "peer").length, 0);
-    assert.equal(ctx.store.snapshot().messages.filter(m => m.from === "system").length, 2);
-    assert.equal(ctx.store.queued().filter(d => d.conversationId === first.id).length, 0);
+    assert.equal(ctx.store.snapshot().messages.filter(m => m.from === "system").length, 4);
+    assert.equal(ctx.store.queued().filter(d => d.conversationId === first.id).length, 2);
+    assert.ok(ctx.store.queued().filter(d => d.conversationId === first.id).every(
+      d => ctx.store.input(d.id)?.to === "lead"));
   } finally { ctx.cleanup(); }
 });

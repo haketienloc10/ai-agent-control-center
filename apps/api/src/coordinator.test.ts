@@ -97,3 +97,42 @@ test("Peer error automatically wakes Lead, without requiring user approval", asy
       m.to === "user" && m.text.includes("blocker")));
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("Two Peer sessions in the same module can execute concurrently in direct cwd", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aacc-parallel-"));
+  const store = new CoordinationStore(dir);
+  let started = 0;
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const inputs: Array<{ sessionId: string; cwd: string }> = [];
+  const runtime: AgentRuntime = {
+    async run(session, cwd, _prompt, hooks) {
+      hooks.onThread(session.threadId ?? session.id);
+      hooks.onTurn(session.id);
+      if (session.role === "lead") {
+        if (store.snapshot().sessions.filter(s => s.role === "peer").length === 0) {
+          return JSON.stringify({ commands: [
+            { type: "spawn_peer", moduleId: "web", label: "Peer A", message: "Task A" },
+            { type: "spawn_peer", moduleId: "web", label: "Peer B", message: "Task B" }
+          ] });
+        }
+        return JSON.stringify({ reply: "Đã nhận kết quả", commands: [] });
+      }
+      started++;
+      inputs.push({ sessionId: session.id, cwd });
+      await gate;
+      return "Completed in direct source module";
+    }
+  };
+  try {
+    new Coordinator(config, store, runtime, 4);
+    store.createConversation("Create two Web tasks");
+    await until(() => started === 2);
+    assert.equal(new Set(inputs.map(i => i.sessionId)).size, 2);
+    assert.deepEqual(inputs.map(i => i.cwd), [config.modules[0].path, config.modules[0].path]);
+    release();
+    await until(() => store.snapshot().messages.filter(m => m.from === "peer").length === 2);
+  } finally {
+    release?.(); store.close(); rmSync(dir, { recursive: true, force: true });
+  }
+});
