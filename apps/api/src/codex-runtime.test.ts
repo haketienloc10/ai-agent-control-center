@@ -21,7 +21,7 @@ const fakeServer = [
   'threadId:m.params.threadId,cwd:m.params.cwd,',
   'sandboxPolicy:m.params.sandboxPolicy})}}});',
   'send({method:"turn/completed",params:{threadId:m.params.threadId,turn:{id,status:"completed"}}});',
-  '}});'
+  '}}});'
 ].join("");
 const time = "2026-11-03T00:00:00Z";
 function session(role: "lead" | "peer"): AgentSession {
