@@ -28,7 +28,7 @@ const code = [
   'send({method:"item/tool/call",id:900,params:{',
   'threadId:"new-lead-thread",turnId:"turn-1",callId:"call-1",tool:"spawn_peer",',
   'arguments:{moduleId:"web",label:"Todo Web",',
-  'message:"GET /api/todos responds {\\\"todos\\\":[{\\\"id\\\":1}]}"}',
+  'message:"GET /api/todos responds "+JSON.stringify({todos:[{id:1}]})}',
   '}});',
   '}else{',
   'if(!m.params.outputSchema){',

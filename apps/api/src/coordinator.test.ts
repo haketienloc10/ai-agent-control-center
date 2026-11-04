@@ -182,7 +182,15 @@ test("E2E regression: malformed Lead Todo API JSON retries and really spawns Pee
   try {
     new Coordinator(fullstack, store, runtime);
     const conversation = store.createConversation("Tạo Todo API và Web");
-    await until(() => store.conversation(conversation.id)?.status === "finished");
+    try {
+      await until(() => store.conversation(conversation.id)?.status === "finished", 10000);
+    } catch (error) {
+      throw new Error("E2E Todo state: " + JSON.stringify({
+        leadTurns, peerTurns, conversation: store.conversation(conversation.id),
+        deliveries: store.snapshot().deliveries.map(d => ({ status: d.status, error: d.error })),
+        messages: store.snapshot().messages.map(m => ({ from: m.from, to: m.to, text: m.text.slice(0, 250) }))
+      }), { cause: error });
+    }
     const snap = store.snapshot();
     assert.equal(leadTurns, 3);
     assert.equal(peerTurns, 1);
