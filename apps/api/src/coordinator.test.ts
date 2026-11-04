@@ -218,3 +218,41 @@ test("Persistent malformed action reports failure to User, no silent empty comma
       m.text.includes("lệnh điều phối")));
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("Lead tool dispatch is not duplicated when final prose echoes the same JSON command", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aacc-tool-echo-"));
+  const store = new CoordinationStore(dir);
+  let turns = 0;
+  const cmd = { type: "spawn_peer" as const, moduleId: "web",
+    message: 'GET /api/todos => {"todos":[]}', label: "Todo Web" };
+  const runtime: AgentRuntime = {
+    async run(session, cwd, _prompt, hooks) {
+      hooks.onThread(session.threadId ?? session.id + "-thread");
+      hooks.onTurn(session.id + "-turn");
+      if (session.role === "peer") return "Todo UI đã triển khai";
+      turns++;
+      if (turns === 1) {
+        hooks.onToolProtocol?.("dynamic");
+        assert.ok(hooks.onLeadTool);
+        const result = await hooks.onLeadTool("lead-thread:call-1", cmd);
+        assert.match(result, /sessionId=/);
+        hooks.onToolUsed?.();
+        // This echoed JSON must not create a second Peer.
+        return JSON.stringify({ reply: "Đã giao Peer Web",
+          commands: [cmd] });
+      }
+      return JSON.stringify({ reply: "Đã nhận kết quả Web",
+        commands: [{ type: "finish", summary: "Todo hoàn thành" }] });
+    }
+  };
+  try {
+    new Coordinator(config, store, runtime);
+    const c = store.createConversation("Todo");
+    await until(() => store.conversation(c.id)?.status === "finished");
+    const snapshot = store.snapshot();
+    assert.equal(snapshot.sessions.filter(s => s.role === "peer").length, 1);
+    assert.equal(snapshot.messages.filter(m => m.from === "lead" && m.to === "peer").length, 1);
+    assert.equal(snapshot.messages.filter(m => m.from === "peer" && m.to === "lead").length, 1);
+    assert.equal(snapshot.sessions.find(s => s.role === "lead")?.toolProtocol, "dynamic");
+  } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
+});

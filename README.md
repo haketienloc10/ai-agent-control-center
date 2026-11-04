@@ -47,7 +47,9 @@ Ví dụ: “Xem module Web và tạo README.md”. Lead mở Peer Web, Peer vi�
 - `POST /api/conversations` — `{"text":"Xem module Web và tạo README.md"}`.
 - `POST /api/conversations/:id/messages` — `{"text":"Kiểm tra thêm phần cài đặt"}`.
 
-Các tác vụ điều phối của Lead dùng một JSON envelope đơn giản chỉ để **định tuyến message**, không phải schema đánh giá chất lượng:
+Khi tạo Lead Thread mới, app đăng ký **Codex app-server dynamic tools** `spawn_peer`, `send_peer` và `finish`. Lead gọi tool trực tiếp; tên module, session và message (kể cả JSON API contract bên trong) được Codex truyền qua trường `arguments`, không cần tự ghép JSON chứa chuỗi JSON. App thực thi và trả kết quả cho Lead qua `item/tool/call`. Các tool là API điều phối, **không phải quality gate**.
+
+Với Lead Thread đã được tạo trước bản vá (chưa có tools đăng ký), app vẫn giữ lịch sử Thread và dùng `turn/start.outputSchema` để Codex tạo một JSON envelope hợp lệ. Ví dụ tương thích:
 
 ```json
 {
@@ -61,11 +63,15 @@ Các tác vụ điều phối của Lead dùng một JSON envelope đơn giản 
 
 Lead cũng có thể dùng `send_peer(sessionId,message)` hoặc `finish(summary)`. App không cho client/Peer gọi trực tiếp các action của Lead.
 
-## Khôi phục lệnh điều phối sai định dạng
+## Truyền lệnh bền vững
 
-Lead có thể nhắc tới hợp đồng HTTP/JSON bên trong `commands[].message`. Nếu câu trả lời Lead chứa ý định điều phối nhưng JSON envelope sai cú pháp, app **không** chuyển cả JSON thành tin nhắn cho bạn và cũng **không** bỏ lệnh silently. App yêu cầu Lead gửi lại action đúng cú pháp trong **cùng Codex Thread** (tối đa một lượt sửa). Không có action nào được dispatch cho đến khi parser đọc thành công toàn bộ envelope. Nếu vẫn lỗi, Delivery chuyển `interrupted`, bạn nhận thông báo rõ ràng và có thể tiếp tục nhắn Lead; không có quality gate nào được thêm vào.
+- **Lead Thread mới:** `thread/start.dynamicTools` (Codex experimental API) cho phép Agent gọi `spawn_peer`, `send_peer`, `finish` qua tool requests. App ghi lệnh vào SQLite trước khi trả kết quả cho Agent; `callId` được lưu để ngăn xử lý lại cùng tool call. Peer không có những tool này.
+- **Lead Thread cũ:** công cụ chưa được đăng ký khi tạo Thread nên không thể tự thêm khi `thread/resume`. App dùng `turn/start.outputSchema` để Codex phát JSON hợp lệ và giữ lại Thread ID cũ. Nếu phiên Codex cũ không hỗ trợ `outputSchema`, app fallback về parser cũ và tối đa một lượt sửa cú pháp.
+- **Tương thích:** nếu `thread/start.dynamicTools` bị từ chối rõ ràng vì phiên Codex không hỗ trợ, app tạo Lead Thread bằng giao thức JSON có `outputSchema`. Không thử tạo Thread lần hai sau lỗi timeout vì có thể tạo trùng.
+- Một công cụ gọi thành công không bị thực hiện thêm lần nữa nếu Lead nhắc lại lệnh dưới dạng JSON trong câu trả lời cuối.
+- Nếu Backend crash sau khi tool call đã được ghi, yêu cầu lặp cùng `callId` sẽ nhận kết quả idempotent. Delivery của Codex turn đang chạy vẫn được đánh dấu `interrupted` và không tự replay.
 
-Các dạng envelope hợp lệ gồm JSON trực tiếp, JSON trong Markdown code fence và JSON được serialize thành một string. Nội dung nghiệp vụ như API contract không bị validator kiểm duyệt; parser chỉ cần xác định chính xác lệnh `spawn_peer` hoặc `send_peer`.
+**Lưu ý:** `dynamicTools` còn là API experimental của Codex. Chưa kiểm thử live trên bản Codex CLI đang cài tại máy người dùng. Bạn nên dùng Codex CLI mới có hỗ trợ `codex app-server` và experimental dynamic tools.
 
 ## Persistence, crash và bảo mật
 

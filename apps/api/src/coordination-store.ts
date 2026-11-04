@@ -4,7 +4,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type {
-  AgentSession, Conversation, Delivery, LeadResponse, Message, MessageAuthor, Snapshot
+  AgentSession, Conversation, Delivery, LeadCommand, LeadResponse, Message, MessageAuthor, Snapshot
 } from "@aacc/contracts";
 
 type Data = Omit<Snapshot, "modules">;
@@ -141,6 +141,65 @@ export class CoordinationStore extends EventEmitter {
       s.threadId = threadId; s.updatedAt = now();
     });
   }
+  setToolProtocol(sessionId: string, mode: "dynamic" | "json") {
+    this.mutate(data => {
+      const session = data.sessions.find(s => s.id === sessionId);
+      if (!session || session.role !== "lead") throw new Error("Only Lead can own routing tools");
+      session.toolProtocol = mode; session.updatedAt = now();
+    });
+  }
+
+  /** Handle Codex host tool request once, atomically, while Lead turn is active. */
+  routeLeadTool(deliveryId: string, callId: string, command: LeadCommand,
+    allowedModuleIds: string[]): string {
+    if (!callId.trim()) throw new Error("Missing Codex tool call ID");
+    return this.mutate(data => {
+      const active = data.deliveries.find(d => d.id === deliveryId);
+      if (!active || active.status !== "running") throw new Error("Lead delivery is no longer active");
+      const lead = data.sessions.find(s => s.id === active.sessionId);
+      if (!lead || lead.role !== "lead") throw new Error("Only Lead may invoke routing tools");
+      if (lead.handledToolCalls?.includes(callId)) return "Already executed (idempotent replay)";
+      const conversation = data.conversations.find(c => c.id === active.conversationId)!;
+      let result: string;
+      if (command.type === "finish") {
+        conversation.status = "finished";
+        if (command.summary?.trim()) {
+          message(data, conversation.id, "lead", "user", command.summary.trim());
+        }
+        result = "Finished conversation " + conversation.id;
+      } else {
+        let peer: AgentSession | undefined;
+        if (command.type === "spawn_peer") {
+          if (!allowedModuleIds.includes(command.moduleId)) {
+            throw new Error("Module không tồn tại: " + command.moduleId);
+          }
+          peer = {
+            id: randomUUID(), conversationId: conversation.id, role: "peer",
+            moduleId: command.moduleId, label: command.label?.trim().slice(0, 100) ||
+              "Peer " + command.moduleId, status: "idle",
+            createdAt: now(), updatedAt: now()
+          };
+          data.sessions.push(peer);
+        } else {
+          peer = data.sessions.find(s => s.id === command.sessionId &&
+            s.conversationId === conversation.id && s.role === "peer");
+          if (!peer) throw new Error("Peer session không tồn tại trong conversation: " + command.sessionId);
+        }
+        if (!command.message.trim()) throw new Error("Peer message không được trống");
+        const outbound = message(data, conversation.id, "lead", "peer", command.message.trim(), peer.id);
+        deliver(data, conversation.id, peer.id, outbound.id);
+        result = "Đã giao việc tới " + peer.label + " (sessionId=" + peer.id +
+          "). Kết quả sẽ tự gửi lại Lead.";
+      }
+      lead.handledToolCalls ??= [];
+      lead.handledToolCalls.push(callId);
+      // Keep a bounded replay cache; records are only transport deduplication IDs.
+      if (lead.handledToolCalls.length > 4096) lead.handledToolCalls.splice(0, 2048);
+      conversation.updatedAt = now();
+      return result;
+    });
+  }
+
   setTurn(sessionId: string, turnId: string) {
     this.mutate(data => {
       const s = data.sessions.find(s => s.id === sessionId);

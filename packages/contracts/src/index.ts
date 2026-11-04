@@ -13,7 +13,12 @@ export interface Conversation {
 export interface AgentSession {
   id: string; conversationId: string; role: AgentRole;
   moduleId?: string; label: string; threadId?: string; turnId?: string;
-  status: SessionStatus; error?: string; createdAt: string; updatedAt: string;
+  status: SessionStatus; error?: string;
+  // Dynamic tools are registered at thread/start and persisted by Codex.
+  toolProtocol?: "dynamic" | "json";
+  // Deduplicate app-server tool call replay after reconnect/crash.
+  handledToolCalls?: string[];
+  createdAt: string; updatedAt: string;
 }
 export type MessageAuthor = "user" | "lead" | "peer" | "system";
 export interface Message {

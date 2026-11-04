@@ -95,3 +95,43 @@ test("Reject forged Peer session and unknown module without dispatching wrong ag
       d => ctx.store.input(d.id)?.to === "lead"));
   } finally { ctx.cleanup(); }
 });
+
+test("Codex dynamic tool actions execute once and persist callId across restart", () => {
+  const ctx = fixture();
+  try {
+    const conversation = ctx.store.createConversation("Todo fullstack");
+    const lead = ctx.store.queued()[0];
+    ctx.store.startDelivery(lead.id);
+    ctx.store.setToolProtocol(conversation.leadSessionId, "dynamic");
+    const command = { type: "spawn_peer" as const, moduleId: "web", label: "Todo Web",
+      message: 'GET /api/todos trả {"todos":[{"id":1,"title":"Task"}]}' };
+    const first = ctx.store.routeLeadTool(lead.id, "thread:call-1", command, ["api", "web"]);
+    assert.match(first, /sessionId=/);
+    const repeated = ctx.store.routeLeadTool(lead.id, "thread:call-1", command, ["api", "web"]);
+    assert.match(repeated, /Already executed/);
+    assert.equal(ctx.store.snapshot().sessions.filter(s => s.role === "peer").length, 1);
+    assert.equal(ctx.store.queued().length, 1);
+    assert.equal(ctx.store.snapshot().messages.filter(m => m.from === "lead" && m.to === "peer").length, 1);
+    ctx.reopen();
+    assert.equal(ctx.store.session(conversation.leadSessionId)?.toolProtocol, "dynamic");
+    assert.equal(ctx.store.session(conversation.leadSessionId)?.handledToolCalls?.length, 1);
+    assert.equal(ctx.store.snapshot().sessions.filter(s => s.role === "peer").length, 1);
+    assert.equal(ctx.store.queued().length, 1, "Peer delivery queued before crash remains queued");
+  } finally { ctx.cleanup(); }
+});
+
+test("Dynamic routing tool cannot address foreign session or unknown module", () => {
+  const ctx = fixture();
+  try {
+    const a = ctx.store.createConversation("A");
+    const b = ctx.store.createConversation("B");
+    const lead = ctx.store.queued().find(d => d.conversationId === a.id)!;
+    ctx.store.startDelivery(lead.id);
+    assert.throws(() => ctx.store.routeLeadTool(lead.id, "c1",
+      { type: "spawn_peer", moduleId: "unknown", message: "X" }, ["web"]), /Module/);
+    assert.throws(() => ctx.store.routeLeadTool(lead.id, "c2",
+      { type: "send_peer", sessionId: b.leadSessionId, message: "X" }, ["web"]), /Peer session/);
+    assert.equal(ctx.store.snapshot().sessions.filter(s => s.role === "peer").length, 0);
+    assert.equal(ctx.store.queued().filter(d => d.conversationId === a.id).length, 0);
+  } finally { ctx.cleanup(); }
+});
