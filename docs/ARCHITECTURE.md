@@ -59,3 +59,9 @@ Sau crash, các delivery `running` chuyển sang `interrupted` và **không repl
 Lead `cwd=lead.cwd`, sandbox read-only. Peer `cwd=modules[].path`, mặc định YOLO (`danger-full-access`); App không dùng worktree. Hướng dẫn mô hình Peer không gửi message trực tiếp đến Peer khác là **ràng buộc routing**, không phải OS security boundary. Reviewer chỉ có thể được thêm sau này như một Agent được Lead chủ động gọi; không gate bắt buộc.
 
 Các kết quả Codex được hiển thị trung thực, không giả test pass; End-to-end với Codex thật phải xác minh trên máy cài Codex.
+
+## Phục hồi lỗi JSON envelope của Lead
+
+`parseLeadResponse()` chỉ kiểm tra cú pháp của action routing, không đánh giá nội dung công việc. Nếu Lead gửi malformed JSON chứa `commands` hoặc `spawn_peer`, hàm trả `LeadProtocolError`. `Coordinator.execute()` sẽ resume chính Lead Codex Thread để yêu cầu sửa định dạng một lượt, **chưa gửi message cho Peer**. Sau hai lượt thất bại, app đánh dấu Delivery là `interrupted` và thông báo cho người dùng. Một câu trả lời Lead bằng văn bản thường không chứa action intent vẫn được chấp nhận làm `reply`, không phát sinh gate.
+
+Regression test: hợp đồng API Todo chứa JSON lồng trong message dành cho Peer Web; Lead gửi JSON lỗi, tự sửa lại, Peer Web thật sự được tạo và nhận message; nếu cả hai lượt sai thì không tạo Peer giả.

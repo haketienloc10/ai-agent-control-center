@@ -136,3 +136,85 @@ test("Two Peer sessions in the same module can execute concurrently in direct cw
     release?.(); store.close(); rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("E2E regression: malformed Lead Todo API JSON retries and really spawns Peer Web", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aacc-todo-routing-"));
+  const store = new CoordinationStore(dir);
+  const fullstack: WorkspaceConfig = {
+    lead: { cwd: "/tmp/agent-workspace", instructions: "Điều phối" },
+    modules: [
+      { id: "api", label: "API", path: "/tmp/module-api" },
+      { id: "web", label: "Web", path: "/tmp/module-web" }
+    ]
+  };
+  let leadTurns = 0;
+  let peerTurns = 0;
+  const runtime: AgentRuntime = {
+    async run(session, cwd, prompt, hooks) {
+      hooks.onThread(session.threadId ?? session.id + "-thread");
+      hooks.onTurn(session.id + "-turn-" + (leadTurns + peerTurns));
+      if (session.role === "lead") {
+        leadTurns++;
+        if (leadTurns === 1) {
+          // Inline API example has unescaped quotes, as in the observed Todo E2E.
+          return '{"reply":"Backend API done","commands":[{"type":"spawn_peer",' +
+            '"moduleId":"web","label":"Todo Web",' +
+            '"message":"GET /api/todos returns {"todos":[]}"}]}';
+        }
+        if (leadTurns === 2) {
+          assert.equal(session.threadId, session.id + "-thread",
+            "Format correction must resume the same Lead thread");
+          assert.match(prompt, /JSON envelope không parse được/);
+          return JSON.stringify({
+            reply: "Đang giao Peer Web",
+            commands: [{ type: "spawn_peer", moduleId: "web", label: "Todo Web",
+              message: 'GET /api/todos returns {"todos":[]}; build Todo UI' }]
+          });
+        }
+        return JSON.stringify({ commands: [{ type: "finish", summary: "Web đã hoàn thành" }] });
+      }
+      peerTurns++;
+      assert.equal(session.moduleId, "web");
+      assert.equal(cwd, "/tmp/module-web");
+      return "Đã tạo giao diện Todo";
+    }
+  };
+  try {
+    new Coordinator(fullstack, store, runtime);
+    const conversation = store.createConversation("Tạo Todo API và Web");
+    await until(() => store.conversation(conversation.id)?.status === "finished");
+    const snap = store.snapshot();
+    assert.equal(leadTurns, 3);
+    assert.equal(peerTurns, 1);
+    assert.equal(snap.sessions.filter(s => s.role === "peer" && s.moduleId === "web").length, 1);
+    assert.ok(snap.messages.some(m => m.from === "lead" && m.to === "peer" &&
+      m.text.includes('{"todos":[]}')));
+    assert.ok(snap.messages.some(m => m.from === "peer" && m.to === "lead"));
+    assert.ok(!snap.messages.some(m => m.from === "lead" && m.to === "user" &&
+      m.text.includes('"commands"')), "Malformed routing JSON must not be shown as a Lead reply");
+  } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("Persistent malformed action reports failure to User, no silent empty commands", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aacc-routing-errors-"));
+  const store = new CoordinationStore(dir);
+  let leadTurns = 0;
+  const runtime: AgentRuntime = {
+    async run(session, _cwd, _prompt, hooks) {
+      leadTurns++;
+      hooks.onThread(session.threadId ?? session.id + "-thread");
+      hooks.onTurn(session.id + "-turn-" + leadTurns);
+      return '{"commands":[{"type":"spawn_peer","moduleId":"web","message":"GET {"todos":[]}"}]}';
+    }
+  };
+  try {
+    new Coordinator(config, store, runtime);
+    const conversation = store.createConversation("Tạo Todo");
+    await until(() => store.snapshot().deliveries.some(d =>
+      d.conversationId === conversation.id && d.status === "interrupted"));
+    assert.equal(leadTurns, 2, "Retry is bounded to one repair turn");
+    assert.equal(store.snapshot().sessions.filter(s => s.role === "peer").length, 0);
+    assert.ok(store.snapshot().messages.some(m => m.from === "system" && m.to === "user" &&
+      m.text.includes("lệnh điều phối")));
+  } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
+});

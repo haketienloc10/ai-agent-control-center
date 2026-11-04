@@ -1,6 +1,6 @@
 import type { AgentSession, Delivery, Message, WorkspaceConfig } from "@aacc/contracts";
 import { CoordinationStore } from "./coordination-store.js";
-import { parseLeadResponse } from "./lead-protocol.js";
+import { LeadProtocolError, parseLeadResponse } from "./lead-protocol.js";
 import type { AgentRuntime } from "./codex-runtime.js";
 
 function leadPrompt(config: WorkspaceConfig, store: CoordinationStore, delivery: Delivery): string {
@@ -93,13 +93,37 @@ export class Coordinator {
       const prompt = session.role === "lead"
         ? leadPrompt(this.config, this.store, delivery)
         : peerPrompt(this.config, session, input);
-      const output = await this.runtime.run(session, cwd, prompt, {
-        onThread: threadId => this.store.setThread(session.id, threadId),
-        onTurn: turnId => this.store.setTurn(session.id, turnId)
-      });
+      const hooks = {
+        onThread: (threadId: string) => this.store.setThread(session.id, threadId),
+        onTurn: (turnId: string) => this.store.setTurn(session.id, turnId)
+      };
+      let output = await this.runtime.run(session, cwd, prompt, hooks);
       if (session.role === "lead") {
-        this.store.completeLead(delivery.id, parseLeadResponse(output),
-          this.config.modules.map(m => m.id));
+        // Routing envelope errors are transport failures, not business quality gates.
+        // Nothing is dispatched until the complete envelope has been parsed.
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            const response = parseLeadResponse(output);
+            this.store.completeLead(delivery.id, response, this.config.modules.map(m => m.id));
+            break;
+          } catch (error) {
+            if (!(error instanceof LeadProtocolError)) throw error;
+            if (attempt === 1) {
+              throw new Error("Lead không gửi được lệnh điều phối sau khi sửa định dạng: " + error.message);
+            }
+            const latestSession = this.store.session(session.id)!;
+            output = await this.runtime.run(latestSession, cwd, [
+              "Lượt trước bạn gửi lệnh điều phối nhưng JSON envelope không parse được.",
+              "Hệ thống CHƯA thực thi bất kỳ action nào từ lượt đó.",
+              "Hãy gửi lại CÙNG QUYẾT ĐỊNH điều phối dưới dạng MỘT JSON object hợp lệ.",
+              "Chỉ cần fields reply và commands. Không kèm Markdown hoặc giải thích ngoài JSON.",
+              "Mọi dấu ngoặc kép bên trong commands[].message phải được escape đúng cú pháp JSON.",
+              "Chẳng hạn: một message chứa ví dụ API JSON cần mã hóa dấu ngoặc kép.",
+              "Lý do parser: " + error.message,
+              "Câu trả lời chưa parse được: " + output.slice(0, 12000)
+            ].join("\n\n"), hooks);
+          }
+        }
       } else {
         this.store.completePeer(delivery.id, output);
       }

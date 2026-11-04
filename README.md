@@ -61,6 +61,12 @@ Các tác vụ điều phối của Lead dùng một JSON envelope đơn giản 
 
 Lead cũng có thể dùng `send_peer(sessionId,message)` hoặc `finish(summary)`. App không cho client/Peer gọi trực tiếp các action của Lead.
 
+## Khôi phục lệnh điều phối sai định dạng
+
+Lead có thể nhắc tới hợp đồng HTTP/JSON bên trong `commands[].message`. Nếu câu trả lời Lead chứa ý định điều phối nhưng JSON envelope sai cú pháp, app **không** chuyển cả JSON thành tin nhắn cho bạn và cũng **không** bỏ lệnh silently. App yêu cầu Lead gửi lại action đúng cú pháp trong **cùng Codex Thread** (tối đa một lượt sửa). Không có action nào được dispatch cho đến khi parser đọc thành công toàn bộ envelope. Nếu vẫn lỗi, Delivery chuyển `interrupted`, bạn nhận thông báo rõ ràng và có thể tiếp tục nhắn Lead; không có quality gate nào được thêm vào.
+
+Các dạng envelope hợp lệ gồm JSON trực tiếp, JSON trong Markdown code fence và JSON được serialize thành một string. Nội dung nghiệp vụ như API contract không bị validator kiểm duyệt; parser chỉ cần xác định chính xác lệnh `spawn_peer` hoặc `send_peer`.
+
 ## Persistence, crash và bảo mật
 
 SQLite trong `APP_DATA_DIR/coordination.sqlite` lưu toàn bộ hội thoại, session/thread ID, message và delivery. Sau restart, delivery đang chạy chuyển thành `interrupted`, **không tự replay** Codex turn. Delivery vẫn `queued` chưa hề chạy được phép tiếp tục. Người dùng có thể nhắn Lead để điều phối lại.
