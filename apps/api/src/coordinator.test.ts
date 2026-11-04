@@ -164,7 +164,7 @@ test("E2E regression: malformed Lead Todo API JSON retries and really spawns Pee
         if (leadTurns === 2) {
           assert.equal(session.threadId, session.id + "-thread",
             "Format correction must resume the same Lead thread");
-          assert.match(prompt, /JSON envelope không parse được/);
+          assert.match(prompt, /Lệnh điều phối trước không parse được/);
           return JSON.stringify({
             reply: "Đang giao Peer Web",
             commands: [{ type: "spawn_peer", moduleId: "web", label: "Todo Web",
