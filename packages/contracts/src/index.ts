@@ -8,14 +8,12 @@ export type AgentRole = "lead" | "peer";
 export type SessionStatus = "idle" | "running" | "interrupted";
 export interface Conversation {
   id: string; title: string; status: "active" | "finished";
-  leadSessionId: string; createdAt: string; updatedAt: string;
+  leadSessionId: string; generation: number; createdAt: string; updatedAt: string;
 }
 export interface AgentSession {
   id: string; conversationId: string; role: AgentRole;
   moduleId?: string; label: string; threadId?: string; turnId?: string;
   status: SessionStatus; error?: string;
-  // Dynamic tools are registered at thread/start and persisted by Codex.
-  toolProtocol?: "dynamic" | "json";
   // Deduplicate app-server tool call replay after reconnect/crash.
   handledToolCalls?: string[];
   createdAt: string; updatedAt: string;
@@ -28,7 +26,8 @@ export interface Message {
 }
 export interface Delivery {
   id: string; conversationId: string; sessionId: string; messageId: string;
-  status: "queued" | "running" | "completed" | "interrupted";
+  generation: number;
+  status: "queued" | "running" | "completed" | "interrupted" | "superseded";
   error?: string; createdAt: string; updatedAt: string;
 }
 export interface Snapshot {
@@ -42,4 +41,3 @@ export type LeadCommand =
   | { type: "spawn_peer"; moduleId: string; message: string; label?: string }
   | { type: "send_peer"; sessionId: string; message: string }
   | { type: "finish"; summary?: string };
-export interface LeadResponse { reply?: string; commands: LeadCommand[]; }
