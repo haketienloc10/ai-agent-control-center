@@ -25,7 +25,10 @@ function leadPrompt(config: WorkspaceConfig, store: CoordinationStore, delivery:
     "Peer không trao đổi trực tiếp với Peer khác. Mọi yêu cầu phối hợp phải qua bạn.",
     "Không tự tuyên bố test thành công nếu Peer chưa cung cấp bằng chứng.",
     "Không có approval gate hoặc workflow quality gate của app.",
+    "spawn_peer(moduleId,message,label?,model?,effort?) cho phép override model/effort khi mở Peer mới.",
+    "Nếu không override thì dùng Peer App Settings. Không sử dụng send_peer chỉ để đổi model/effort.",
     config.lead.instructions,
+    "SETTINGS: " + JSON.stringify(store.settings()),
     "MODULES: " + JSON.stringify(config.modules.map(m => ({ id: m.id, label: m.label, path: m.path }))),
     "PEER_SESSIONS: " + JSON.stringify(peers),
     "CURRENT_MESSAGE: " + JSON.stringify(current),
@@ -98,7 +101,10 @@ export class Coordinator {
           return result;
         }
       };
-      const output = await this.runtime.run(session, cwd, prompt, hooks);
+      const selection = session.role === "lead"
+        ? this.store.settings().lead
+        : { model: session.model, effort: session.effort };
+      const output = await this.runtime.run(session, cwd, prompt, hooks, selection);
       if (session.role === "lead") {
         // finish(summary) already emitted the completion message during the tool call.
         this.store.completeLead(delivery.id, finished ? "" : output);

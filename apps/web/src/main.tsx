@@ -2,9 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { AgentSession, Conversation, Message, Snapshot } from "@aacc/contracts";
 import { visibleMessages, peerMessages } from "./message-view.js";
+import { AgentSettingsModal } from "./AgentSettingsModal.js";
 import "./style.css";
 
-const empty: Snapshot = { modules: [], conversations: [], sessions: [], messages: [], deliveries: [] };
+const empty: Snapshot = {
+  modules: [], conversations: [], sessions: [], messages: [], deliveries: [],
+  settings: { lead: {}, peer: {} }
+};
 const time = (iso: string) => new Date(iso).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
 async function api<T>(path: string, data?: unknown): Promise<T> {
   const res = await fetch("/api" + path, data === undefined
@@ -38,6 +42,7 @@ function App() {
   const [draft, setDraft] = useState("");
   const [newRequest, setNewRequest] = useState("");
   const [showNew, setShowNew] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [showRouting, setShowRouting] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
@@ -92,6 +97,9 @@ function App() {
         <div><strong>Agent Control Center</strong><small>LEAD ↔ PEER · LOCAL MVP</small></div></div>
       <button type="button" className="primary full" onClick={() => setShowNew(true)}>
         + Yêu cầu mới cho Lead
+      </button>
+      <button type="button" className="settings-open full" onClick={() => setShowSettings(true)}>
+        App Settings · Model / Effort
       </button>
       <div className="side-heading">Các cuộc việc <span>{conversations.length}</span></div>
       <nav className="conversation-list" aria-label="Conversations">
@@ -164,6 +172,8 @@ function App() {
               <div><strong>Lead Agent</strong><small>Workspace chung</small>
                 <span className={"session-status " + (sessions.find(s => s.role === "lead")?.status ?? "idle")}>
                   {sessions.find(s => s.role === "lead")?.status ?? "idle"}</span>
+                <small className="model-hint">Default: {data.settings.lead.model || "Codex"}
+                  {" · "}{data.settings.lead.effort || "effort mặc định"}</small>
               </div></div>
             <div className="module-heading">Peer sessions</div>
             <div className="peer-list">
@@ -172,7 +182,9 @@ function App() {
                 onClick={() => setPeerFocus(peerFocus === peer.id ? "" : peer.id)}>
                 <span className="avatar">P</span>
                 <span><strong>{peer.label}</strong><small>{peer.moduleId} · {peer.id.slice(0, 8)}</small>
-                  <span className={"session-status " + peer.status}>{peer.status}</span></span>
+                  <span className={"session-status " + peer.status}>{peer.status}</span>
+                  <small className="model-hint">{peer.model || "Codex default"}
+                    {" · "}{peer.effort || "effort mặc định"}</small></span>
               </button>)}
               {!peers.length && <div className="empty-peers">Lead chưa mở Peer session nào.</div>}
             </div>
@@ -193,6 +205,8 @@ function App() {
         </div>
       </>}
     </main>
+    {showSettings && <AgentSettingsModal initial={data.settings}
+      onClose={() => setShowSettings(false)} onSaved={refresh}/>}
     {showNew && <div className="modal-backdrop" role="presentation">
       <section className="modal" role="dialog" aria-modal="true" aria-label="Giao yêu cầu mới">
         <div className="section-header"><h2>Yêu cầu mới cho Lead</h2>

@@ -21,6 +21,16 @@ npm run dev:web
 
 Mở http://localhost:5173. Backend chỉ bind `127.0.0.1:4317`. Có thể cấu hình `WORKSPACE_CONFIG`, `APP_DATA_DIR`, `PORT` hoặc `CODEX_SECURITY_MODE=sandbox`.
 
+## App Settings: model và reasoning effort
+
+Mở **App Settings · Model / Effort** ở thanh bên để đặt cấu hình riêng cho Lead và Peer. UI lấy model và effort gợi ý từ Codex `model/list` qua `GET /api/models`. Khi catalog không khả dụng, người dùng vẫn có thể nhập model ID thủ công. Trường rỗng kế thừa cấu hình mặc định của Codex.
+
+Settings lưu bền trong SQLite qua `PUT /api/settings` và được đưa vào `GET /api/snapshot`. **Lead defaults** áp dụng mỗi lượt Lead tiếp theo, kể cả Thread đang tồn tại. **Peer defaults** được chốt lúc `spawn_peer`; Peer đã tồn tại không thay đổi theo Settings mới.
+
+Lead có thể override `model` và `effort` khi gọi dynamic tool `spawn_peer`. Thứ tự cho từng trường độc lập: `spawn_peer override → Peer App Settings → Codex default`. Codex kiểm tra model/effort có được hỗ trợ hay không; app không tự tạo model IDs hoặc đánh giá chất lượng đầu ra.
+
+Runtime truyền `model` trong `thread/start` và `model`/`effort` trong `turn/start`. Logic event-driven, `finish`, chống late Peer event và giới hạn timeout của PR #13 vẫn giữ nguyên. Không có legacy JSON protocol.
+
 ## Lifecycle theo sự kiện
 
 1. Người dùng tạo task. App tạo Lead delivery và bắt đầu một Codex turn.
@@ -49,7 +59,9 @@ Mở http://localhost:5173. Backend chỉ bind `127.0.0.1:4317`. Có thể cấu
 ## API local
 
 - `GET /api/health` — trạng thái Backend.
-- `GET /api/snapshot` — conversations, sessions, messages, deliveries, modules.
+- `GET /api/snapshot` — conversations, sessions, messages, deliveries, modules và settings.
+- `GET /api/models` — model/effort catalog do Codex app-server cung cấp.
+- `PUT /api/settings` — lưu `{"lead":{"model":"MODEL_ID","effort":"high"},"peer":{"model":"MODEL_ID","effort":"medium"}}`; dùng `""` để kế thừa Codex.
 - `GET /api/events` — SSE thay đổi.
 - `POST /api/conversations` — tạo task từ `{"text":"Yêu cầu"}`.
 - `POST /api/conversations/:id/messages` — gửi bổ sung cho Lead.

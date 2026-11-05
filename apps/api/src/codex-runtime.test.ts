@@ -5,20 +5,20 @@ import { CodexClient } from "./codex-client.js";
 import { CodexAgentRuntime } from "./codex-runtime.js";
 
 const fakeServer = [
-  'process.stdin.setEncoding("utf8"); let buffer=""; let seq=0;',
+  'process.stdin.setEncoding("utf8"); let buffer=""; let seq=0; let threadModel;',
   'const send=m=>console.log(JSON.stringify(m));',
   'process.stdin.on("data",chunk=>{buffer+=chunk;let index;',
   'while((index=buffer.indexOf(String.fromCharCode(10)))>=0){',
   'const line=buffer.slice(0,index);buffer=buffer.slice(index+1);if(!line)continue;',
   'const m=JSON.parse(line);',
   'if(m.method==="initialize")send({id:m.id,result:{}});',
-  'if(m.method==="thread/start"){const id="thread-"+(++seq);send({id:m.id,result:{thread:{id}}});}',
+  'if(m.method==="thread/start"){threadModel=m.params.model;const id="thread-"+(++seq);send({id:m.id,result:{thread:{id}}});}',
   'if(m.method==="thread/resume")send({id:m.id,result:{thread:{id:m.params.threadId}}});',
   'if(m.method==="turn/start"){const id="turn-"+(++seq);',
   'send({id:m.id,result:{turn:{id}}});',
   'send({method:"item/completed",params:{threadId:m.params.threadId,',
   'item:{type:"agentMessage",text:JSON.stringify({',
-  'threadId:m.params.threadId,cwd:m.params.cwd,',
+  'threadId:m.params.threadId,cwd:m.params.cwd,threadModel,turnModel:m.params.model,effort:m.params.effort,',
   'sandboxPolicy:m.params.sandboxPolicy})}}});',
   'send({method:"turn/completed",params:{threadId:m.params.threadId,turn:{id,status:"completed"}}});',
   '}}});'
@@ -39,21 +39,32 @@ test("Codex runtime starts once, resumes same thread, Lead read-only, Peer direc
     const first = JSON.parse(await runtime.run(lead, "/agent/workspace", "Coordinate", {
       onThread: id => { lead.threadId = id; },
       onTurn: id => { lead.turnId = id; }
-    })) as { threadId: string; cwd: string; sandboxPolicy: { type: string } };
+    }, { model: "lead-default", effort: "high" })) as { threadId: string; cwd: string;
+      threadModel: string; turnModel: string; effort: string; sandboxPolicy: { type: string } };
     assert.equal(first.cwd, "/agent/workspace");
+    assert.equal(first.threadModel, "lead-default");
+    assert.equal(first.turnModel, "lead-default");
+    assert.equal(first.effort, "high");
     assert.equal(first.sandboxPolicy.type, "readOnly");
     const peer = session("peer");
     const result1 = JSON.parse(await runtime.run(peer, "/modules/web", "Create README", {
       onThread: id => { peer.threadId = id; },
       onTurn: id => { peer.turnId = id; }
-    })) as { threadId: string; cwd: string; sandboxPolicy: { type: string } };
+    }, { model: "peer-frozen", effort: "low" })) as { threadId: string; cwd: string;
+      threadModel: string; turnModel: string; effort: string; sandboxPolicy: { type: string } };
     assert.equal(result1.cwd, "/modules/web");
+    assert.equal(result1.threadModel, "peer-frozen");
+    assert.equal(result1.turnModel, "peer-frozen");
+    assert.equal(result1.effort, "low");
     assert.equal(result1.sandboxPolicy.type, "dangerFullAccess");
     const result2 = JSON.parse(await runtime.run(peer, "/modules/web", "Add build", {
       onThread: id => { peer.threadId = id; },
       onTurn: id => { peer.turnId = id; }
-    })) as { threadId: string; cwd: string; sandboxPolicy: { type: string } };
+    }, { model: "peer-frozen", effort: "low" })) as { threadId: string; cwd: string;
+      threadModel: string; turnModel: string; effort: string; sandboxPolicy: { type: string } };
     assert.equal(result2.threadId, result1.threadId);
+    assert.equal(result2.turnModel, "peer-frozen");
+    assert.equal(result2.effort, "low");
     assert.equal(result2.cwd, "/modules/web");
   } finally {
     client.stop();

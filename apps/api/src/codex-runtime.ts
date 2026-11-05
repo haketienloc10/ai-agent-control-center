@@ -1,4 +1,4 @@
-import type { AgentSession, LeadCommand } from "@aacc/contracts";
+import type { AgentSession, LeadCommand, ModelSelection } from "@aacc/contracts";
 import { CodexClient, type RpcMessage } from "./codex-client.js";
 import { commandFromTool, leadDynamicTools } from "./lead-tools.js";
 
@@ -8,7 +8,8 @@ export interface AgentRunHooks {
   onLeadTool?(callId: string, command: LeadCommand): Promise<string> | string;
 }
 export interface AgentRuntime {
-  run(session: AgentSession, cwd: string, prompt: string, hooks: AgentRunHooks): Promise<string>;
+  run(session: AgentSession, cwd: string, prompt: string, hooks: AgentRunHooks,
+    selection?: ModelSelection): Promise<string>;
 }
 
 /** Event-driven Codex turn; Lead actions use dynamic tools, never text/JSON envelopes. */
@@ -20,7 +21,8 @@ export class CodexAgentRuntime implements AgentRuntime {
     });
   }
 
-  async run(session: AgentSession, cwd: string, prompt: string, hooks: AgentRunHooks): Promise<string> {
+  async run(session: AgentSession, cwd: string, prompt: string, hooks: AgentRunHooks,
+    selection: ModelSelection = {}): Promise<string> {
     await this.client.start();
     const peer = session.role === "peer";
     const safe = process.env.CODEX_SECURITY_MODE === "sandbox";
@@ -33,7 +35,9 @@ export class CodexAgentRuntime implements AgentRuntime {
     const started: { thread: { id: string } } = session.threadId
       ? await this.client.request("thread/resume", { threadId: session.threadId, excludeTurns: true })
       : await this.client.request("thread/start", {
-          cwd, approvalPolicy, sandbox, ...(peer ? {} : { dynamicTools: leadDynamicTools })
+          cwd, approvalPolicy, sandbox,
+          ...(selection.model ? { model: selection.model } : {}),
+          ...(peer ? {} : { dynamicTools: leadDynamicTools })
         });
     const threadId = started?.thread?.id;
     if (!threadId) throw new Error("Codex không trả về thread.id");
@@ -100,7 +104,9 @@ export class CodexAgentRuntime implements AgentRuntime {
     try {
       const turn: { turn: { id: string } } = await this.client.request("turn/start", {
         threadId, input: [{ type: "text", text: prompt }],
-        cwd, approvalPolicy, sandboxPolicy
+        cwd, approvalPolicy, sandboxPolicy,
+        ...(selection.model ? { model: selection.model } : {}),
+        ...(selection.effort ? { effort: selection.effort } : {})
       });
       if (!turn?.turn?.id) throw new Error("Codex không trả về turn.id");
       runningTurnId = turn.turn.id;

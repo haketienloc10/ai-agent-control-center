@@ -47,3 +47,12 @@ Codex turn không có timer thực thi 10 phút. RPC có deadline riêng để p
 SQLite giữ trạng thái sau restart; delivery đang chạy thành interrupted và không replay. CI dùng fake Codex transport, không chứng minh E2E với Codex thật.
 
 Lead read-only; Peer sửa source trực tiếp. Không có OS isolation khi YOLO, và nhiều Peer cùng module có thể ghi xung đột.
+
+## Model/effort Settings trên event-driven lifecycle
+
+- `Snapshot.settings` lưu `AppSettings.lead` và `AppSettings.peer`. `CoordinationStore.updateSettings()` xác thực trường transport rồi lưu vào SQLite. Snapshot PR #13 cũ được bổ sung settings mặc định khi mở.
+- `GET /api/models` dùng `model/list` và phân trang để lấy model/effort hỗ trợ; UI vẫn cho nhập model ID khi catalog lỗi.
+- `Coordinator.execute()` đọc Lead defaults **mỗi turn mới**. Peer dùng `session.model/effort` đã chốt khi spawn, không bị thay đổi khi App Settings cập nhật.
+- `routeLeadTool(spawn_peer)` áp dụng thứ tự `override → Peer default → Codex default` cho từng trường độc lập. `send_peer` chỉ giao công việc, không hỏi trạng thái.
+- `CodexAgentRuntime.run()` truyền model ở `thread/start` và model/effort ở `turn/start`. Dynamic tools là giao thức điều phối duy nhất. Không thêm legacy JSON parser, schema fallback, timer 10 phút hay status polling.
+- Không thay đổi PR #13: task `generation`, `wakeLead`, `superseded`, `finish`, chống Peer result đến muộn vẫn có hiệu lực.

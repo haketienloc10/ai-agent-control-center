@@ -10,7 +10,9 @@ export const leadDynamicTools = [
       properties: {
         moduleId: { type: "string", description: "Module ID trong danh sách MODULES" },
         message: { type: "string", description: "Nhiệm vụ đầy đủ cho Peer, có thể chứa JSON API contract" },
-        label: { type: "string", description: "Nhãn hiển thị ngắn cho session" }
+        label: { type: "string", description: "Nhãn hiển thị ngắn cho session" },
+        model: { type: "string", description: "Model override khi spawn Peer; bỏ trống để dùng Peer default" },
+        effort: { type: "string", description: "Reasoning effort override khi spawn Peer; bỏ trống để dùng Peer default" }
       },
       required: ["moduleId", "message"]
     }
@@ -55,7 +57,11 @@ export function commandFromTool(tool: unknown, args: unknown): LeadCommand {
       type: "spawn_peer",
       moduleId: nonempty(input.moduleId, "moduleId", 100),
       message: nonempty(input.message, "message"),
-      ...(typeof input.label === "string" ? { label: input.label.slice(0, 100) } : {})
+      ...(typeof input.label === "string" ? { label: input.label.slice(0, 100) } : {}),
+      ...(typeof input.model === "string" && input.model.trim()
+        ? { model: nonempty(input.model, "model", 128) } : {}),
+      ...(typeof input.effort === "string" && input.effort.trim()
+        ? { effort: nonempty(input.effort, "effort", 32) } : {})
     };
   }
   if (tool === "send_peer") {
