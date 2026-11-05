@@ -86,6 +86,29 @@ test("finish supersedes queued Peer; late result is recorded but cannot wake Lea
   } finally { ctx.cleanup(); }
 });
 
+test("Old Peer completion after user reopens task cannot wake a second Lead turn", () => {
+  const ctx = fixture();
+  try {
+    const c = ctx.store.createConversation("Todo");
+    const lead = startLead(ctx.store, c.id);
+    ctx.store.routeLeadTool(lead.id, "spawn", {
+      type: "spawn_peer", moduleId: "web", message: "Build UI"
+    }, ["web"]);
+    const peer = ctx.store.queued()[0];
+    ctx.store.startDelivery(peer.id);
+    ctx.store.routeLeadTool(lead.id, "finish", { type: "finish", summary: "Done" }, []);
+    ctx.store.completeLead(lead.id, "");
+    ctx.store.postUser(c.id, "New follow-up");
+    const newLead = startLead(ctx.store, c.id);
+    ctx.store.completePeer(peer.id, "Old result");
+    assert.equal(ctx.store.queued().filter(d => d.sessionId === c.leadSessionId).length, 0);
+    ctx.store.completeLead(newLead.id, "Handling new request");
+    assert.equal(ctx.store.queued().length, 0);
+    assert.equal(ctx.store.conversation(c.id)?.status, "active");
+    assert.ok(ctx.store.snapshot().messages.some(m => m.text === "Old result"));
+  } finally { ctx.cleanup(); }
+});
+
 test("Peer errors wake Lead once; finish prevents further queued work", () => {
   const ctx = fixture();
   try {

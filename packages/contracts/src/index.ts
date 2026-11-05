@@ -8,7 +8,7 @@ export type AgentRole = "lead" | "peer";
 export type SessionStatus = "idle" | "running" | "interrupted";
 export interface Conversation {
   id: string; title: string; status: "active" | "finished";
-  leadSessionId: string; createdAt: string; updatedAt: string;
+  leadSessionId: string; generation: number; createdAt: string; updatedAt: string;
 }
 export interface AgentSession {
   id: string; conversationId: string; role: AgentRole;
@@ -26,6 +26,7 @@ export interface Message {
 }
 export interface Delivery {
   id: string; conversationId: string; sessionId: string; messageId: string;
+  generation: number;
   status: "queued" | "running" | "completed" | "interrupted" | "superseded";
   error?: string; createdAt: string; updatedAt: string;
 }

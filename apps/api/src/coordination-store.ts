@@ -27,6 +27,7 @@ function message(data: Data, conversationId: string, from: MessageAuthor,
 function deliver(data: Data, conversationId: string, sessionId: string, messageId: string) {
   const entry: Delivery = {
     id: randomUUID(), conversationId, sessionId, messageId,
+    generation: data.conversations.find(c => c.id === conversationId)?.generation ?? 0,
     status: "queued", createdAt: now(), updatedAt: now()
   };
   data.deliveries.push(entry);
@@ -44,6 +45,8 @@ function wakeLead(data: Data, conversation: Conversation, messageId: string): vo
 function finishConversation(data: Data, conversation: Conversation, summary?: string): void {
   if (conversation.status === "finished") throw new Error("Task đã hoàn thành");
   conversation.status = "finished";
+  // Invalidate events from Peer turns started before this finish, even after user reopens.
+  conversation.generation = (conversation.generation ?? 0) + 1;
   conversation.updatedAt = now();
   if (summary?.trim()) message(data, conversation.id, "lead", "user", summary.trim());
   // Work not yet started must not execute after finish. Running Peer may still report,
@@ -123,7 +126,8 @@ export class CoordinationStore extends EventEmitter {
     return this.mutate(data => {
       const conversation: Conversation = {
         id: randomUUID(), title: title?.trim().slice(0, 120) || value.slice(0, 90),
-        status: "active", leadSessionId: randomUUID(), createdAt: now(), updatedAt: now()
+        status: "active", leadSessionId: randomUUID(), generation: 0,
+        createdAt: now(), updatedAt: now()
       };
       data.conversations.push(conversation);
       data.sessions.push({
@@ -152,8 +156,10 @@ export class CoordinationStore extends EventEmitter {
       if (!item || item.status !== "queued") throw new Error("Delivery not queued");
       const session = data.sessions.find(s => s.id === item.sessionId);
       if (!session || session.status === "running") throw new Error("Session is unavailable");
-      if (data.conversations.find(c => c.id === item.conversationId)?.status !== "active") {
-        throw new Error("Task đã kết thúc");
+      const conversation = data.conversations.find(c => c.id === item.conversationId);
+      if (!conversation || conversation.status !== "active" ||
+        (item.generation ?? 0) !== (conversation.generation ?? 0)) {
+        throw new Error("Delivery thuộc task đã kết thúc");
       }
       item.status = "running"; item.updatedAt = now();
       session.status = "running"; session.error = undefined; session.updatedAt = now();
@@ -250,7 +256,10 @@ export class CoordinationStore extends EventEmitter {
       const item = message(data, conversation.id, "peer", "lead",
         result.trim() || "(Peer không trả về nội dung)", session.id);
       // Peer-to-Lead only; no Peer-to-Peer route exists.
-      if (conversation.status === "active") wakeLead(data, conversation, item.id);
+      if (conversation.status === "active" &&
+        (delivery.generation ?? 0) === (conversation.generation ?? 0)) {
+        wakeLead(data, conversation, item.id);
+      }
       conversation.updatedAt = now();
     });
   }
@@ -263,7 +272,8 @@ export class CoordinationStore extends EventEmitter {
       delivery.status = "interrupted"; delivery.error = cause; delivery.updatedAt = now();
       session.status = "interrupted"; session.error = cause; session.updatedAt = now();
       const body = session.label + " gặp lỗi: " + cause;
-      if (conversation.status === "active") {
+      if (conversation.status === "active" &&
+        (delivery.generation ?? 0) === (conversation.generation ?? 0)) {
         message(data, conversation.id, "system", "user", body);
         if (session.role === "peer") {
           const item = message(data, conversation.id, "system", "lead", body, session.id);
