@@ -33,6 +33,29 @@ function deliver(data: Data, conversationId: string, sessionId: string, messageI
   return entry;
 }
 
+/** Một Peer event chỉ đánh thức Lead nếu chưa có Lead delivery đang chờ. */
+function wakeLead(data: Data, conversation: Conversation, messageId: string): void {
+  if (conversation.status !== "active") return;
+  const pending = data.deliveries.some(d => d.conversationId === conversation.id &&
+    d.sessionId === conversation.leadSessionId && d.status === "queued");
+  if (!pending) deliver(data, conversation.id, conversation.leadSessionId, messageId);
+}
+
+function finishConversation(data: Data, conversation: Conversation, summary?: string): void {
+  if (conversation.status === "finished") throw new Error("Task đã hoàn thành");
+  conversation.status = "finished";
+  conversation.updatedAt = now();
+  if (summary?.trim()) message(data, conversation.id, "lead", "user", summary.trim());
+  // Work not yet started must not execute after finish. Running Peer may still report,
+  // but its report is recorded without waking Lead.
+  for (const pending of data.deliveries) {
+    if (pending.conversationId === conversation.id && pending.status === "queued") {
+      pending.status = "superseded";
+      pending.updatedAt = now();
+    }
+  }
+}
+
 /** SQLite snapshot: one atomic commit stores messages, peer sessions and pending deliveries. */
 export class CoordinationStore extends EventEmitter {
   private readonly db: DatabaseSync;
@@ -129,6 +152,9 @@ export class CoordinationStore extends EventEmitter {
       if (!item || item.status !== "queued") throw new Error("Delivery not queued");
       const session = data.sessions.find(s => s.id === item.sessionId);
       if (!session || session.status === "running") throw new Error("Session is unavailable");
+      if (data.conversations.find(c => c.id === item.conversationId)?.status !== "active") {
+        throw new Error("Task đã kết thúc");
+      }
       item.status = "running"; item.updatedAt = now();
       session.status = "running"; session.error = undefined; session.updatedAt = now();
       return item;
@@ -141,14 +167,6 @@ export class CoordinationStore extends EventEmitter {
       s.threadId = threadId; s.updatedAt = now();
     });
   }
-  setToolProtocol(sessionId: string, mode: "dynamic" | "json") {
-    this.mutate(data => {
-      const session = data.sessions.find(s => s.id === sessionId);
-      if (!session || session.role !== "lead") throw new Error("Only Lead can own routing tools");
-      session.toolProtocol = mode; session.updatedAt = now();
-    });
-  }
-
   /** Handle Codex host tool request once, atomically, while Lead turn is active. */
   routeLeadTool(deliveryId: string, callId: string, command: LeadCommand,
     allowedModuleIds: string[]): string {
@@ -160,12 +178,10 @@ export class CoordinationStore extends EventEmitter {
       if (!lead || lead.role !== "lead") throw new Error("Only Lead may invoke routing tools");
       if (lead.handledToolCalls?.includes(callId)) return "Already executed (idempotent replay)";
       const conversation = data.conversations.find(c => c.id === active.conversationId)!;
+      if (conversation.status !== "active") throw new Error("Task đã hoàn thành");
       let result: string;
       if (command.type === "finish") {
-        conversation.status = "finished";
-        if (command.summary?.trim()) {
-          message(data, conversation.id, "lead", "user", command.summary.trim());
-        }
+        finishConversation(data, conversation, command.summary);
         result = "Finished conversation " + conversation.id;
       } else {
         let peer: AgentSession | undefined;
@@ -207,66 +223,18 @@ export class CoordinationStore extends EventEmitter {
       s.turnId = turnId; s.updatedAt = now();
     });
   }
-  /** One persisted state change = completed Lead turn + its routing decisions. */
-  completeLead(id: string, output: LeadResponse, allowedModuleIds: string[]): void {
+  /** End one Lead turn; task remains active unless finish was called explicitly. */
+  completeLead(id: string, reply: string): void {
     this.mutate(data => {
       const delivery = data.deliveries.find(d => d.id === id);
       if (!delivery || delivery.status !== "running") throw new Error("Lead delivery not running");
-      const conversation = data.conversations.find(c => c.id === delivery.conversationId)!;
       const lead = data.sessions.find(s => s.id === delivery.sessionId)!;
-      if (lead.role !== "lead") throw new Error("Only Lead may dispatch Peer messages");
+      const conversation = data.conversations.find(c => c.id === delivery.conversationId)!;
+      if (lead.role !== "lead") throw new Error("Only Lead may send Lead replies");
       delivery.status = "completed"; delivery.updatedAt = now();
       lead.status = "idle"; lead.updatedAt = now();
-      if (output.reply?.trim()) message(data, conversation.id, "lead", "user", output.reply.trim());
-      // Routing errors are tool results for Lead, not hidden decisions by Backend.
-      // Only the first identical error is delivered automatically to avoid
-      // infinite, costly retry loops when the model repeatedly chooses a bad ID.
-      const routingError = (detail: string) => {
-        message(data, conversation.id, "system", "user", detail);
-        const errorText = "Routing error: " + detail;
-        const previous = data.messages.some(m =>
-          m.conversationId === conversation.id && m.from === "system" &&
-          m.to === "lead" && m.text === errorText);
-        const info = message(data, conversation.id, "system", "lead", errorText);
-        if (!previous) deliver(data, conversation.id, conversation.leadSessionId, info.id);
-      };
-      for (const command of output.commands) {
-        if (command.type === "finish") {
-          conversation.status = "finished";
-          if (command.summary?.trim()) {
-            message(data, conversation.id, "lead", "user", command.summary.trim());
-          }
-          continue;
-        }
-        let peer: AgentSession | undefined;
-        if (command.type === "spawn_peer") {
-          if (!allowedModuleIds.includes(command.moduleId)) {
-            routingError("Lead chọn module không tồn tại: " + command.moduleId);
-            continue;
-          }
-          peer = {
-            id: randomUUID(), conversationId: conversation.id, role: "peer",
-            moduleId: command.moduleId, label: command.label?.trim().slice(0, 100) ||
-              "Peer " + command.moduleId,
-            status: "idle", createdAt: now(), updatedAt: now()
-          };
-          data.sessions.push(peer);
-        } else if (command.type === "send_peer") {
-          peer = data.sessions.find(s => s.id === command.sessionId &&
-            s.conversationId === conversation.id && s.role === "peer");
-          if (!peer) {
-            routingError("Lead gửi tin nhắn đến Peer session không tồn tại: " + command.sessionId);
-            continue;
-          }
-        }
-        if (!peer) continue;
-        const body = command.message?.trim();
-        if (!body) {
-          routingError("Lead gửi tin nhắn Peer trống");
-          continue;
-        }
-        const item = message(data, conversation.id, "lead", "peer", body, peer.id);
-        deliver(data, conversation.id, peer.id, item.id);
+      if (conversation.status === "active" && reply.trim()) {
+        message(data, conversation.id, "lead", "user", reply.trim().slice(0, 20000));
       }
       conversation.updatedAt = now();
     });
@@ -282,8 +250,8 @@ export class CoordinationStore extends EventEmitter {
       const item = message(data, conversation.id, "peer", "lead",
         result.trim() || "(Peer không trả về nội dung)", session.id);
       // Peer-to-Lead only; no Peer-to-Peer route exists.
-      deliver(data, conversation.id, conversation.leadSessionId, item.id);
-      conversation.status = "active"; conversation.updatedAt = now();
+      if (conversation.status === "active") wakeLead(data, conversation, item.id);
+      conversation.updatedAt = now();
     });
   }
   failDelivery(id: string, cause: string) {
@@ -295,10 +263,12 @@ export class CoordinationStore extends EventEmitter {
       delivery.status = "interrupted"; delivery.error = cause; delivery.updatedAt = now();
       session.status = "interrupted"; session.error = cause; session.updatedAt = now();
       const body = session.label + " gặp lỗi: " + cause;
-      message(data, conversation.id, "system", "user", body);
-      if (session.role === "peer") {
-        const item = message(data, conversation.id, "system", "lead", body, session.id);
-        deliver(data, conversation.id, conversation.leadSessionId, item.id);
+      if (conversation.status === "active") {
+        message(data, conversation.id, "system", "user", body);
+        if (session.role === "peer") {
+          const item = message(data, conversation.id, "system", "lead", body, session.id);
+          wakeLead(data, conversation, item.id);
+        }
       }
     });
   }

@@ -1,6 +1,5 @@
 import type { AgentSession, Delivery, Message, WorkspaceConfig } from "@aacc/contracts";
 import { CoordinationStore } from "./coordination-store.js";
-import { LeadProtocolError, parseLeadResponse } from "./lead-protocol.js";
 import type { AgentRuntime } from "./codex-runtime.js";
 
 function leadPrompt(config: WorkspaceConfig, store: CoordinationStore, delivery: Delivery): string {
@@ -12,27 +11,20 @@ function leadPrompt(config: WorkspaceConfig, store: CoordinationStore, delivery:
     sessionId: s.id, moduleId: s.moduleId, label: s.label, status: s.status, error: s.error
   }));
   return [
-    "Bạn là LEAD AGENT, người duy nhất điều phối các Peer sessions thay người dùng.",
-    "Bạn làm việc trong workspace riêng. Không tự sửa code; hãy giao Peer theo module.",
-    "Peer KHÔNG giao tiếp trực tiếp với nhau. Mọi thông tin, câu hỏi, blocker và kết quả đều qua bạn.",
-    "Bạn quyết định tạo bao nhiêu Peer, gửi bổ sung hay làm lại bao nhiêu lần, và khi nào hoàn thành.",
-    "Không có approval gate, acceptance gate, DAG hoặc Final Review bắt buộc từ app.",
-    "Nếu có các công cụ spawn_peer, send_peer, finish: GỌI TRỰC TIẾP CÔNG CỤ thay vì viết JSON hành động trong câu trả lời.",
-    "spawn_peer(moduleId,message,label?) tạo một Peer Thread mới. send_peer(sessionId,message) tiếp tục Peer cũ.",
-    "finish(summary?) kết thúc khi bạn tự quyết định. Không cần bắt buộc review hoặc duyệt.",
-    "Văn bản trả lời cuối chỉ để thông báo người dùng. Không nhúng lời gọi tool vào JSON trong văn bản.",
-    "Nếu app-server không cung cấp các công cụ trên (Lead Thread cũ), hãy trả lại MỘT JSON object với reply và commands.",
-    "Trong chế độ JSON legacy, mỗi command có keys type,moduleId,sessionId,message,label,summary (keys không dùng = null).",
-    JSON.stringify({
-      reply: "Tôi đang giao Peer Web thực hiện",
-      commands: [{ type: "spawn_peer", moduleId: "web", label: "README Web",
-        sessionId: null, summary: null,
-        message: "Đọc source module web và tạo README.md đúng với dự án" }]
-    }),
-    "Chỉ dùng moduleId và sessionId có thật trong REGISTRY. Có thể gửi nhiều hành động một lần.",
-    "Sau khi Peer hoàn thành, app tự gửi kết quả cho bạn trong cùng Lead Thread.",
-    "Không tự nhận file đã tạo thành công trước khi Peer báo kết quả; kiểm tra bằng chứng và tự quyết định.",
-    "Không cần gửi JSON kế hoạch, review checklist hoặc phán quyết pass/fail.",
+    "Bạn là LEAD AGENT, điều phối các Peer sessions thay người dùng.",
+    "Bạn ở workspace riêng, không sửa code; giao công việc cho Peer theo module.",
+    "Điều phối theo sự kiện: sau khi giao việc, kết thúc Codex turn của bạn ngay. Task vẫn active.",
+    "App tự gửi kết quả hoặc lỗi của Peer cho bạn bằng một event mới; không cần chờ hoặc hỏi Peer.",
+    "TUYỆT ĐỐI không gọi send_peer chỉ để hỏi trạng thái, nhắc tiến độ hoặc yêu cầu báo cáo.",
+    "Trạng thái Peer nằm trong PEER_SESSIONS. Peer running thì không can thiệp nếu không có thay đổi công việc thực sự.",
+    "Chỉ dùng send_peer để giao yêu cầu mới, sửa hoặc bổ sung công việc có nội dung cụ thể.",
+    "Dùng spawn_peer để mở Peer mới. Dùng finish(summary) CHỈ khi toàn bộ task thật sự hoàn thành.",
+    "Nếu còn Peer đang làm phần việc cần thiết, không gọi finish. Kết thúc turn và chờ event.",
+    "GỌI các công cụ spawn_peer, send_peer, finish trực tiếp để điều phối; không viết JSON điều phối trong reply.",
+    "Mỗi event có thể chứa nhiều kết quả Peer trong RECENT_CONVERSATION; xử lý những kết quả mới một lần.",
+    "Peer không trao đổi trực tiếp với Peer khác. Mọi yêu cầu phối hợp phải qua bạn.",
+    "Không tự tuyên bố test thành công nếu Peer chưa cung cấp bằng chứng.",
+    "Không có approval gate hoặc workflow quality gate của app.",
     config.lead.instructions,
     "MODULES: " + JSON.stringify(config.modules.map(m => ({ id: m.id, label: m.label, path: m.path }))),
     "PEER_SESSIONS: " + JSON.stringify(peers),
@@ -46,24 +38,23 @@ function peerPrompt(config: WorkspaceConfig, session: AgentSession, message: Mes
   return [
     "Bạn là Peer Agent trong module " + session.moduleId + ".",
     "Thực hiện yêu cầu từ Lead trực tiếp trong thư mục module hiện tại.",
-    "Có thể nhận nhiều lượt yêu cầu trong cùng Codex Thread; giữ ngữ cảnh session.",
-    "Mọi thông tin cần trao đổi với Agent khác phải báo lại Lead, KHÔNG giao tiếp Peer-to-Peer.",
-    "Trả kết quả dạng văn bản tự nhiên: công việc đã làm, file đã sửa, test thực tế và blocker.",
-    "Không được tự tuyên bố test passed nếu chưa thực sự chạy.",
-    "Nếu thiếu thông tin, đặt câu hỏi cho Lead thay vì tự giao việc cho Peer khác.",
+    "Có thể nhận yêu cầu bổ sung trong cùng Codex Thread sau khi kết thúc lượt trước.",
+    "Không trao đổi trực tiếp Peer-to-Peer; gửi kết quả, lỗi hoặc blocker về Lead.",
+    "Báo cáo việc đã làm, file đã sửa, test thực tế và blocker khi kết thúc turn.",
+    "Không tự tuyên bố test đạt nếu chưa chạy.",
     "WORKSPACE MODULE: " + config.modules.find(m => m.id === session.moduleId)?.path,
     "LEAD MESSAGE: " + message.text
   ].join("\n\n");
 }
 
-/** Scheduling is technical plumbing, not a workflow quality gate. */
+/** Queued event deliveries wake idle sessions; no Lead polling turn is scheduled. */
 export class Coordinator {
   private readonly active = new Set<string>();
   private scheduled = false;
   constructor(private readonly config: WorkspaceConfig, private readonly store: CoordinationStore,
     private readonly runtime: AgentRuntime, private readonly concurrency = 4) {
     store.on("change", () => this.schedule());
-    this.schedule(); // Queued but never-started deliveries are safe after restart.
+    this.schedule();
   }
   private schedule() {
     if (this.scheduled) return;
@@ -96,69 +87,26 @@ export class Coordinator {
       const prompt = session.role === "lead"
         ? leadPrompt(this.config, this.store, delivery)
         : peerPrompt(this.config, session, input);
-      let toolCalls = 0;
+      let finished = false;
       const hooks = {
         onThread: (threadId: string) => this.store.setThread(session.id, threadId),
         onTurn: (turnId: string) => this.store.setTurn(session.id, turnId),
-        onToolProtocol: (protocol: "dynamic" | "json") =>
-          this.store.setToolProtocol(session.id, protocol),
-        onLeadTool: (callId: string, command: import("@aacc/contracts").LeadCommand) =>
-          this.store.routeLeadTool(delivery.id, callId, command, this.config.modules.map(m => m.id)),
-        onToolUsed: () => { toolCalls++; }
+        onLeadTool: (callId: string, command: import("@aacc/contracts").LeadCommand) => {
+          const result = this.store.routeLeadTool(
+            delivery.id, callId, command, this.config.modules.map(m => m.id));
+          if (command.type === "finish") finished = true;
+          return result;
+        }
       };
-      let output = await this.runtime.run(session, cwd, prompt, hooks);
+      const output = await this.runtime.run(session, cwd, prompt, hooks);
       if (session.role === "lead") {
-        if (toolCalls > 0) {
-          // Tool calls were already committed idempotently. Never interpret a
-          // final JSON echo as a second set of actions.
-          let reply = output.trim();
-          try {
-            const parsed = parseLeadResponse(output);
-            reply = parsed.reply ?? "";
-          } catch (error) {
-            if (error instanceof LeadProtocolError) reply = "";
-            else throw error;
-          }
-          this.store.completeLead(delivery.id, { reply, commands: [] }, []);
-          return;
-        }
-        // Compatibility: older Lead threads without dynamicTools use outputSchema.
-        // Transport parse errors can be retried in the same Lead Thread once.
-        for (let attempt = 0; attempt < 2; attempt++) {
-          try {
-            const response = parseLeadResponse(output);
-            this.store.completeLead(delivery.id, response, this.config.modules.map(m => m.id));
-            break;
-          } catch (error) {
-            if (!(error instanceof LeadProtocolError)) throw error;
-            if (attempt === 1) {
-              throw new Error("Lead không gửi được lệnh điều phối: " + error.message +
-                ". Hãy nhắn Lead tiếp tục; chưa dispatch action từ lượt JSON lỗi.");
-            }
-            const latestSession = this.store.session(session.id)!;
-            output = await this.runtime.run(latestSession, cwd, [
-              "Lệnh điều phối trước không parse được. KHÔNG có action nào được dispatch từ JSON lỗi.",
-              "Nếu bạn có công cụ spawn_peer/send_peer/finish, hãy GỌI CÔNG CỤ trực tiếp.",
-              "Nếu không có, trả một JSON object hoàn chỉnh gồm reply và commands.",
-              "Không sao chép nguyên JSON lỗi vào reply. Ghi đúng dấu nháy JSON.",
-              "Lỗi parser: " + error.message,
-              "Thông điệp cũ: " + output.slice(0, 10000)
-            ].join("\n\n"), hooks);
-            if (toolCalls > 0) {
-              let reply = "";
-              try { reply = parseLeadResponse(output).reply ?? ""; }
-              catch { /* Tool dispatch is already committed; malformed echo is ignored. */ }
-              this.store.completeLead(delivery.id, { reply, commands: [] }, []);
-              break;
-            }
-          }
-        }
+        // finish(summary) already emitted the completion message during the tool call.
+        this.store.completeLead(delivery.id, finished ? "" : output);
       } else {
         this.store.completePeer(delivery.id, output);
       }
     } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      this.store.failDelivery(deliveryId, reason);
+      this.store.failDelivery(deliveryId, error instanceof Error ? error.message : String(error));
     }
   }
 }

@@ -17,12 +17,12 @@ export const leadDynamicTools = [
   },
   {
     name: "send_peer",
-    description: "Gửi tin nhắn tiếp theo vào đúng Codex Peer Thread đã có.",
+    description: "Giao yêu cầu mới hoặc sửa/bổ sung công việc trong Peer Thread. Không dùng để hỏi tiến độ khi Peer đang chạy.",
     inputSchema: {
       type: "object", additionalProperties: false,
       properties: {
         sessionId: { type: "string", description: "Peer session ID từ PEER_SESSIONS" },
-        message: { type: "string", description: "Lời nhắn hoặc yêu cầu tiếp tục" }
+        message: { type: "string", description: "Instruction mới, thay đổi phạm vi hoặc sửa kết quả; KHÔNG hỏi tiến độ" }
       },
       required: ["sessionId", "message"]
     }
@@ -72,28 +72,3 @@ export function commandFromTool(tool: unknown, args: unknown): LeadCommand {
   throw new Error("Unknown Lead tool: " + String(tool));
 }
 
-/** Used for old Lead threads without dynamic tools; JSON nesting is escaped by Codex outputSchema. */
-export const legacyLeadOutputSchema = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    reply: { type: "string" },
-    commands: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          type: { type: "string", enum: ["spawn_peer", "send_peer", "finish"] },
-          moduleId: { type: ["string", "null"] },
-          sessionId: { type: ["string", "null"] },
-          message: { type: ["string", "null"] },
-          label: { type: ["string", "null"] },
-          summary: { type: ["string", "null"] }
-        },
-        required: ["type", "moduleId", "sessionId", "message", "label", "summary"]
-      }
-    }
-  },
-  required: ["reply", "commands"]
-};

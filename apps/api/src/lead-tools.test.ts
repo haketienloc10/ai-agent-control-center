@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { commandFromTool, leadDynamicTools, legacyLeadOutputSchema } from "./lead-tools.js";
+import { commandFromTool, leadDynamicTools } from "./lead-tools.js";
 
 test("Dynamic tool schemas expose only Lead routing operations", () => {
   assert.deepEqual(leadDynamicTools.map(t => t.name), ["spawn_peer", "send_peer", "finish"]);
   assert.ok(leadDynamicTools.every(t => t.inputSchema.additionalProperties === false));
-  assert.equal(legacyLeadOutputSchema.properties.commands.type, "array");
 });
 test("Tool transport preserves nested API JSON without manual outer escaping", () => {
   const message = 'API contract: GET /api/todos → {"todos":[{"id":1,"completed":false}]}';
