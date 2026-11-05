@@ -31,12 +31,10 @@ export const leadDynamicTools = [
   },
   {
     name: "finish",
-    description: "Lead tự quyết định công việc hoàn tất; không có quality approval gate.",
+    description: "Đánh dấu toàn bộ task hoàn thành. Không truyền báo cáo vào tool; sau khi finish() thành công, trả lời người dùng bằng Codex finalText thông thường.",
     inputSchema: {
       type: "object", additionalProperties: false,
-      properties: {
-        summary: { type: "string", description: "Báo cáo kết quả cho người dùng" }
-      }
+      properties: {}
     }
   }
 ];
@@ -72,8 +70,8 @@ export function commandFromTool(tool: unknown, args: unknown): LeadCommand {
     };
   }
   if (tool === "finish") {
-    return { type: "finish", ...(typeof input.summary === "string"
-      ? { summary: input.summary.slice(0, 20000) } : {}) };
+    if (Object.keys(input).length) throw new Error("finish không nhận tham số; báo cáo cuối là Codex finalText");
+    return { type: "finish" };
   }
   throw new Error("Unknown Lead tool: " + String(tool));
 }

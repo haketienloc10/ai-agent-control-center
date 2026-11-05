@@ -60,7 +60,7 @@ Runtime truyền `model` trong `thread/start` và `model`/`effort` trong `turn/s
 2. Lead gọi các dynamic tools `spawn_peer` hoặc `send_peer` để giao việc thực sự rồi **kết thúc turn ngay**. Không chờ, không hỏi tiến độ. Task vẫn `active`.
 3. Peer chạy tại module `cwd`; khi turn hoàn thành hoặc lỗi, app lưu event và đánh thức Lead. Nếu đã có Lead delivery đang chờ, event mới được gom cùng lượt; Lead đọc `RECENT_CONVERSATION`.
 4. Lead xử lý event, giao thêm việc nếu cần hoặc kết thúc turn để chờ event mới. `send_peer` chỉ cho instruction mới, sửa/bổ sung việc, không phải status poll.
-5. Chỉ khi **toàn task** hoàn thành, Lead gọi `finish(summary)`. Lệnh này đánh dấu `finished` và phát một summary. Delivery chưa chạy chuyển sang `superseded`. Kết quả Peer đang chạy đến muộn vẫn được lưu nhưng không tự đánh thức Lead.
+5. Chỉ khi **toàn task** hoàn thành, Lead gọi `finish()` để đổi trạng thái sang `finished` (không nhận `summary`). Sau khi tool thành công, báo cáo cuối lấy từ Codex `finalText` và được lưu một lần. Nếu turn thành công nhưng `finalText` rỗng, app thông báo `Task đã hoàn thành.`; nếu turn lỗi sau finish, app hiển thị lỗi bằng system message. Delivery chưa chạy chuyển sang `superseded`; Peer trả kết quả muộn không đánh thức Lead.
 6. Chỉ một message mới từ người dùng mới mở lại conversation đã `finished`.
 
 ## Điều phối và giao thức

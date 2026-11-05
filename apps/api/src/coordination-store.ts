@@ -69,13 +69,12 @@ function wakeLead(data: Data, conversation: Conversation, messageId: string): vo
   if (!pending) deliver(data, conversation.id, conversation.leadSessionId, messageId);
 }
 
-function finishConversation(data: Data, conversation: Conversation, summary?: string): void {
+function finishConversation(data: Data, conversation: Conversation): void {
   if (conversation.status === "finished") throw new Error("Task đã hoàn thành");
   conversation.status = "finished";
   // Invalidate events from Peer turns started before this finish, even after user reopens.
   conversation.generation = (conversation.generation ?? 0) + 1;
   conversation.updatedAt = now();
-  if (summary?.trim()) message(data, conversation.id, "lead", "user", summary.trim());
   // Work not yet started must not execute after finish. Running Peer may still report,
   // but its report is recorded without waking Lead.
   for (const pending of data.deliveries) {
@@ -224,7 +223,7 @@ export class CoordinationStore extends EventEmitter {
       if (conversation.status !== "active") throw new Error("Task đã hoàn thành");
       let result: string;
       if (command.type === "finish") {
-        finishConversation(data, conversation, command.summary);
+        finishConversation(data, conversation);
         result = "Finished conversation " + conversation.id;
       } else {
         let peer: AgentSession | undefined;
@@ -271,7 +270,7 @@ export class CoordinationStore extends EventEmitter {
     });
   }
   /** End one Lead turn; task remains active unless finish was called explicitly. */
-  completeLead(id: string, reply: string): void {
+  completeLead(id: string, reply: string, finished = false): void {
     this.mutate(data => {
       const delivery = data.deliveries.find(d => d.id === id);
       if (!delivery || delivery.status !== "running") throw new Error("Lead delivery not running");
@@ -280,8 +279,11 @@ export class CoordinationStore extends EventEmitter {
       if (lead.role !== "lead") throw new Error("Only Lead may send Lead replies");
       delivery.status = "completed"; delivery.updatedAt = now();
       lead.status = "idle"; lead.updatedAt = now();
-      if (conversation.status === "active" && reply.trim()) {
-        message(data, conversation.id, "lead", "user", reply.trim().slice(0, 20000));
+      // A finished turn keeps its normal Codex finalText; an empty finalText gets one fallback.
+      // Other turns still cannot publish replies after the task was finished.
+      if (finished || conversation.status === "active") {
+        const body = reply.trim() || (finished ? "Task đã hoàn thành." : "");
+        if (body) message(data, conversation.id, "lead", "user", body.slice(0, 20000));
       }
       conversation.updatedAt = now();
     });
@@ -320,6 +322,10 @@ export class CoordinationStore extends EventEmitter {
           const item = message(data, conversation.id, "system", "lead", body, session.id);
           wakeLead(data, conversation, item.id);
         }
+      } else if (session.role === "lead" && conversation.status === "finished") {
+        // The finish tool succeeded, but the remaining Codex turn failed before finalText.
+        message(data, conversation.id, "system", "user",
+          "Task đã được đánh dấu hoàn thành nhưng Codex không tạo được báo cáo cuối. " + body);
       }
     });
   }

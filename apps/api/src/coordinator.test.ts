@@ -186,3 +186,31 @@ test("Coordinator uses current Lead defaults and frozen Peer selection without p
     ]);
   } finally { release?.(); store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+
+test("Failure after finish preserves finished state and reports missing finalText as an error", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aacc-finish-error-"));
+  const store = new CoordinationStore(dir);
+  const runtime: AgentRuntime = {
+    async run(session, _cwd, _prompt, hooks) {
+      assert.equal(session.role, "lead");
+      hooks.onThread(session.id + "-thread");
+      hooks.onTurn(session.id + "-turn");
+      await hooks.onLeadTool!("lead:finish", { type: "finish" });
+      throw new Error("Codex final response failed");
+    }
+  };
+  try {
+    new Coordinator(config, store, runtime);
+    const c = store.createConversation("Todo");
+    await until(() => store.session(c.leadSessionId)?.status === "interrupted");
+    assert.equal(store.conversation(c.id)?.status, "finished");
+    assert.equal(store.delivery(store.snapshot().deliveries[0].id)?.status, "interrupted");
+    const finalMessages = store.snapshot().messages.filter(m => m.to === "user");
+    assert.equal(finalMessages.length, 1);
+    assert.equal(finalMessages[0].from, "system");
+    assert.match(finalMessages[0].text, /Codex không tạo được báo cáo cuối/);
+    assert.match(finalMessages[0].text, /Codex final response failed/);
+    assert.equal(store.queued().length, 0);
+  } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
