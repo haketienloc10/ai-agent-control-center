@@ -15,8 +15,10 @@ sequenceDiagram
   Note over Lead: Không giữ turn để chờ Peer
   Peer-->>Store: turn/completed hoặc lỗi
   Store->>Lead: Peer event nếu task active
-  Lead->>Store: finish(summary) khi toàn task xong
-  Store-->>User: finished
+  Lead->>Store: finish() khi toàn task xong
+  Store-->>Lead: Tool success
+  Lead-->>Store: Codex finalText báo cáo cuối
+  Store-->>User: finished + báo cáo cuối
 ```
 
 ## Trách nhiệm
@@ -34,7 +36,7 @@ sequenceDiagram
 - Delivery: `queued | running | completed | interrupted | superseded`.
 - `completePeer()` ghi nhận kết quả và tạo tối đa một Lead wake-up đang pending. Nếu task `finished`, báo cáo muộn được lưu nhưng không đánh thức Lead.
 - `failDelivery()` thông báo lỗi Peer tới Lead chỉ khi task còn `active`.
-- `finish()` supersede các delivery chưa khởi chạy, không ép dừng Peer đang chạy. Người dùng mới có thể chủ động mở lại task.
+- `finish()` chỉ chuyển task sang `finished` và supersede delivery chưa chạy, không ép dừng Peer đang chạy. Codex `finalText` từ turn gọi finish được lưu làm báo cáo cuối (nếu rỗng có fallback). Nếu turn lỗi sau finish, app hiển thị system message. Người dùng mới có thể chủ động mở lại task.
 
 ## Dynamic tools
 

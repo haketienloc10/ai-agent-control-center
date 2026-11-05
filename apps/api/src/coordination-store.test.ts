@@ -71,15 +71,20 @@ test("finish supersedes queued Peer; late result is recorded but cannot wake Lea
     const peers = ctx.store.queued().filter(d => d.sessionId !== c.leadSessionId);
     ctx.store.startDelivery(peers[0].id);
     ctx.store.routeLeadTool(lead.id, "finish",
-      { type: "finish", summary: "Todo hoàn thành" }, ["api"]);
-    ctx.store.completeLead(lead.id, "Do not repeat completion");
+      { type: "finish" }, ["api"]);
+    assert.equal(ctx.store.snapshot().messages.filter(m => m.from === "lead" && m.to === "user").length, 0,
+      "finish() only changes task state");
+    assert.match(ctx.store.routeLeadTool(lead.id, "finish", { type: "finish" }, ["api"]),
+      /Already executed/);
+    ctx.store.completeLead(lead.id, "## Todo hoàn thành\n\n- **API:** CRUD", true);
     assert.equal(ctx.store.delivery(peers[1].id)?.status, "superseded");
     ctx.store.completePeer(peers[0].id, "Late API result");
     assert.equal(ctx.store.conversation(c.id)?.status, "finished");
     assert.equal(ctx.store.queued().length, 0);
-    assert.equal(ctx.store.snapshot().messages.filter(m => m.text === "Todo hoàn thành").length, 1);
+    assert.equal(ctx.store.snapshot().messages.filter(m =>
+      m.text === "## Todo hoàn thành\n\n- **API:** CRUD").length, 1);
     assert.ok(ctx.store.snapshot().messages.some(m => m.text === "Late API result"));
-    assert.ok(!ctx.store.snapshot().messages.some(m => m.text.includes("Do not repeat")));
+    assert.equal(ctx.store.snapshot().messages.filter(m => m.from === "lead" && m.to === "user").length, 1);
     ctx.store.postUser(c.id, "Cập nhật Todo");
     assert.equal(ctx.store.conversation(c.id)?.status, "active");
     assert.equal(ctx.store.queued().length, 1);
@@ -96,8 +101,8 @@ test("Old Peer completion after user reopens task cannot wake a second Lead turn
     }, ["web"]);
     const peer = ctx.store.queued()[0];
     ctx.store.startDelivery(peer.id);
-    ctx.store.routeLeadTool(lead.id, "finish", { type: "finish", summary: "Done" }, []);
-    ctx.store.completeLead(lead.id, "");
+    ctx.store.routeLeadTool(lead.id, "finish", { type: "finish" }, []);
+    ctx.store.completeLead(lead.id, "## Done", true);
     ctx.store.postUser(c.id, "New follow-up");
     const newLead = startLead(ctx.store, c.id);
     ctx.store.completePeer(peer.id, "Old result");
@@ -122,8 +127,9 @@ test("Peer errors wake Lead once; finish prevents further queued work", () => {
     ctx.store.failDelivery(peer.id, "Dependency error");
     assert.equal(ctx.store.queued().filter(d => d.sessionId === c.leadSessionId).length, 1);
     const wake = startLead(ctx.store, c.id);
-    ctx.store.routeLeadTool(wake.id, "finish", { type: "finish", summary: "Stopped" }, []);
-    ctx.store.completeLead(wake.id, "");
+    ctx.store.routeLeadTool(wake.id, "finish", { type: "finish" }, []);
+    ctx.store.completeLead(wake.id, "", true);
+    assert.equal(ctx.store.snapshot().messages.filter(m => m.text === "Task đã hoàn thành.").length, 1);
     assert.equal(ctx.store.conversation(c.id)?.status, "finished");
     assert.equal(ctx.store.queued().length, 0);
   } finally { ctx.cleanup(); }
@@ -232,8 +238,8 @@ test("App Settings validate transport and empty values inherit Codex without aff
     const peer = ctx.store.snapshot().sessions.find(s => s.role === "peer")!;
     assert.equal(peer.conversationId, c.id);
     assert.equal(peer.model, "custom-model");
-    ctx.store.routeLeadTool(lead.id, "finish", { type: "finish", summary: "Done" }, []);
-    ctx.store.completeLead(lead.id, "");
+    ctx.store.routeLeadTool(lead.id, "finish", { type: "finish" }, []);
+    ctx.store.completeLead(lead.id, "## Done", true);
     assert.equal(ctx.store.conversation(c.id)?.status, "finished");
     assert.equal(ctx.store.queued().length, 0, "PR13 superseded queued deliveries after finish");
   } finally { ctx.cleanup(); }

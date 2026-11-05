@@ -18,7 +18,8 @@ function leadPrompt(config: WorkspaceConfig, store: CoordinationStore, delivery:
     "TUYỆT ĐỐI không gọi send_peer chỉ để hỏi trạng thái, nhắc tiến độ hoặc yêu cầu báo cáo.",
     "Trạng thái Peer nằm trong PEER_SESSIONS. Peer running thì không can thiệp nếu không có thay đổi công việc thực sự.",
     "Chỉ dùng send_peer để giao yêu cầu mới, sửa hoặc bổ sung công việc có nội dung cụ thể.",
-    "Dùng spawn_peer để mở Peer mới. Dùng finish(summary) CHỈ khi toàn bộ task thật sự hoàn thành.",
+    "Dùng spawn_peer để mở Peer mới. Dùng finish() CHỈ khi toàn bộ task thật sự hoàn thành.",
+    "Sau khi finish() thành công, gửi báo cáo cuối bằng Codex finalText thông thường; không truyền báo cáo vào tool.",
     "Nếu còn Peer đang làm phần việc cần thiết, không gọi finish. Kết thúc turn và chờ event.",
     "GỌI các công cụ spawn_peer, send_peer, finish trực tiếp để điều phối; không viết JSON điều phối trong reply.",
     "Mỗi event có thể chứa nhiều kết quả Peer trong RECENT_CONVERSATION; xử lý những kết quả mới một lần.",
@@ -106,8 +107,8 @@ export class Coordinator {
         : { model: session.model, effort: session.effort };
       const output = await this.runtime.run(session, cwd, prompt, hooks, selection);
       if (session.role === "lead") {
-        // finish(summary) already emitted the completion message during the tool call.
-        this.store.completeLead(delivery.id, finished ? "" : output);
+        // finish() only updates task state; the final Codex response is persisted once.
+        this.store.completeLead(delivery.id, output, finished);
       } else {
         this.store.completePeer(delivery.id, output);
       }

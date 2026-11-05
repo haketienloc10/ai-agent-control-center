@@ -52,4 +52,4 @@ export type LeadCommand =
   | { type: "spawn_peer"; moduleId: string; message: string; label?: string;
       model?: string; effort?: string }
   | { type: "send_peer"; sessionId: string; message: string }
-  | { type: "finish"; summary?: string };
+  | { type: "finish" };

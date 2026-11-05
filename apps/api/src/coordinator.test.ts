@@ -39,8 +39,8 @@ test("Lead returns to idle after dispatch; only Peer completion starts another L
           return "Đã giao Web";
         }
         assert.match(prompt, /Todo UI done/);
-        await hooks.onLeadTool!("lead:finish", { type: "finish", summary: "Todo hoàn thành" });
-        return "Duplicate finish text";
+        await hooks.onLeadTool!("lead:finish", { type: "finish" });
+        return "## Todo hoàn thành\n\n- **Web:** đã kiểm thử";
       }
       peerTurns++;
       assert.equal(cwd, "/tmp/module-web");
@@ -59,8 +59,11 @@ test("Lead returns to idle after dispatch; only Peer completion starts another L
     await until(() => store.conversation(c.id)?.status === "finished" &&
       store.session(c.leadSessionId)?.status === "idle");
     assert.equal(leadTurns, 2);
-    assert.equal(store.snapshot().messages.filter(m => m.text === "Todo hoàn thành").length, 1);
-    assert.ok(!store.snapshot().messages.some(m => m.text === "Duplicate finish text"));
+    const finals = store.snapshot().messages.filter(m => m.from === "lead" &&
+      m.to === "user" && m.text.startsWith("## Todo hoàn thành"));
+    assert.equal(finals.length, 1);
+    assert.equal(finals[0].text, "## Todo hoàn thành\n\n- **Web:** đã kiểm thử");
+    assert.equal(store.snapshot().messages.filter(m => m.text === "Task đã hoàn thành.").length, 0);
   } finally { release?.(); store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 test("Peer error emits an event; does not create polling loop", async () => {
@@ -161,7 +164,7 @@ test("Coordinator uses current Lead defaults and frozen Peer selection without p
         return "Dispatched";
       }
       assert.match(prompt, /Peer completed/);
-      await hooks.onLeadTool!("lead:finish", { type: "finish", summary: "Done" });
+      await hooks.onLeadTool!("lead:finish", { type: "finish" });
       return "";
     }
   };
@@ -184,5 +187,34 @@ test("Coordinator uses current Lead defaults and frozen Peer selection without p
       { role: "peer", model: "peer-override", effort: "medium" },
       { role: "lead", model: "lead-b", effort: "low" }
     ]);
+    assert.equal(store.snapshot().messages.filter(m => m.text === "Task đã hoàn thành.").length, 1);
   } finally { release?.(); store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+
+test("Failure after finish preserves finished state and reports missing finalText as an error", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aacc-finish-error-"));
+  const store = new CoordinationStore(dir);
+  const runtime: AgentRuntime = {
+    async run(session, _cwd, _prompt, hooks) {
+      assert.equal(session.role, "lead");
+      hooks.onThread(session.id + "-thread");
+      hooks.onTurn(session.id + "-turn");
+      await hooks.onLeadTool!("lead:finish", { type: "finish" });
+      throw new Error("Codex final response failed");
+    }
+  };
+  try {
+    new Coordinator(config, store, runtime);
+    const c = store.createConversation("Todo");
+    await until(() => store.session(c.leadSessionId)?.status === "interrupted");
+    assert.equal(store.conversation(c.id)?.status, "finished");
+    assert.equal(store.delivery(store.snapshot().deliveries[0].id)?.status, "interrupted");
+    const finalMessages = store.snapshot().messages.filter(m => m.to === "user");
+    assert.equal(finalMessages.length, 1);
+    assert.equal(finalMessages[0].from, "system");
+    assert.match(finalMessages[0].text, /Codex không tạo được báo cáo cuối/);
+    assert.match(finalMessages[0].text, /Codex final response failed/);
+    assert.equal(store.queued().length, 0);
+  } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 });

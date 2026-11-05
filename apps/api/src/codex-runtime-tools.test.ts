@@ -26,7 +26,7 @@ const code = [
   'threadId:m.params.threadId,turnId:id,callId:"call-"+n,',
   'tool:n===1?"spawn_peer":"finish",arguments:n===1?',
   '{moduleId:"web",message:"GET /api/todos returns "+JSON.stringify({todos:[{id:1}]})}:',
-  '{summary:"Todo completed"}}});}',
+  '{} }});}',
   'if(typeof m.id==="number"&&m.id>900&&m.result){',
   'if(!m.result.success){process.exit(2);}',
   'const n=m.id-900;const id="turn-"+n;',
@@ -62,7 +62,7 @@ test("Dynamic tools dispatch nested JSON and resume the same Lead thread", async
     if (commands[0]?.type === "spawn_peer") {
       assert.match(commands[0].message, /\{"todos":\[\{"id":1\}\]\}/);
     }
-    assert.deepEqual(commands[1], { type: "finish", summary: "Todo completed" });
+    assert.deepEqual(commands[1], { type: "finish" });
   } finally { client.stop(); }
 });
 test("Unsupported dynamicTools fails, never falls back to JSON routing", async () => {
