@@ -4,7 +4,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type {
-  AgentSession, Conversation, Delivery, LeadCommand, LeadResponse, Message, MessageAuthor, Snapshot
+  AgentSession, Conversation, Delivery, LeadCommand, Message, MessageAuthor, Snapshot
 } from "@aacc/contracts";
 
 type Data = Omit<Snapshot, "modules">;

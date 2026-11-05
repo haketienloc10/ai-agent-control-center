@@ -5,91 +5,82 @@ import { CodexClient } from "./codex-client.js";
 import { CodexAgentRuntime } from "./codex-runtime.js";
 
 const code = [
-  'process.stdin.setEncoding("utf8");let buf="";',
+  'process.stdin.setEncoding("utf8");let buf="";let seq=0;',
   'const send=m=>console.log(JSON.stringify(m));',
-  'const complete=(threadId,id,text)=>{',
-  'send({method:"item/completed",params:{threadId,item:{type:"agentMessage",text}}});',
-  'send({method:"turn/completed",params:{threadId,turn:{id,status:"completed"}}});};',
   'process.stdin.on("data",chunk=>{buf+=chunk;let at;',
   'while((at=buf.indexOf(String.fromCharCode(10)))>=0){',
   'const line=buf.slice(0,at);buf=buf.slice(at+1);if(!line)continue;',
   'const m=JSON.parse(line);',
   'if(m.method==="initialize"){',
-  'if(m.params?.capabilities?.experimentalApi!==true){',
-  'send({id:m.id,error:{code:-32602,message:"Missing experimentalApi"}});}else send({id:m.id,result:{}});}',
+  'if(m.params?.capabilities?.experimentalApi!==true)send({id:m.id,error:{code:-32602,message:"Missing experimentalApi"}});',
+  'else send({id:m.id,result:{}});}',
   'if(m.method==="thread/start"){',
-  'if(!m.params.dynamicTools || m.params.dynamicTools.length!==3){',
-  'send({id:m.id,error:{code:-32602,message:"Missing dynamicTools"}});}else ',
-  'send({id:m.id,result:{thread:{id:"new-lead-thread"}}});}',
+  'if(!m.params.dynamicTools || m.params.dynamicTools.length!==3)',
+  'send({id:m.id,error:{code:-32602,message:"Missing dynamicTools"}});',
+  'else send({id:m.id,result:{thread:{id:"lead-thread"}}});}',
   'if(m.method==="thread/resume")send({id:m.id,result:{thread:{id:m.params.threadId}}});',
   'if(m.method==="turn/start"){',
-  'send({id:m.id,result:{turn:{id:"turn-1",status:"inProgress"}}});',
-  'if(m.params.threadId==="new-lead-thread"){',
-  'send({method:"item/tool/call",id:900,params:{',
-  'threadId:"new-lead-thread",turnId:"turn-1",callId:"call-1",tool:"spawn_peer",',
-  'arguments:{moduleId:"web",label:"Todo Web",',
-  'message:"GET /api/todos responds "+JSON.stringify({todos:[{id:1}]})}',
-  '}});',
-  '}else{',
-  'if(!m.params.outputSchema){',
-  'send({method:"turn/completed",params:{threadId:m.params.threadId,turn:{id:"turn-1",status:"failed"}}});',
-  '}else{complete(m.params.threadId,"turn-1",JSON.stringify({',
-  'reply:"Legacy Lead can send JSON",commands:[{type:"finish",moduleId:null,',
-  'sessionId:null,message:null,label:null,summary:"Done"}]}));}',
-  '}}',
-  'if(m.id===900&&m.result){',
+  'const n=++seq;const id="turn-"+n;',
+  'send({id:m.id,result:{turn:{id,status:"inProgress"}}});',
+  'send({method:"item/tool/call",id:900+n,params:{',
+  'threadId:m.params.threadId,turnId:id,callId:"call-"+n,',
+  'tool:n===1?"spawn_peer":"finish",arguments:n===1?',
+  '{moduleId:"web",message:"GET /api/todos returns "+JSON.stringify({todos:[{id:1}]})}:',
+  '{summary:"Todo completed"}}});}',
+  'if(typeof m.id==="number"&&m.id>900&&m.result){',
   'if(!m.result.success){process.exit(2);}',
-  'complete("new-lead-thread","turn-1","Đã gọi công cụ tạo Peer Web");',
-  '}',
+  'const n=m.id-900;const id="turn-"+n;',
+  'send({method:"item/completed",params:{threadId:"lead-thread",turnId:id,',
+  'item:{type:"agentMessage",text:"Turn "+n+" done"}}});',
+  'send({method:"turn/completed",params:{threadId:"lead-thread",turn:{id,status:"completed"}}});',
   '}});'
 ].join("");
-
 const now = "2026-11-04T00:00:00Z";
-function lead(threadId?: string): AgentSession {
+function lead(): AgentSession {
   return { id: "lead", conversationId: "c1", role: "lead", label: "Lead",
-    status: "idle", ...(threadId ? { threadId } : {}),
-    createdAt: now, updatedAt: now };
+    status: "idle", createdAt: now, updatedAt: now };
 }
-
-test("Codex app-server dynamicTools dispatches actual tool call with nested API JSON", async () => {
+test("Dynamic tools dispatch nested JSON and resume the same Lead thread", async () => {
   const client = new CodexClient(process.execPath, ["-e", code]);
   const runtime = new CodexAgentRuntime(client);
-  let called = 0;
-  let protocol = "";
   const session = lead();
+  const commands: LeadCommand[] = [];
   try {
-    const output = await runtime.run(session, "/workspace", "Hãy triển khai Todo Web", {
-      onThread: id => { session.threadId = id; },
-      onTurn: id => { session.turnId = id; },
-      onToolProtocol: p => { protocol = p; },
-      onToolUsed: () => { called++; },
-      onLeadTool: async (id, command: LeadCommand) => {
-        assert.equal(id, "new-lead-thread:call-1");
-        assert.equal(command.type, "spawn_peer");
-        if (command.type === "spawn_peer") {
-          assert.equal(command.moduleId, "web");
-          assert.match(command.message, /\{"todos":\[\{"id":1\}\]\}/);
-        }
-        return "Created Peer Web";
+    const hooks = {
+      onThread: (id: string) => { session.threadId = id; },
+      onTurn: (id: string) => { session.turnId = id; },
+      onLeadTool: (id: string, command: LeadCommand) => {
+        assert.match(id, /^lead-thread:call-[12]$/);
+        commands.push(command);
+        return "Tool accepted";
       }
-    });
-    assert.equal(protocol, "dynamic");
-    assert.equal(called, 1);
-    assert.equal(output, "Đã gọi công cụ tạo Peer Web");
+    };
+    assert.equal(await runtime.run(session, "/workspace", "Create Web", hooks), "Turn 1 done");
+    assert.equal(await runtime.run(session, "/workspace", "Finish", hooks), "Turn 2 done");
+    assert.equal(session.threadId, "lead-thread");
+    assert.equal(commands[0]?.type, "spawn_peer");
+    if (commands[0]?.type === "spawn_peer") {
+      assert.match(commands[0].message, /\{"todos":\[\{"id":1\}\]\}/);
+    }
+    assert.deepEqual(commands[1], { type: "finish", summary: "Todo completed" });
   } finally { client.stop(); }
 });
-
-test("Existing Lead Thread keeps context and requests outputSchema instead of retrofitting tools", async () => {
-  const client = new CodexClient(process.execPath, ["-e", code]);
-  const runtime = new CodexAgentRuntime(client);
-  const session = lead("old-lead-thread");
+test("Unsupported dynamicTools fails, never falls back to JSON routing", async () => {
+  const server = [
+    'process.stdin.setEncoding("utf8");let b="";',
+    'process.stdin.on("data",c=>{b+=c;let i;',
+    'while((i=b.indexOf(String.fromCharCode(10)))>=0){',
+    'const s=b.slice(0,i);b=b.slice(i+1);if(!s)continue;',
+    'const m=JSON.parse(s);',
+    'if(m.method==="initialize")console.log(JSON.stringify({id:m.id,result:{}}));',
+    'if(m.method==="thread/start")console.log(JSON.stringify({id:m.id,',
+    'error:{code:-32602,message:"dynamicTools not supported"}}));',
+    '}});'
+  ].join("");
+  const client = new CodexClient(process.execPath, ["-e", server]);
   try {
-    const output = await runtime.run(session, "/workspace", "Tiếp tục Todo", {
-      onThread: id => assert.equal(id, "old-lead-thread"),
-      onTurn: () => {}
-    });
-    const parsed = JSON.parse(output) as { reply: string; commands: Array<{ type: string }> };
-    assert.equal(parsed.reply, "Legacy Lead can send JSON");
-    assert.equal(parsed.commands[0].type, "finish");
+    await assert.rejects(new CodexAgentRuntime(client).run(lead(), "/workspace", "Dispatch", {
+      onThread: () => {}, onTurn: () => {}
+    }), /dynamicTools not supported/);
   } finally { client.stop(); }
 });
