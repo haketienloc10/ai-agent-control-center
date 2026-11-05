@@ -164,3 +164,77 @@ test("Unknown module and foreign session are rejected before dispatch", () => {
     assert.equal(ctx.store.queued().filter(d => d.conversationId === a.id).length, 0);
   } finally { ctx.cleanup(); }
 });
+
+
+test("App Settings persist; spawn override and defaults are frozen on Peer sessions", () => {
+  const ctx = fixture();
+  try {
+    assert.deepEqual(ctx.store.snapshot().settings, { lead: {}, peer: {} });
+    ctx.store.updateSettings({
+      lead: { model: "lead-model", effort: "high" },
+      peer: { model: "peer-default", effort: "medium" }
+    });
+    const c = ctx.store.createConversation("Todo");
+    const delivery = ctx.store.queued()[0];
+    ctx.store.startDelivery(delivery.id);
+    ctx.store.routeLeadTool(delivery.id, "spawn-1", {
+      type: "spawn_peer", moduleId: "web", message: "UI",
+      model: "peer-special", effort: "xhigh"
+    }, ["web"]);
+    ctx.store.routeLeadTool(delivery.id, "spawn-2", {
+      type: "spawn_peer", moduleId: "web", message: "Tests", effort: "low"
+    }, ["web"]);
+    const peers = ctx.store.snapshot().sessions.filter(s => s.role === "peer");
+    assert.deepEqual(peers.map(s => [s.model, s.effort]), [
+      ["peer-special", "xhigh"], ["peer-default", "low"]
+    ]);
+    ctx.store.updateSettings({
+      lead: { model: "lead-new", effort: "low" },
+      peer: { model: "peer-new", effort: "high" }
+    });
+    assert.deepEqual(ctx.store.snapshot().sessions.filter(s => s.role === "peer")
+      .map(s => [s.model, s.effort]), [
+      ["peer-special", "xhigh"], ["peer-default", "low"]
+    ]);
+    ctx.store.routeLeadTool(delivery.id, "spawn-3", {
+      type: "spawn_peer", moduleId: "web", message: "Docs"
+    }, ["web"]);
+    const latest = ctx.store.snapshot().sessions.filter(s => s.role === "peer").at(-1)!;
+    assert.deepEqual([latest.model, latest.effort], ["peer-new", "high"]);
+    assert.equal(latest.conversationId, c.id);
+    ctx.reopen();
+    assert.deepEqual(ctx.store.settings(), {
+      lead: { model: "lead-new", effort: "low" },
+      peer: { model: "peer-new", effort: "high" }
+    });
+    assert.deepEqual([ctx.store.session(peers[0].id)?.model, ctx.store.session(peers[0].id)?.effort],
+      ["peer-special", "xhigh"]);
+    assert.equal(ctx.store.session(latest.id)?.model, "peer-new");
+  } finally { ctx.cleanup(); }
+});
+
+test("App Settings validate transport and empty values inherit Codex without affecting PR13 lifecycle", () => {
+  const ctx = fixture();
+  try {
+    ctx.store.updateSettings({ lead: { model: "", effort: "" }, peer: {} });
+    assert.deepEqual(ctx.store.settings(), { lead: {}, peer: {} });
+    assert.throws(() => ctx.store.updateSettings({ lead: { model: " bad model" }, peer: {} }),
+      /model không hợp lệ/);
+    assert.throws(() => ctx.store.updateSettings({ lead: {}, peer: { effort: 123 } }),
+      /effort không hợp lệ/);
+    assert.deepEqual(ctx.store.settings(), { lead: {}, peer: {} });
+    const c = ctx.store.createConversation("Todo");
+    const lead = ctx.store.queued()[0];
+    ctx.store.startDelivery(lead.id);
+    ctx.store.routeLeadTool(lead.id, "override", {
+      type: "spawn_peer", moduleId: "web", message: "Work", model: "custom-model", effort: "high"
+    }, ["web"]);
+    const peer = ctx.store.snapshot().sessions.find(s => s.role === "peer")!;
+    assert.equal(peer.conversationId, c.id);
+    assert.equal(peer.model, "custom-model");
+    ctx.store.routeLeadTool(lead.id, "finish", { type: "finish", summary: "Done" }, []);
+    ctx.store.completeLead(lead.id, "");
+    assert.equal(ctx.store.conversation(c.id)?.status, "finished");
+    assert.equal(ctx.store.queued().length, 0, "PR13 superseded queued deliveries after finish");
+  } finally { ctx.cleanup(); }
+});

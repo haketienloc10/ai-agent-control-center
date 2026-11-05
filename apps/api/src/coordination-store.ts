@@ -4,11 +4,38 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type {
-  AgentSession, Conversation, Delivery, LeadCommand, Message, MessageAuthor, Snapshot
+  AgentSession, AppSettings, Conversation, Delivery, LeadCommand, Message, MessageAuthor, ModelSelection, Snapshot
 } from "@aacc/contracts";
 
 type Data = Omit<Snapshot, "modules">;
 const now = () => new Date().toISOString();
+const emptySettings = (): AppSettings => ({ lead: {}, peer: {} });
+/** Validate transport values; Codex decides whether a model supports the selection. */
+export function normalizeSelection(value: unknown): ModelSelection {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Model selection phải là object");
+  }
+  const input = value as Record<string, unknown>;
+  const selection: ModelSelection = {};
+  for (const key of ["model", "effort"] as const) {
+    const item = input[key];
+    if (item === undefined || item === null || item === "") continue;
+    const limit = key === "model" ? 128 : 32;
+    if (typeof item !== "string" || item.length > limit ||
+      !/^[a-zA-Z0-9][a-zA-Z0-9._+:/-]*$/.test(item)) {
+      throw new Error(key + " không hợp lệ");
+    }
+    selection[key] = item;
+  }
+  return selection;
+}
+export function normalizeSettings(value: unknown): AppSettings {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("App Settings phải là object");
+  }
+  const input = value as Record<string, unknown>;
+  return { lead: normalizeSelection(input.lead), peer: normalizeSelection(input.peer) };
+}
 const text = (value: unknown, label: string, limit = 20000): string => {
   if (typeof value !== "string" || !value.trim() || value.length > limit) {
     throw new Error(label + " phải là chuỗi không rỗng, tối đa " + limit + " ký tự");
@@ -71,7 +98,9 @@ export class CoordinationStore extends EventEmitter {
     this.db.exec("PRAGMA journal_mode = WAL; CREATE TABLE IF NOT EXISTS snapshot (id INTEGER PRIMARY KEY CHECK(id = 1), body TEXT NOT NULL);");
     const row = this.db.prepare("SELECT body FROM snapshot WHERE id = 1").get() as { body: string } | undefined;
     this.state = row ? JSON.parse(row.body) as Data
-      : { conversations: [], sessions: [], messages: [], deliveries: [] };
+      : { conversations: [], sessions: [], messages: [], deliveries: [], settings: emptySettings() };
+    const missingSettings = !this.state.settings;
+    this.state.settings ??= emptySettings();
     // Never replay turns already started before a crash. Queued deliveries were not started.
     let changed = false;
     for (const delivery of this.state.deliveries) {
@@ -89,7 +118,7 @@ export class CoordinationStore extends EventEmitter {
         changed = true;
       }
     }
-    if (changed) this.persist();
+    if (changed || missingSettings) this.persist();
   }
   private persist() {
     this.db.prepare("INSERT INTO snapshot(id,body) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body")
@@ -105,6 +134,14 @@ export class CoordinationStore extends EventEmitter {
     return result;
   }
   snapshot(): Data { return structuredClone(this.state); }
+  settings(): AppSettings { return structuredClone(this.state.settings); }
+  updateSettings(input: unknown): AppSettings {
+    const settings = normalizeSettings(input);
+    return this.mutate(data => {
+      data.settings = settings;
+      return structuredClone(settings);
+    });
+  }
   session(id: string): AgentSession | undefined {
     const value = this.state.sessions.find(s => s.id === id);
     return value && structuredClone(value);
@@ -199,6 +236,10 @@ export class CoordinationStore extends EventEmitter {
             id: randomUUID(), conversationId: conversation.id, role: "peer",
             moduleId: command.moduleId, label: command.label?.trim().slice(0, 100) ||
               "Peer " + command.moduleId, status: "idle",
+            ...normalizeSelection({
+              model: command.model ?? data.settings.peer.model,
+              effort: command.effort ?? data.settings.peer.effort
+            }),
             createdAt: now(), updatedAt: now()
           };
           data.sessions.push(peer);

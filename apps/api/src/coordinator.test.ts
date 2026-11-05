@@ -129,3 +129,60 @@ test("Two Peers run concurrently; Lead stays idle until event", async () => {
     assert.equal(store.snapshot().sessions.filter(s => s.role === "peer").length, 2);
   } finally { release?.(); store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+
+test("Coordinator uses current Lead defaults and frozen Peer selection without polling", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aacc-model-events-"));
+  const store = new CoordinationStore(dir);
+  store.updateSettings({
+    lead: { model: "lead-a", effort: "high" },
+    peer: { model: "peer-a", effort: "medium" }
+  });
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let peerRunning = 0;
+  const captured: Array<{ role: string; model?: string; effort?: string }> = [];
+  const runtime: AgentRuntime = {
+    async run(session, _cwd, prompt, hooks, selection) {
+      hooks.onThread(session.threadId ?? session.id + "-thread");
+      hooks.onTurn(session.id + "-turn");
+      captured.push({ role: session.role, model: selection?.model, effort: selection?.effort });
+      if (session.role === "peer") {
+        peerRunning++;
+        await gate;
+        return "Peer completed";
+      }
+      if (captured.filter(c => c.role === "lead").length === 1) {
+        assert.match(prompt, /không gọi send_peer chỉ để hỏi trạng thái/);
+        await hooks.onLeadTool!("lead:spawn", {
+          type: "spawn_peer", moduleId: "web", message: "Build Todo",
+          model: "peer-override"
+        });
+        return "Dispatched";
+      }
+      assert.match(prompt, /Peer completed/);
+      await hooks.onLeadTool!("lead:finish", { type: "finish", summary: "Done" });
+      return "";
+    }
+  };
+  try {
+    new Coordinator(config, store, runtime);
+    const conversation = store.createConversation("Todo settings");
+    await until(() => peerRunning === 1 &&
+      store.session(conversation.leadSessionId)?.status === "idle");
+    assert.equal(captured.length, 2, "Lead does not poll while Peer runs");
+    store.updateSettings({
+      lead: { model: "lead-b", effort: "low" },
+      peer: { model: "peer-b", effort: "xhigh" }
+    });
+    assert.equal(captured.length, 2, "Settings change is not a Lead wake-up");
+    release();
+    await until(() => store.conversation(conversation.id)?.status === "finished" &&
+      store.session(conversation.leadSessionId)?.status === "idle");
+    assert.deepEqual(captured, [
+      { role: "lead", model: "lead-a", effort: "high" },
+      { role: "peer", model: "peer-override", effort: "medium" },
+      { role: "lead", model: "lead-b", effort: "low" }
+    ]);
+  } finally { release?.(); store.close(); rmSync(dir, { recursive: true, force: true }); }
+});

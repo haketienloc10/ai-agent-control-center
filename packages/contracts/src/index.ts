@@ -4,6 +4,14 @@ export interface WorkspaceConfig {
   lead: { cwd: string; instructions: string };
   modules: ModuleConfig[];
 }
+/** Giá trị bỏ trống sẽ kế thừa cấu hình Codex. */
+export interface ModelSelection { model?: string; effort?: string; }
+export interface AppSettings { lead: ModelSelection; peer: ModelSelection; }
+export interface CodexModelOption {
+  id: string; displayName: string;
+  defaultReasoningEffort?: string;
+  supportedReasoningEfforts: string[];
+}
 export type AgentRole = "lead" | "peer";
 export type SessionStatus = "idle" | "running" | "interrupted";
 export interface Conversation {
@@ -14,6 +22,8 @@ export interface AgentSession {
   id: string; conversationId: string; role: AgentRole;
   moduleId?: string; label: string; threadId?: string; turnId?: string;
   status: SessionStatus; error?: string;
+  /** Peer model/effort đóng băng khi spawn. */
+  model?: string; effort?: string;
   // Deduplicate app-server tool call replay after reconnect/crash.
   handledToolCalls?: string[];
   createdAt: string; updatedAt: string;
@@ -36,8 +46,10 @@ export interface Snapshot {
   sessions: AgentSession[];
   messages: Message[];
   deliveries: Delivery[];
+  settings: AppSettings;
 }
 export type LeadCommand =
-  | { type: "spawn_peer"; moduleId: string; message: string; label?: string }
+  | { type: "spawn_peer"; moduleId: string; message: string; label?: string;
+      model?: string; effort?: string }
   | { type: "send_peer"; sessionId: string; message: string }
   | { type: "finish"; summary?: string };

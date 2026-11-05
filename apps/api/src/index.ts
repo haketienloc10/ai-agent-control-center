@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { loadWorkspaceConfig } from "./config.js";
 import { CoordinationStore } from "./coordination-store.js";
 import { CodexClient } from "./codex-client.js";
+import { modelCatalog } from "./model-catalog.js";
 import { CodexAgentRuntime } from "./codex-runtime.js";
 import { Coordinator } from "./coordinator.js";
 import { SingleInstanceLock } from "./single-instance.js";
@@ -44,6 +45,17 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === "GET" && url.pathname === "/api/snapshot") {
       json(res, 200, { modules: config.modules, ...store.snapshot() }); return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/models") {
+      try { json(res, 200, { models: await modelCatalog(codex) }); }
+      catch (error) {
+        json(res, 503, { error: "Không tải được model/list từ Codex: " +
+          (error instanceof Error ? error.message : String(error)) });
+      }
+      return;
+    }
+    if (req.method === "PUT" && url.pathname === "/api/settings") {
+      json(res, 200, store.updateSettings(await readJson(req))); return;
     }
     if (req.method === "GET" && url.pathname === "/api/events") {
       res.writeHead(200, {
