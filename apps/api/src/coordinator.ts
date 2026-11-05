@@ -3,10 +3,8 @@ import { CoordinationStore } from "./coordination-store.js";
 import type { AgentRuntime } from "./codex-runtime.js";
 
 function leadPrompt(config: WorkspaceConfig, store: CoordinationStore, delivery: Delivery): string {
-  const state = store.snapshot();
   const events = store.leadInputs(delivery.id);
-  const peers = state.sessions.filter(s => s.conversationId === delivery.conversationId &&
-    s.role === "peer").map(s => ({
+  const peers = store.peerSessions(delivery.conversationId).map(s => ({
     sessionId: s.id, moduleId: s.moduleId, label: s.label, status: s.status, error: s.error
   }));
   return [

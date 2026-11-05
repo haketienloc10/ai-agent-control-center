@@ -174,6 +174,11 @@ export class CoordinationStore extends EventEmitter {
     const value = this.state.sessions.find(s => s.id === id);
     return value && structuredClone(value);
   }
+  /** Read only Peer session metadata; never load App messages into Lead prompt construction. */
+  peerSessions(conversationId: string): AgentSession[] {
+    return this.state.sessions.filter(s => s.conversationId === conversationId &&
+      s.role === "peer").map(s => structuredClone(s));
+  }
   queued(): Delivery[] { return this.state.deliveries.filter(d => d.status === "queued").map(d => ({ ...d })); }
   delivery(id: string): Delivery | undefined {
     const found = this.state.deliveries.find(d => d.id === id);
@@ -192,8 +197,11 @@ export class CoordinationStore extends EventEmitter {
       throw new Error("Not a Lead delivery");
     }
     const ids = delivery.eventMessageIds ?? [delivery.messageId];
+    const requested = new Set(ids);
+    const byId = new Map(this.state.messages.filter(m => requested.has(m.id))
+      .map(m => [m.id, m]));
     return ids.map(messageId => {
-      const item = this.state.messages.find(m => m.id === messageId);
+      const item = byId.get(messageId);
       if (!item || item.conversationId !== conversation.id || item.to !== "lead") {
         throw new Error("Invalid Lead event message: " + messageId);
       }
