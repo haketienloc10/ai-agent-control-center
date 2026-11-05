@@ -21,6 +21,19 @@ npm run dev:web
 
 Mở http://localhost:5173. Backend chỉ bind `127.0.0.1:4317`. Có thể cấu hình `WORKSPACE_CONFIG`, `APP_DATA_DIR`, `PORT` hoặc `CODEX_SECURITY_MODE=sandbox`.
 
+## Giao diện giám sát (Phase 1)
+
+Giao diện Web dùng ba khu vực: **Sidebar** (chọn task, tạo yêu cầu, App Settings),
+**Workspace** (trạng thái task, hội thoại và gửi Lead), **Agent Monitor**
+(trạng thái Lead/Peer, lượt xử lý cuối, hoạt động gần đây và danh sách module).
+
+- Mọi chỉ số và trạng thái đều được tính từ \`GET /api/snapshot\`, cập nhật bằng SSE \`/api/events\`; không polling Peer bằng message.
+- \`Idle\` biểu thị Codex session không chạy turn; không đồng nghĩa task đã hoàn thành. Trạng thái task \`finished\` chỉ được tạo bởi \`finish()\`.
+- Bảng sự kiện gần đây chỉ tổng hợp từ message đã lưu; chưa có progress stream hoặc event audit log chuyên dụng. Chỉ báo kết nối Backend qua SSE, không suy ra tình trạng Codex từ kết nối đó.
+- \`Xem luồng Lead ↔ Peer\` hiển thị message routing dưới dạng các dòng có thể mở rộng. Chọn Peer ở panel bên phải để xem transcript của Peer.
+- \`App Settings\` giữ hành vi model/effort của PR #12. Không có API mới hoặc thay đổi cơ chế điều phối của PR #13.
+- Layout responsive ở màn hình nhỏ: sidebar dạng dải task ngang, Agent Monitor nằm dưới hội thoại.
+
 ## App Settings: model và reasoning effort
 
 Mở **App Settings · Model / Effort** ở thanh bên để đặt cấu hình riêng cho Lead và Peer. UI lấy model và effort gợi ý từ Codex `model/list` qua `GET /api/models`. Khi catalog không khả dụng, người dùng vẫn có thể nhập model ID thủ công. Trường rỗng kế thừa cấu hình mặc định của Codex.
