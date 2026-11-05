@@ -34,6 +34,16 @@ Giao diện Web dùng ba khu vực: **Sidebar** (chọn task, tạo yêu cầu, 
 - `App Settings` giữ hành vi model/effort của PR #12. Không có API mới hoặc thay đổi cơ chế điều phối của PR #13.
 - Layout responsive ở màn hình nhỏ: sidebar dạng dải task ngang, Agent Monitor nằm dưới hội thoại.
 
+## Hiển thị Markdown từ Codex
+
+Các message Lead, Peer và System được Web render bằng `react-markdown` và `remark-gfm`
+(heading, danh sách, bảng, code block, liên kết). Backend tiếp tục lưu nguyên văn `Message.text`;
+không rewrite, ép format hoặc tóm tắt phản hồi Codex.
+
+Báo cáo dài được thu gọn theo **chiều cao phần nội dung đã render**, không cắt chuỗi Markdown.
+`Xem toàn bộ` / `Thu gọn` chỉ thay đổi trạng thái hiển thị. Raw HTML không được thực thi;
+link dùng kiểm tra URL mặc định của renderer và mở an toàn, hình ảnh remote không tự tải.
+
 ## App Settings: model và reasoning effort
 
 Mở **App Settings · Model / Effort** ở thanh bên để đặt cấu hình riêng cho Lead và Peer. UI lấy model và effort gợi ý từ Codex `model/list` qua `GET /api/models`. Khi catalog không khả dụng, người dùng vẫn có thể nhập model ID thủ công. Trường rỗng kế thừa cấu hình mặc định của Codex.
