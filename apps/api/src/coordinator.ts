@@ -6,6 +6,8 @@ function leadPrompt(config: WorkspaceConfig, store: CoordinationStore, delivery:
   const state = store.snapshot();
   const current = state.messages.find(m => m.id === delivery.messageId)!;
   const recent = state.messages.filter(m => m.conversationId === delivery.conversationId).slice(-50);
+  const originalRequest = state.messages.find(m => m.conversationId === delivery.conversationId &&
+    m.from === "user")?.text ?? "";
   const peers = state.sessions.filter(s => s.conversationId === delivery.conversationId &&
     s.role === "peer").map(s => ({
     sessionId: s.id, moduleId: s.moduleId, label: s.label, status: s.status, error: s.error
@@ -32,10 +34,24 @@ function leadPrompt(config: WorkspaceConfig, store: CoordinationStore, delivery:
     "SETTINGS: " + JSON.stringify(store.settings()),
     "MODULES: " + JSON.stringify(config.modules.map(m => ({ id: m.id, label: m.label, path: m.path }))),
     "PEER_SESSIONS: " + JSON.stringify(peers),
+    "ORIGINAL_USER_REQUEST: " + JSON.stringify(originalRequest),
     "CURRENT_MESSAGE: " + JSON.stringify(current),
     "RECENT_CONVERSATION: " + JSON.stringify(recent.map(m => ({
       from: m.from, to: m.to, peerSessionId: m.peerSessionId, text: m.text
     })))
+  ].join("\n\n");
+}
+/** One limited read-only survey; no implementation, root-cause claim, or task planning. */
+function discoveryPrompt(config: WorkspaceConfig, message: Message): string {
+  return [
+    "Bạn là DISCOVERY AGENT. Khám phá sơ bộ các module để Lead biết nên bắt đầu từ đâu.",
+    "Chỉ đọc có chọn lọc cấu trúc dự án, công nghệ, entry points và những file có khả năng liên quan.",
+    "Không điều tra sâu call chain, không kết luận root cause, không tự lập kế hoạch triển khai hoặc phân công Peer.",
+    "Không sửa code, không chạy build/test mặc định, không gọi tool điều phối của Lead.",
+    "Phân biệt điều đã đọc xác minh với giả định; nêu rõ thông tin còn thiếu và nơi Peer nên khảo sát sâu.",
+    "Báo cáo ngắn gọn cho Lead, ưu tiên đường dẫn file đã kiểm tra. Không quyết định thay Lead.",
+    "MODULES: " + JSON.stringify(config.modules.map(m => ({ id: m.id, label: m.label, path: m.path }))),
+    "USER_REQUEST: " + message.text
   ].join("\n\n");
 }
 function peerPrompt(config: WorkspaceConfig, session: AgentSession, message: Message): string {
@@ -49,6 +65,15 @@ function peerPrompt(config: WorkspaceConfig, session: AgentSession, message: Mes
     "WORKSPACE MODULE: " + config.modules.find(m => m.id === session.moduleId)?.path,
     "LEAD MESSAGE: " + message.text
   ].join("\n\n");
+}
+
+/** Whether an initial task needs a lightweight workspace survey. No LLM classification turn. */
+export function shouldDiscover(config: WorkspaceConfig, request: string): boolean {
+  if (!config.discovery || config.discovery.mode === "off") return false;
+  if (config.discovery.mode === "always") return true;
+  // Pure status requests about an existing task do not need source discovery.
+  return !/^\s*(?:(?:cho (?:tôi|mình) )?(?:xem|báo|cập nhật)\s+)?(?:trạng thái|tình trạng|tiến độ|status)\b/i
+    .test(request.trim());
 }
 
 /** Queued event deliveries wake idle sessions; no Lead polling turn is scheduled. */
@@ -86,11 +111,14 @@ export class Coordinator {
       const session = this.store.session(delivery.sessionId)!;
       const input = this.store.input(delivery.id)!;
       const cwd = session.role === "lead" ? this.config.lead.cwd :
+        session.role === "discovery" ? this.config.discovery?.cwd :
         this.config.modules.find(m => m.id === session.moduleId)?.path;
       if (!cwd) throw new Error("Module không còn trong cấu hình: " + session.moduleId);
       const prompt = session.role === "lead"
         ? leadPrompt(this.config, this.store, delivery)
-        : peerPrompt(this.config, session, input);
+        : session.role === "discovery"
+          ? discoveryPrompt(this.config, input)
+          : peerPrompt(this.config, session, input);
       let finished = false;
       const hooks = {
         onThread: (threadId: string) => this.store.setThread(session.id, threadId),
@@ -104,11 +132,18 @@ export class Coordinator {
       };
       const selection = session.role === "lead"
         ? this.store.settings().lead
-        : { model: session.model, effort: session.effort };
-      const output = await this.runtime.run(session, cwd, prompt, hooks, selection);
+        : session.role === "discovery"
+          ? { model: this.config.discovery?.model, effort: this.config.discovery?.effort }
+          : { model: session.model, effort: session.effort };
+      const readableRoots = session.role === "discovery"
+        ? [...new Set([cwd, ...this.config.modules.map(m => m.path)])]
+        : undefined;
+      const output = await this.runtime.run(session, cwd, prompt, hooks, selection, readableRoots);
       if (session.role === "lead") {
         // finish() only updates task state; the final Codex response is persisted once.
         this.store.completeLead(delivery.id, output, finished);
+      } else if (session.role === "discovery") {
+        this.store.completeDiscovery(delivery.id, output);
       } else {
         this.store.completePeer(delivery.id, output);
       }

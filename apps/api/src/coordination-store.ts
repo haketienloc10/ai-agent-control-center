@@ -43,10 +43,12 @@ const text = (value: unknown, label: string, limit = 20000): string => {
   return value.trim();
 };
 function message(data: Data, conversationId: string, from: MessageAuthor,
-  to: Message["to"], body: string, peerSessionId?: string): Message {
+  to: Message["to"], body: string, agentSessionId?: string): Message {
   const entry: Message = {
     id: randomUUID(), conversationId, from, to, text: body,
-    ...(peerSessionId ? { peerSessionId } : {}), createdAt: now()
+    ...(agentSessionId ? (from === "discovery"
+      ? { discoverySessionId: agentSessionId } : { peerSessionId: agentSessionId }) : {}),
+    createdAt: now()
   };
   data.messages.push(entry);
   return entry;
@@ -114,6 +116,16 @@ export class CoordinationStore extends EventEmitter {
         message(this.state, delivery.conversationId, "system", "user",
           "Phiên " + (session?.label ?? delivery.sessionId) +
           " bị gián đoạn khi Backend khởi động lại. Không tự chạy lại prompt trước.");
+        // Discovery is not replayed after a crash; unblock the first Lead turn.
+        if (session?.role === "discovery") {
+          const conversation = this.state.conversations.find(c => c.id === delivery.conversationId)!;
+          if (conversation.status === "active" &&
+              (delivery.generation ?? 0) === (conversation.generation ?? 0)) {
+            const item = message(this.state, conversation.id, "system", "lead",
+              "Discovery bị gián đoạn sau restart; chưa có báo cáo sơ bộ. Lead cần tự đánh giá hoặc giao Peer khảo sát.");
+            wakeLead(this.state, conversation, item.id);
+          }
+        }
         changed = true;
       }
     }
@@ -157,7 +169,7 @@ export class CoordinationStore extends EventEmitter {
   }
   conversation(id: string) { return this.state.conversations.find(c => c.id === id); }
 
-  createConversation(request: string, title?: string): Conversation {
+  createConversation(request: string, title?: string, discover = false): Conversation {
     const value = text(request, "Yêu cầu");
     return this.mutate(data => {
       const conversation: Conversation = {
@@ -171,7 +183,16 @@ export class CoordinationStore extends EventEmitter {
         label: "Lead", status: "idle", createdAt: now(), updatedAt: now()
       });
       const item = message(data, conversation.id, "user", "lead", value);
-      deliver(data, conversation.id, conversation.leadSessionId, item.id);
+      if (discover) {
+        const discoverySessionId = randomUUID();
+        data.sessions.push({
+          id: discoverySessionId, conversationId: conversation.id, role: "discovery",
+          label: "Discovery", status: "idle", createdAt: now(), updatedAt: now()
+        });
+        deliver(data, conversation.id, discoverySessionId, item.id);
+      } else {
+        deliver(data, conversation.id, conversation.leadSessionId, item.id);
+      }
       return conversation;
     });
   }
@@ -182,7 +203,11 @@ export class CoordinationStore extends EventEmitter {
       if (!conversation) throw new Error("Conversation not found");
       conversation.status = "active"; conversation.updatedAt = now();
       const item = message(data, conversationId, "user", "lead", value);
-      deliver(data, conversationId, conversation.leadSessionId, item.id);
+      // Keep the first Lead turn behind an in-flight Discovery, including user follow-ups.
+      const discovering = data.deliveries.some(d => d.conversationId === conversationId &&
+        (d.status === "queued" || d.status === "running") &&
+        data.sessions.some(s => s.id === d.sessionId && s.role === "discovery"));
+      if (!discovering) deliver(data, conversationId, conversation.leadSessionId, item.id);
       return item;
     });
   }
@@ -288,6 +313,26 @@ export class CoordinationStore extends EventEmitter {
       conversation.updatedAt = now();
     });
   }
+  /** Discovery only reports initial context; Lead alone decides whether deeper Peer investigation is needed. */
+  completeDiscovery(id: string, result: string): void {
+    this.mutate(data => {
+      const delivery = data.deliveries.find(d => d.id === id);
+      if (!delivery || delivery.status !== "running") throw new Error("Discovery delivery not running");
+      const session = data.sessions.find(s => s.id === delivery.sessionId)!;
+      if (session.role !== "discovery") throw new Error("Only Discovery may complete discovery");
+      const conversation = data.conversations.find(c => c.id === delivery.conversationId)!;
+      delivery.status = "completed"; delivery.updatedAt = now();
+      session.status = "idle"; session.updatedAt = now();
+      const item = message(data, conversation.id, "discovery", "lead",
+        result.trim() || "(Discovery không cung cấp báo cáo sơ bộ)", session.id);
+      if (conversation.status === "active" &&
+          (delivery.generation ?? 0) === (conversation.generation ?? 0)) {
+        wakeLead(data, conversation, item.id);
+      }
+      conversation.updatedAt = now();
+    });
+  }
+
   completePeer(id: string, result: string) {
     this.mutate(data => {
       const delivery = data.deliveries.find(d => d.id === id);
@@ -318,8 +363,11 @@ export class CoordinationStore extends EventEmitter {
       if (conversation.status === "active" &&
         (delivery.generation ?? 0) === (conversation.generation ?? 0)) {
         message(data, conversation.id, "system", "user", body);
-        if (session.role === "peer") {
-          const item = message(data, conversation.id, "system", "lead", body, session.id);
+        if (session.role === "peer" || session.role === "discovery") {
+          const item = message(data, conversation.id, "system", "lead",
+            session.role === "discovery"
+              ? body + ". Lead tiếp tục không có báo cáo sơ bộ; có thể giao Peer khảo sát."
+              : body, session.role === "peer" ? session.id : undefined);
           wakeLead(data, conversation, item.id);
         }
       } else if (session.role === "lead" && conversation.status === "finished") {

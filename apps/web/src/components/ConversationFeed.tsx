@@ -22,11 +22,14 @@ export function MessageBody({ text }: { text: string }) {
 }
 function MessageRow({ message, sessions }: { message: Message; sessions: AgentSession[] }) {
   const peer = sessions.find(s => s.id === message.peerSessionId)?.label ?? "Peer";
-  const routed = message.to === "peer" || (message.from === "peer" && message.to === "lead") ||
+  const routed = message.to === "peer" || message.from === "discovery" ||
+    (message.from === "peer" && message.to === "lead") ||
     (message.from === "system" && message.to === "lead");
   if (routed) {
     const label = message.to === "peer" ? "Lead giao việc cho " + peer :
-      message.from === "peer" ? peer + " gửi kết quả" : "Hệ thống gửi thông tin cho Lead";
+      message.from === "peer" ? peer + " gửi kết quả" :
+      message.from === "discovery" ? "Discovery gửi báo cáo sơ bộ cho Lead" :
+      "Hệ thống gửi thông tin cho Lead";
     return <details className="route-event">
       <summary><span className="event-mark" aria-hidden="true">↳</span>
         <strong>{label}</strong><time>{shortTime(message.createdAt)}</time></summary>
@@ -66,7 +69,7 @@ export function ConversationFeed({ messages, sessions, conversationId, showRouti
       <label className="routing-toggle">
         <input type="checkbox" checked={showRouting}
           onChange={e => onRoutingChange(e.target.checked)}/>
-        <span>Xem luồng Lead ↔ Peer</span>
+        <span>Xem luồng điều phối</span>
       </label>
     </div>
     <div className="chat-feed" role="log" aria-label="Lịch sử hội thoại">

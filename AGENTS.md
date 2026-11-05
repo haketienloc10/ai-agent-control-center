@@ -1,7 +1,8 @@
 # Hướng dẫn contributor
 
 - Tài liệu hướng người đọc bằng tiếng Việt; giữ nguyên API và identifiers.
-- Lead điều phối theo event: giao việc rồi kết thúc turn; chỉ tiếp tục khi có event User/Peer.
+- Discovery chỉ khám phá sơ bộ trong session và cwd riêng, read-only; không điều tra sâu, không lập kế hoạch hoặc quyết định thay Lead. Quy tắc thay đổi theo dự án do người dùng quản lý trong AGENTS.md.
+- Lead điều phối theo event: giao việc rồi kết thúc turn; chỉ tiếp tục khi có event User/Discovery/Peer.
 - Không polling Peer bằng `send_peer`. Chỉ gửi instruction mới, sửa hoặc bổ sung công việc.
 - `finish` chỉ khi toàn task hoàn thành; Peer report đến muộn không được mở lại task hoặc đánh thức Lead.
 - Chỉ dùng Codex dynamic tools; không tái tạo JSON routing, parser, `outputSchema` fallback hoặc function cũ.

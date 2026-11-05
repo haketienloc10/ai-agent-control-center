@@ -7,6 +7,10 @@ export function conversationStatus(data: Snapshot, conversation: Conversation): 
   if (conversation.status === "finished") return { label: "Đã kết thúc", tone: "success" };
   const sessions = data.sessions.filter(s => s.conversationId === conversation.id);
   const lead = sessions.find(s => s.id === conversation.leadSessionId);
+  const discovery = sessions.find(s => s.role === "discovery");
+  if (discovery?.status === "running") return { label: "Discovery đang khám phá", tone: "info" };
+  if (discovery && data.deliveries.some(d => d.sessionId === discovery.id &&
+      d.status === "queued")) return { label: "Chờ Discovery", tone: "warning" };
   if (lead?.status === "interrupted") return { label: "Lead gặp lỗi", tone: "error" };
   if (sessions.some(s => s.role === "peer" && s.status === "interrupted")) {
     return { label: "Peer gặp lỗi", tone: "error" };
@@ -48,6 +52,9 @@ export function recentActivity(data: Snapshot, conversationId: string, count = 5
       if (m.from === "lead" && m.to === "peer") {
         return { id: m.id, at: m.createdAt,
           label: "Lead giao việc cho " + (labels.get(m.peerSessionId ?? "") ?? "Peer"), tone: "info" };
+      }
+      if (m.from === "discovery") {
+        return { id: m.id, at: m.createdAt, label: "Discovery gửi báo cáo sơ bộ", tone: "success" };
       }
       if (m.from === "peer") {
         return { id: m.id, at: m.createdAt,

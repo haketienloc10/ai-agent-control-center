@@ -38,6 +38,7 @@ export function AgentMonitor({ data, conversation, selectedPeerId, onSelectPeer 
   const sessions = data.sessions.filter(s => s.conversationId === conversation.id);
   const lead = sessions.find(s => s.id === conversation.leadSessionId);
   const peers = sessions.filter(s => s.role === "peer");
+  const discovery = sessions.find(s => s.role === "discovery");
   const events = recentActivity(data, conversation.id, 5);
   const conversationMessages = data.messages.filter(m => m.conversationId === conversation.id);
   const leadState = lead ? sessionStatus(lead) : { label: "Chưa khởi tạo", tone: "neutral" };
@@ -55,12 +56,48 @@ export function AgentMonitor({ data, conversation, selectedPeerId, onSelectPeer 
           <small>Workspace chung</small>
           <small>Model yêu cầu: {data.settings.lead.model || "Mặc định Codex"}</small>
           <small>Effort: {data.settings.lead.effort || "Mặc định Codex"}</small>
+          {lead?.status === "idle" && discovery?.status === "running" &&
+            <span className="waiting-note">Lead đang chờ báo cáo Discovery</span>}
           {lead?.status === "idle" && peers.some(p => p.status === "running") &&
             <span className="waiting-note">Lead đang chờ kết quả Peer</span>}
           {lead?.error && <p className="peer-error" role="alert">{lead.error}</p>}
         </div>
       </div>
     </div>
+    {discovery && <div className="monitor-section">
+      <div className="monitor-section-title"><h3>Discovery Session</h3><span>1</span></div>
+      <div className="peer-unit">
+        <button type="button" className="peer-card"
+          aria-expanded={selectedPeerId === discovery.id}
+          aria-controls={"transcript-" + discovery.id}
+          onClick={() => onSelectPeer(selectedPeerId === discovery.id ? "" : discovery.id)}>
+          <span className="avatar peer-avatar" aria-hidden="true">D</span>
+          <span className="agent-info">
+            <span className="agent-title"><strong>Discovery</strong>
+              <span className={"status-chip " + sessionStatus(discovery).tone}>
+                {sessionStatus(discovery).label}</span></span>
+            <small>Khám phá sơ bộ · read-only · session riêng</small>
+            <small className="turn-meta">{lastTurnText(discovery, data)}</small>
+          </span>
+          <span className="expand-chevron" aria-hidden="true">
+            {selectedPeerId === discovery.id ? "⌃" : "⌄"}</span>
+        </button>
+        {selectedPeerId === discovery.id && <div className="peer-transcript"
+          id={"transcript-" + discovery.id}>
+          <div className="transcript-title">Báo cáo sơ bộ gửi Lead</div>
+          {conversationMessages.filter(m => m.from === "discovery" &&
+            m.discoverySessionId === discovery.id).map(m =>
+            <div className="transcript-message" key={m.id}>
+              <strong>Discovery <time dateTime={m.createdAt}>{shortTime(m.createdAt)}</time></strong>
+              <div className="peer-message-content"><MarkdownContent content={m.text}/></div>
+            </div>)}
+          {!conversationMessages.some(m => m.from === "discovery" &&
+            m.discoverySessionId === discovery.id) &&
+            <p>Chưa có báo cáo sơ bộ.</p>}
+          {discovery.error && <p className="peer-error" role="alert">{discovery.error}</p>}
+        </div>}
+      </div>
+    </div>}
     <div className="monitor-section">
       <div className="monitor-section-title"><h3>Peer Sessions</h3><span>{peers.length}</span></div>
       <div className="peer-list">

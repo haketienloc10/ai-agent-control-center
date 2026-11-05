@@ -9,7 +9,7 @@ export interface AgentRunHooks {
 }
 export interface AgentRuntime {
   run(session: AgentSession, cwd: string, prompt: string, hooks: AgentRunHooks,
-    selection?: ModelSelection): Promise<string>;
+    selection?: ModelSelection, readableRoots?: string[]): Promise<string>;
 }
 
 /** Event-driven Codex turn; Lead actions use dynamic tools, never text/JSON envelopes. */
@@ -22,15 +22,22 @@ export class CodexAgentRuntime implements AgentRuntime {
   }
 
   async run(session: AgentSession, cwd: string, prompt: string, hooks: AgentRunHooks,
-    selection: ModelSelection = {}): Promise<string> {
+    selection: ModelSelection = {}, readableRoots?: string[]): Promise<string> {
     await this.client.start();
     const peer = session.role === "peer";
+    const discovery = session.role === "discovery";
     const safe = process.env.CODEX_SECURITY_MODE === "sandbox";
     const approvalPolicy = peer && safe ? "on-request" : "never";
     const sandbox = peer ? (safe ? "workspace-write" : "danger-full-access") : "read-only";
     const sandboxPolicy = peer ? (safe
       ? { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false }
-      : { type: "dangerFullAccess" }) : { type: "readOnly" };
+      : { type: "dangerFullAccess" })
+      : discovery ? {
+          type: "readOnly", networkAccess: false,
+          access: { type: "restricted", includePlatformDefaults: true,
+            readableRoots: [...new Set([cwd, ...(readableRoots ?? [])])] }
+        }
+      : { type: "readOnly" };
 
     const started: { thread: { id: string } } = session.threadId
       ? await this.client.request("thread/resume", { threadId: session.threadId, excludeTurns: true })

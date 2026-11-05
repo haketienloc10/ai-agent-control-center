@@ -5,7 +5,7 @@ import { CoordinationStore } from "./coordination-store.js";
 import { CodexClient } from "./codex-client.js";
 import { modelCatalog } from "./model-catalog.js";
 import { CodexAgentRuntime } from "./codex-runtime.js";
-import { Coordinator } from "./coordinator.js";
+import { Coordinator, shouldDiscover } from "./coordinator.js";
 import { SingleInstanceLock } from "./single-instance.js";
 
 const config = loadWorkspaceConfig();
@@ -71,7 +71,9 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === "POST" && url.pathname === "/api/conversations") {
       const data = await readJson(req) as { text?: string; title?: string } | null;
-      json(res, 201, store.createConversation(data?.text ?? "", data?.title)); return;
+      const request = data?.text ?? "";
+      json(res, 201, store.createConversation(request, data?.title,
+        shouldDiscover(config, request))); return;
     }
     const messageRoute = /^\/api\/conversations\/([0-9a-f-]+)\/messages$/.exec(url.pathname);
     if (req.method === "POST" && messageRoute) {

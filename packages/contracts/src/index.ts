@@ -2,6 +2,7 @@
 export interface ModuleConfig { id: string; label: string; path: string; }
 export interface WorkspaceConfig {
   lead: { cwd: string; instructions: string };
+  discovery?: { cwd: string; mode?: "auto" | "always" | "off"; model?: string; effort?: string };
   modules: ModuleConfig[];
 }
 /** Giá trị bỏ trống sẽ kế thừa cấu hình Codex. */
@@ -12,7 +13,7 @@ export interface CodexModelOption {
   defaultReasoningEffort?: string;
   supportedReasoningEfforts: string[];
 }
-export type AgentRole = "lead" | "peer";
+export type AgentRole = "lead" | "peer" | "discovery";
 export type SessionStatus = "idle" | "running" | "interrupted";
 export interface Conversation {
   id: string; title: string; status: "active" | "finished";
@@ -28,11 +29,11 @@ export interface AgentSession {
   handledToolCalls?: string[];
   createdAt: string; updatedAt: string;
 }
-export type MessageAuthor = "user" | "lead" | "peer" | "system";
+export type MessageAuthor = "user" | "lead" | "peer" | "discovery" | "system";
 export interface Message {
   id: string; conversationId: string; from: MessageAuthor;
   to: "user" | "lead" | "peer";
-  text: string; peerSessionId?: string; createdAt: string;
+  text: string; peerSessionId?: string; discoverySessionId?: string; createdAt: string;
 }
 export interface Delivery {
   id: string; conversationId: string; sessionId: string; messageId: string;

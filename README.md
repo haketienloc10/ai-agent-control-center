@@ -1,6 +1,6 @@
-# AI Agent Control Center — Event-driven Lead ↔ Peer
+# AI Agent Control Center — Event-driven Discovery → Lead ↔ Peer
 
-Người dùng giao task cho Lead Agent. Lead điều phối các Codex Peer sessions trong module được cấu hình. **Lead giao việc xong thì kết thúc turn; task vẫn active.** Khi Peer hoàn thành hoặc lỗi, app gửi event để Lead tiếp tục. Không polling bằng message.
+Người dùng giao task mới; Discovery có thể khảo sát sơ bộ source trong **session riêng, read-only**, rồi chuyển báo cáo cho Lead. Lead tự quyết định có cần giao Peer điều tra sâu hay triển khai. **Lead giao việc xong thì kết thúc turn; task vẫn active.** Khi Peer hoàn thành hoặc lỗi, app gửi event để Lead tiếp tục. Không polling bằng message.
 
 ## Yêu cầu
 
@@ -14,6 +14,7 @@ Người dùng giao task cho Lead Agent. Lead điều phối các Codex Peer ses
 npm install
 cp config/workspace.example.json config/workspace.local.json
 # Chỉnh đường dẫn tuyệt đối trong config/workspace.local.json
+# Tạo thư mục discovery.cwd riêng, ví dụ: mkdir -p /ABSOLUTE/PATH/TO/discovery-workspace
 npm run dev:api
 # Terminal khác:
 npm run dev:web
@@ -25,12 +26,12 @@ Mở http://localhost:5173. Backend chỉ bind `127.0.0.1:4317`. Có thể cấu
 
 Giao diện Web dùng ba khu vực: **Sidebar** (chọn task, tạo yêu cầu, App Settings),
 **Workspace** (trạng thái task, hội thoại và gửi Lead), **Agent Monitor**
-(trạng thái Lead/Peer, lượt xử lý cuối, hoạt động gần đây và danh sách module).
+(trạng thái Discovery/Lead/Peer, lượt xử lý cuối, hoạt động gần đây và danh sách module).
 
 - Mọi chỉ số và trạng thái đều được tính từ `GET /api/snapshot`, cập nhật bằng SSE `/api/events`; không polling Peer bằng message.
 - `Idle` biểu thị Codex session không chạy turn; không đồng nghĩa task đã hoàn thành. Trạng thái task `finished` chỉ được tạo bởi `finish()`.
 - Bảng sự kiện gần đây chỉ tổng hợp từ message đã lưu; chưa có progress stream hoặc event audit log chuyên dụng. Chỉ báo kết nối Backend qua SSE, không suy ra tình trạng Codex từ kết nối đó.
-- `Xem luồng Lead ↔ Peer` hiển thị message routing dưới dạng các dòng có thể mở rộng. Chọn Peer ở panel bên phải để xem transcript của Peer.
+- `Xem luồng điều phối` hiển thị message routing (Discovery → Lead và Lead ↔ Peer) dưới dạng các dòng có thể mở rộng. Chọn Discovery hoặc Peer ở panel bên phải để xem báo cáo hoặc transcript.
 - `App Settings` giữ hành vi model/effort của PR #12. Không có API mới hoặc thay đổi cơ chế điều phối của PR #13.
 - Layout responsive ở màn hình nhỏ: sidebar dạng dải task ngang, Agent Monitor nằm dưới hội thoại.
 
@@ -54,9 +55,19 @@ Lead có thể override `model` và `effort` khi gọi dynamic tool `spawn_peer`
 
 Runtime truyền `model` trong `thread/start` và `model`/`effort` trong `turn/start`. Logic event-driven, `finish`, chống late Peer event và giới hạn timeout của PR #13 vẫn giữ nguyên. Không có legacy JSON protocol.
 
+## Discovery: khám phá sơ bộ trước Lead
+
+- Khai báo `discovery.cwd` riêng trong `config/workspace.local.json` để bật Discovery. Nếu không khai báo, luồng Lead ↔ Peer cũ giữ nguyên.
+- `discovery.mode`: `auto` (mặc định khi đã khai báo, chạy với task mới; bỏ qua những yêu cầu thuần hỏi trạng thái/tiến độ), `always` (mọi task mới), `off` (tắt). **Không chạy lại theo từng Lead turn hoặc khi người dùng tiếp tục conversation cũ.** Cách nhận diện `auto` là heuristic đơn giản, không phải phân loại bằng LLM.
+- `discovery.model` và `discovery.effort` tùy chọn, độc lập với Lead/Peer Settings; để trống sẽ kế thừa Codex mặc định.
+- Discovery có Codex session/thread riêng với `cwd=discovery.cwd`; app-server nhận `sandboxPolicy: readOnly` và `access: {type: restricted, readableRoots: [discovery.cwd, ...module paths]}`. Đây là cách khai báo quyền đọc nhiều thư mục qua app-server, **không truyền CLI `--add-dir` vào JSON RPC**. Cần phiên bản Codex app-server hỗ trợ restricted read access.
+- Discovery chỉ đọc có chọn lọc để hiểu module, công nghệ, entry point và vùng có khả năng liên quan. **Không sửa code, truy vết sâu, phân tích root cause, tự lập kế hoạch hay quyết định thay Lead.** Discovery không có dynamic routing tools. Quy tắc thay đổi theo repository nằm trong `AGENTS.md` do Codex đọc.
+- Báo cáo Discovery là message `discovery → lead`, không phải Peer report hoặc kết quả triển khai. Lead chỉ nhận báo cáo và có thể giao Peer khảo sát sâu khi thiếu bằng chứng.
+- Nếu Discovery gặp lỗi hoặc bị restart trong lúc chạy, app báo lỗi và **đánh thức Lead một lần** để tiếp tục mà không có báo cáo; không replay turn đã chạy.
+
 ## Lifecycle theo sự kiện
 
-1. Người dùng tạo task. App tạo Lead delivery và bắt đầu một Codex turn.
+1. Người dùng tạo task. Nếu Discovery được kích hoạt, app tạo Discovery delivery trước và chỉ tạo Lead delivery khi Discovery hoàn tất hoặc gặp lỗi. Nếu không, tạo Lead delivery như trước.
 2. Lead gọi các dynamic tools `spawn_peer` hoặc `send_peer` để giao việc thực sự rồi **kết thúc turn ngay**. Không chờ, không hỏi tiến độ. Task vẫn `active`.
 3. Peer chạy tại module `cwd`; khi turn hoàn thành hoặc lỗi, app lưu event và đánh thức Lead. Nếu đã có Lead delivery đang chờ, event mới được gom cùng lượt; Lead đọc `RECENT_CONVERSATION`.
 4. Lead xử lý event, giao thêm việc nếu cần hoặc kết thúc turn để chờ event mới. `send_peer` chỉ cho instruction mới, sửa/bổ sung việc, không phải status poll.
@@ -68,14 +79,14 @@ Runtime truyền `model` trong `thread/start` và `model`/`effort` trong `turn/s
 - Chỉ dùng Codex dynamic tools: `spawn_peer`, `send_peer`, `finish`. Không dùng JSON envelope, `outputSchema`, parser hoặc fallback protocol cũ.
 - Codex CLI không hỗ trợ dynamic tools sẽ trả lỗi; cần cập nhật CLI. Với các Conversation Lead cũ không có tool registry, hãy tạo Conversation mới.
 - Tool call được lưu SQLite atomically kèm `callId`, chống xử lý lặp cùng lời gọi.
-- Peer không có routing tools và không giao tiếp Peer-to-Peer.
+- Discovery và Peer không có routing tools. Discovery có session, cwd và quyền read-only riêng; Peer thực thi trong module và không giao tiếp Peer-to-Peer.
 - Nhiều Peer có thể chạy trong cùng module, không có Git worktree hay tự động xử lý conflict.
 
 ## Recovery và timeout
 
 - **Không còn timeout cứng 10 phút cho Codex turn.** App chờ terminal event từ Codex hoặc process exit.
 - RPC request như `thread/start` vẫn có timeout kết nối riêng; đó không phải timeout thực thi task.
-- Sau restart, delivery đang chạy thành `interrupted`, không tự replay. Delivery chưa chạy vẫn ở queue.
+- Sau restart, delivery đang chạy thành `interrupted`, không tự replay. Discovery bị gián đoạn sẽ đánh thức Lead bằng thông báo lỗi; delivery chưa chạy vẫn ở queue.
 - SQLite nằm tại `APP_DATA_DIR/coordination.sqlite` (mặc định `.data/coordination.sqlite`).
 - **Watchdog định kỳ 15 phút chưa triển khai.** Peer bị treo khi process còn sống nhưng không gửi terminal event có thể chờ vô hạn cho đến khi được xử lý thủ công.
 
@@ -99,4 +110,4 @@ npm run build
 
 CI dùng fake Codex transport, không thay thế E2E thực tế với Codex CLI. Xem [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-**Bảo mật:** Lead read-only; Peer mặc định `approvalPolicy: never` và `danger-full-access`. Backend không có authentication và chỉ bind localhost. Không expose lên Internet.
+**Bảo mật:** Lead read-only; Discovery read-only với readableRoots chỉ định (và platform defaults); Peer mặc định `approvalPolicy: never` và `danger-full-access`. Backend không có authentication và chỉ bind localhost. Không expose lên Internet.

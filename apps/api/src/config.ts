@@ -3,6 +3,16 @@ import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { WorkspaceConfig } from "@aacc/contracts";
 
+function selection(value: unknown, key: "model" | "effort"): string | undefined {
+  if (value === undefined || value === "") return undefined;
+  const limit = key === "model" ? 128 : 32;
+  if (typeof value !== "string" || value.length > limit ||
+      !/^[a-zA-Z0-9][a-zA-Z0-9._+:/-]*$/.test(value)) {
+    throw new Error("discovery." + key + " không hợp lệ");
+  }
+  return value;
+}
+
 const defaultFile = fileURLToPath(new URL("../../../config/workspace.local.json", import.meta.url));
 function directory(input: unknown, field: string): string {
   if (typeof input !== "string" || !isAbsolute(input)) throw new Error(field + " phải là đường dẫn tuyệt đối");
@@ -26,5 +36,21 @@ export function loadWorkspaceConfig(file = process.env.WORKSPACE_CONFIG ?? defau
     ids.add(module.id);
     return { id: module.id, label: module.label, path: directory(module.path, "modules[" + index + "].path") };
   });
-  return { lead, modules };
+  let discovery: WorkspaceConfig["discovery"];
+  if (raw.discovery) {
+    const cwd = directory(raw.discovery.cwd, "discovery.cwd");
+    if (cwd === lead.cwd || modules.some(module => module.path === cwd)) {
+      throw new Error("discovery.cwd phải là thư mục riêng, khác Lead và các module");
+    }
+    const mode = raw.discovery.mode ?? "auto";
+    if (!["auto", "always", "off"].includes(mode)) {
+      throw new Error("discovery.mode phải là auto, always hoặc off");
+    }
+    discovery = {
+      cwd, mode,
+      ...(selection(raw.discovery.model, "model") ? { model: selection(raw.discovery.model, "model") } : {}),
+      ...(selection(raw.discovery.effort, "effort") ? { effort: selection(raw.discovery.effort, "effort") } : {})
+    };
+  }
+  return { lead, ...(discovery ? { discovery } : {}), modules };
 }
