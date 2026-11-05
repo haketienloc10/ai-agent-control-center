@@ -44,7 +44,7 @@ export class CodexAgentRuntime implements AgentRuntime {
       : await this.client.request("thread/start", {
           cwd, approvalPolicy, sandbox,
           ...(selection.model ? { model: selection.model } : {}),
-          ...(peer ? {} : { dynamicTools: leadDynamicTools })
+          ...(session.role === "lead" ? { dynamicTools: leadDynamicTools } : {})
         });
     const threadId = started?.thread?.id;
     if (!threadId) throw new Error("Codex không trả về thread.id");

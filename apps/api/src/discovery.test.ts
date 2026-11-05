@@ -63,7 +63,7 @@ test("Discovery owns a separate session and gates the first Lead turn; report is
         assert.equal(selection?.model, "discovery-model");
         assert.equal(selection?.effort, "low");
         assert.deepEqual(readableRoots, ["/work/discovery", "/work/api", "/work/web"]);
-        assert.equal(hooks.onLeadTool === undefined, false);
+        assert.equal(hooks.onLeadTool, undefined);
         await gate;
         return "### Đã xác minh\n- API tại /work/api\n\n### Chưa rõ\n- contract thực tế";
       }

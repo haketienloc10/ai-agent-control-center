@@ -72,7 +72,7 @@ export function shouldDiscover(config: WorkspaceConfig, request: string): boolea
   if (!config.discovery || config.discovery.mode === "off") return false;
   if (config.discovery.mode === "always") return true;
   // Pure status requests about an existing task do not need source discovery.
-  return !/^\s*(?:(?:cho (?:tôi|mình) )?(?:xem|báo|cập nhật)\s+)?(?:trạng thái|tình trạng|tiến độ|status)\b/i
+  return !/^\s*(?:(?:cho (?:tôi|mình) )?(?:xem|báo|cập nhật)\s+)?(?:trạng thái|tình trạng|tiến độ|status)(?=$|[\s?!.,:])/i
     .test(request.trim());
 }
 
@@ -123,12 +123,13 @@ export class Coordinator {
       const hooks = {
         onThread: (threadId: string) => this.store.setThread(session.id, threadId),
         onTurn: (turnId: string) => this.store.setTurn(session.id, turnId),
-        onLeadTool: (callId: string, command: import("@aacc/contracts").LeadCommand) => {
+        ...(session.role === "lead" ? { onLeadTool: (callId: string,
+          command: import("@aacc/contracts").LeadCommand) => {
           const result = this.store.routeLeadTool(
             delivery.id, callId, command, this.config.modules.map(m => m.id));
           if (command.type === "finish") finished = true;
           return result;
-        }
+        } } : {})
       };
       const selection = session.role === "lead"
         ? this.store.settings().lead
