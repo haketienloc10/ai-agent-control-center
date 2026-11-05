@@ -4,8 +4,7 @@ import type { AgentRuntime } from "./codex-runtime.js";
 
 function leadPrompt(config: WorkspaceConfig, store: CoordinationStore, delivery: Delivery): string {
   const state = store.snapshot();
-  const current = state.messages.find(m => m.id === delivery.messageId)!;
-  const recent = state.messages.filter(m => m.conversationId === delivery.conversationId).slice(-50);
+  const events = store.leadInputs(delivery.id);
   const peers = state.sessions.filter(s => s.conversationId === delivery.conversationId &&
     s.role === "peer").map(s => ({
     sessionId: s.id, moduleId: s.moduleId, label: s.label, status: s.status, error: s.error
@@ -22,7 +21,7 @@ function leadPrompt(config: WorkspaceConfig, store: CoordinationStore, delivery:
     "Sau khi finish() thành công, gửi báo cáo cuối bằng Codex finalText thông thường; không truyền báo cáo vào tool.",
     "Nếu còn Peer đang làm phần việc cần thiết, không gọi finish. Kết thúc turn và chờ event.",
     "GỌI các công cụ spawn_peer, send_peer, finish trực tiếp để điều phối; không viết JSON điều phối trong reply.",
-    "Mỗi event có thể chứa nhiều kết quả Peer trong RECENT_CONVERSATION; xử lý những kết quả mới một lần.",
+    "NEW_EVENTS chỉ chứa các sự kiện mới được chuyển đến turn này. Có thể có nhiều kết quả Peer; xử lý từng event một lần.",
     "Peer không trao đổi trực tiếp với Peer khác. Mọi yêu cầu phối hợp phải qua bạn.",
     "Không tự tuyên bố test thành công nếu Peer chưa cung cấp bằng chứng.",
     "Không có approval gate hoặc workflow quality gate của app.",
@@ -32,9 +31,8 @@ function leadPrompt(config: WorkspaceConfig, store: CoordinationStore, delivery:
     "SETTINGS: " + JSON.stringify(store.settings()),
     "MODULES: " + JSON.stringify(config.modules.map(m => ({ id: m.id, label: m.label, path: m.path }))),
     "PEER_SESSIONS: " + JSON.stringify(peers),
-    "CURRENT_MESSAGE: " + JSON.stringify(current),
-    "RECENT_CONVERSATION: " + JSON.stringify(recent.map(m => ({
-      from: m.from, to: m.to, peerSessionId: m.peerSessionId, text: m.text
+    "NEW_EVENTS: " + JSON.stringify(events.map(m => ({
+      id: m.id, from: m.from, peerSessionId: m.peerSessionId, text: m.text
     })))
   ].join("\n\n");
 }

@@ -58,7 +58,7 @@ Runtime truyền `model` trong `thread/start` và `model`/`effort` trong `turn/s
 
 1. Người dùng tạo task. App tạo Lead delivery và bắt đầu một Codex turn.
 2. Lead gọi các dynamic tools `spawn_peer` hoặc `send_peer` để giao việc thực sự rồi **kết thúc turn ngay**. Không chờ, không hỏi tiến độ. Task vẫn `active`.
-3. Peer chạy tại module `cwd`; khi turn hoàn thành hoặc lỗi, app lưu event và đánh thức Lead. Nếu đã có Lead delivery đang chờ, event mới được gom cùng lượt; Lead đọc `RECENT_CONVERSATION`.
+3. Peer chạy tại module `cwd`; khi turn hoàn thành hoặc lỗi, app lưu event và đánh thức Lead. Event mới được gắn bằng `eventMessageIds` vào một Lead delivery đang chờ, không sao chép App chat history. Khi Lead bắt đầu turn, App gửi `NEW_EVENTS` chỉ gồm batch đã chốt; event đến trong lúc Lead chạy được xếp cho turn tiếp theo.
 4. Lead xử lý event, giao thêm việc nếu cần hoặc kết thúc turn để chờ event mới. `send_peer` chỉ cho instruction mới, sửa/bổ sung việc, không phải status poll.
 5. Chỉ khi **toàn task** hoàn thành, Lead gọi `finish()` để đổi trạng thái sang `finished` (không nhận `summary`). Sau khi tool thành công, báo cáo cuối lấy từ Codex `finalText` và được lưu một lần. Nếu turn thành công nhưng `finalText` rỗng, app thông báo `Task đã hoàn thành.`; nếu turn lỗi sau finish, app hiển thị lỗi bằng system message. Delivery chưa chạy chuyển sang `superseded`; Peer trả kết quả muộn không đánh thức Lead.
 6. Chỉ một message mới từ người dùng mới mở lại conversation đã `finished`.
@@ -75,7 +75,7 @@ Runtime truyền `model` trong `thread/start` và `model`/`effort` trong `turn/s
 
 - **Không còn timeout cứng 10 phút cho Codex turn.** App chờ terminal event từ Codex hoặc process exit.
 - RPC request như `thread/start` vẫn có timeout kết nối riêng; đó không phải timeout thực thi task.
-- Sau restart, delivery đang chạy thành `interrupted`, không tự replay. Delivery chưa chạy vẫn ở queue.
+- Sau restart, delivery đang chạy thành `interrupted`, không tự replay vì có thể Codex đã nhận turn. Delivery chưa chạy và batch `eventMessageIds` vẫn ở queue, không mất event. `codexTurnId` đánh dấu khi `turn/start` đã được xác nhận, không bảo đảm agent đã xử lý xong; turn bị gián đoạn cần người dùng kiểm tra trước khi gửi lại. Dữ liệu queued từ phiên bản cũ được chuyển sang batch một lần khi mở DB.
 - SQLite nằm tại `APP_DATA_DIR/coordination.sqlite` (mặc định `.data/coordination.sqlite`).
 - **Watchdog định kỳ 15 phút chưa triển khai.** Peer bị treo khi process còn sống nhưng không gửi terminal event có thể chờ vô hạn cho đến khi được xử lý thủ công.
 

@@ -218,3 +218,34 @@ test("Failure after finish preserves finished state and reports missing finalTex
     assert.equal(store.queued().length, 0);
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+
+test("Lead Codex input contains only incrementally delivered events, not App chat history", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aacc-incremental-input-"));
+  const store = new CoordinationStore(dir);
+  const prompts: string[] = [];
+  const runtime: AgentRuntime = {
+    async run(session, _cwd, prompt, hooks) {
+      assert.equal(session.role, "lead");
+      hooks.onThread(session.threadId ?? "lead-thread");
+      hooks.onTurn("lead-turn-" + prompts.length);
+      prompts.push(prompt);
+      return "";
+    }
+  };
+  try {
+    new Coordinator(config, store, runtime);
+    const c = store.createConversation("First user request");
+    await until(() => prompts.length === 1 && store.session(c.leadSessionId)?.status === "idle");
+    assert.match(prompts[0], /NEW_EVENTS/);
+    assert.match(prompts[0], /First user request/);
+    assert.doesNotMatch(prompts[0], /RECENT_CONVERSATION|CURRENT_MESSAGE/);
+    store.postUser(c.id, "Second user message");
+    await until(() => prompts.length === 2 && store.session(c.leadSessionId)?.status === "idle");
+    assert.match(prompts[1], /NEW_EVENTS/);
+    assert.match(prompts[1], /Second user message/);
+    assert.doesNotMatch(prompts[1], /First user request|RECENT_CONVERSATION|CURRENT_MESSAGE/);
+    assert.equal(store.snapshot().messages.filter(m => m.from === "user").length, 2);
+    assert.equal(store.session(c.leadSessionId)?.threadId, "lead-thread");
+  } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
