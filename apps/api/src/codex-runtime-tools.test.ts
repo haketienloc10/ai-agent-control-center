@@ -33,7 +33,7 @@ const code = [
   'send({method:"item/completed",params:{threadId:"lead-thread",turnId:id,',
   'item:{type:"agentMessage",text:"Turn "+n+" done"}}});',
   'send({method:"turn/completed",params:{threadId:"lead-thread",turn:{id,status:"completed"}}});',
-  '}});'
+  '}}});'
 ].join("");
 const now = "2026-11-04T00:00:00Z";
 function lead(): AgentSession {
