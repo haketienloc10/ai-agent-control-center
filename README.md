@@ -27,11 +27,11 @@ Giao diện Web dùng ba khu vực: **Sidebar** (chọn task, tạo yêu cầu, 
 **Workspace** (trạng thái task, hội thoại và gửi Lead), **Agent Monitor**
 (trạng thái Lead/Peer, lượt xử lý cuối, hoạt động gần đây và danh sách module).
 
-- Mọi chỉ số và trạng thái đều được tính từ \`GET /api/snapshot\`, cập nhật bằng SSE \`/api/events\`; không polling Peer bằng message.
-- \`Idle\` biểu thị Codex session không chạy turn; không đồng nghĩa task đã hoàn thành. Trạng thái task \`finished\` chỉ được tạo bởi \`finish()\`.
+- Mọi chỉ số và trạng thái đều được tính từ `GET /api/snapshot`, cập nhật bằng SSE `/api/events`; không polling Peer bằng message.
+- `Idle` biểu thị Codex session không chạy turn; không đồng nghĩa task đã hoàn thành. Trạng thái task `finished` chỉ được tạo bởi `finish()`.
 - Bảng sự kiện gần đây chỉ tổng hợp từ message đã lưu; chưa có progress stream hoặc event audit log chuyên dụng. Chỉ báo kết nối Backend qua SSE, không suy ra tình trạng Codex từ kết nối đó.
-- \`Xem luồng Lead ↔ Peer\` hiển thị message routing dưới dạng các dòng có thể mở rộng. Chọn Peer ở panel bên phải để xem transcript của Peer.
-- \`App Settings\` giữ hành vi model/effort của PR #12. Không có API mới hoặc thay đổi cơ chế điều phối của PR #13.
+- `Xem luồng Lead ↔ Peer` hiển thị message routing dưới dạng các dòng có thể mở rộng. Chọn Peer ở panel bên phải để xem transcript của Peer.
+- `App Settings` giữ hành vi model/effort của PR #12. Không có API mới hoặc thay đổi cơ chế điều phối của PR #13.
 - Layout responsive ở màn hình nhỏ: sidebar dạng dải task ngang, Agent Monitor nằm dưới hội thoại.
 
 ## App Settings: model và reasoning effort
