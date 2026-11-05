@@ -1,14 +1,24 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import { MarkdownContent } from "./MarkdownContent.js";
 import type { AgentSession, Message } from "@aacc/contracts";
 import { visibleMessages } from "../message-view.js";
 import { shortTime } from "../selectors.js";
 
-function MessageBody({ text }: { text: string }) {
-  if (text.length <= 720) return <div className="message-body">{text}</div>;
-  return <details className="long-message">
-    <summary>{text.slice(0, 440).trim()}… <span className="expand-hint">Xem toàn bộ</span></summary>
-    <div className="message-body expanded-body">{text}</div>
-  </details>;
+/** Expand the rendered content, not a sliced Markdown string. */
+export function MessageBody({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const contentId = useId();
+  const long = text.length > 720;
+  return <div className="message-body-container">
+    <div id={contentId} className={"message-body" + (long && !expanded ? " is-collapsed" : "")}>
+      <MarkdownContent content={text}/>
+    </div>
+    {long && <button type="button" className="message-expand"
+      aria-expanded={expanded} aria-controls={contentId}
+      onClick={() => setExpanded(previous => !previous)}>
+      {expanded ? "Thu gọn" : "Xem toàn bộ"} <span aria-hidden="true">{expanded ? "↑" : "↓"}</span>
+    </button>}
+  </div>;
 }
 function MessageRow({ message, sessions }: { message: Message; sessions: AgentSession[] }) {
   const peer = sessions.find(s => s.id === message.peerSessionId)?.label ?? "Peer";
@@ -20,7 +30,7 @@ function MessageRow({ message, sessions }: { message: Message; sessions: AgentSe
     return <details className="route-event">
       <summary><span className="event-mark" aria-hidden="true">↳</span>
         <strong>{label}</strong><time>{shortTime(message.createdAt)}</time></summary>
-      <div className="event-detail">{message.text}</div>
+      <div className="event-detail"><MarkdownContent content={message.text}/></div>
     </details>;
   }
   const author = message.from === "user" ? "Bạn" :

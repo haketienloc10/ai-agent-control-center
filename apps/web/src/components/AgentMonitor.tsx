@@ -1,5 +1,6 @@
 import type { AgentSession, Conversation, Message, Snapshot } from "@aacc/contracts";
 import { peerMessages } from "../message-view.js";
+import { MarkdownContent } from "./MarkdownContent.js";
 import { latestDelivery, recentActivity, sessionStatus, shortTime } from "../selectors.js";
 
 function lastTurnText(session: AgentSession, data: Snapshot): string {
@@ -21,7 +22,7 @@ function PeerTranscript({ peer, messages }: { peer: AgentSession; messages: Mess
     {transcript.slice(-8).map(message => <div key={message.id} className="transcript-message">
       <strong>{message.from === "lead" ? "Lead giao việc" : "Peer phản hồi"}
         <time dateTime={message.createdAt}>{shortTime(message.createdAt)}</time></strong>
-      <p>{message.text}</p>
+      <div className="peer-message-content"><MarkdownContent content={message.text}/></div>
     </div>)}
     {!transcript.length && <p>Chưa có trao đổi với Peer này.</p>}
     {peer.error && <p className="peer-error" role="alert">{peer.error}</p>}
