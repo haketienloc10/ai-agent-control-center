@@ -49,7 +49,9 @@ export class CodexClient extends EventEmitter {
       this.emit("exit", code);
     });
     await this.request("initialize", {
-      clientInfo: { name: "ai_agent_control_center", title: "AI Agent Control Center", version: "0.1.0" }
+      clientInfo: { name: "ai_agent_control_center", title: "AI Agent Control Center", version: "0.1.0" },
+      // Required for experimental thread/start.dynamicTools.
+      capabilities: { experimentalApi: true }
     });
     this.notify("initialized", {});
   }

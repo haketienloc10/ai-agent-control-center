@@ -1,7 +1,7 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-/** Prevent two local servers from independently dispatching the same persisted Workflow. */
+/** Prevent two local servers from independently dispatching persisted Agent messages. */
 export class SingleInstanceLock {
   private readonly path: string;
   private fd?: number;

@@ -1,18 +1,12 @@
-# Hướng dẫn cho Agent / contributor
+# Hướng dẫn contributor
 
-- Viết Markdown và tài liệu hướng người đọc bằng tiếng Việt; giữ nguyên identifiers, config keys và logs.
-- Giữ phân tách `apps/web` (presentation), `apps/api` (application), `packages/contracts` (shared types).
-- Không để UI gọi trực tiếp Codex CLI, không truyền đường dẫn `cwd` từ request.
-- Lead chạy trong workspace chung, Peer trong source module đăng ký; các source module nằm ngoài repository này.
-- Không gắn logic workflow vào Codex JSON-RPC adapter. App-server không phải Orchestrator.
-- Chế độ local được chọn: Codex YOLO (`approvalPolicy=never`, `danger-full-access`) bỏ runtime approval/sandbox. Không dùng với dữ liệu không tin cậy, không expose server ra ngoài. Business Approval vẫn bắt buộc.
-- Không giả định `turn/completed` là success nếu `turn.status` không phải `completed`.
-- Sửa code phải kèm test/verification phù hợp, phân biệt đã chạy và chỉ đề xuất.
-- Không commit `config/workspace.local.json`, `.data/`, credentials.
-- Ưu tiên giữ API hợp đồng ổn định, xử lý lỗi và lifecycle rõ ràng, tránh abstractions không có nhu cầu.
-- Đọc `docs/GOALS.md`, `docs/ARCHITECTURE.md` trước khi thay đổi mô hình điều phối.
-
-- P1: LeadPlan, PeerResult, LeadReview trả JSON hợp lệ; không tự động accept khi parse/validation lỗi.
-- Dependency chỉ mở khóa khi Lead accept. Rework tối đa 2 lần, không tự retry vô hạn.
-- Peer làm việc trong `moduleId` thuộc registry, tối đa một writer mỗi module ở P1; chưa có Git worktree isolation.
-- Business Approval chỉ là quyết định của người dùng trên Workflow, khác Runtime Approval trong Codex.
+- Ngôn ngữ tài liệu: tiếng Việt, giữ nguyên code, commands và identifiers.
+- Mục tiêu duy nhất: Lead Agent điều phối các Codex Peer sessions qua messages.
+- Không khôi phục Workflow Engine, LeadPlan, DAG, acceptance gates, Final Reviewer bắt buộc hoặc Business Approval.
+- Chỉ Lead có quyền route Peer messages; Peer không tự giao tiếp với Peer.
+- Lead ở workspace, Peer ở module path đã đăng ký, nhiều Peer có thể chung module.
+- Không thêm Git worktree, Git conflict gate hoặc giới hạn số rework cho MVP.
+- Codex app-server là transport; không gắn business logic vào JSON-RPC client.
+- Giữ SQLite durability; turn `running` trước restart không được tự chạy lại.
+- Peer mặc định YOLO theo yêu cầu MVP. App chỉ bind `127.0.0.1` và không có authentication.
+- Khi thay đổi behavior: kiểm thử với fake Codex runtime và chỉ nói E2E thật đã chạy nếu có bằng chứng.

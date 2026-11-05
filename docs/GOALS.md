@@ -1,36 +1,15 @@
-# Mục tiêu sản phẩm
+# Mục tiêu MVP
 
-## Bối cảnh
+Thay việc người dùng phải quản lý thủ công nhiều Codex sessions bằng một **Lead Agent** ở workspace chung.
 
-Hiện tại người dùng mở terminal trong một **workspace chung** để chạy Lead Agent. Lead phân tích yêu cầu và phân công cho các Peer Agent. Các Peer thực hiện công việc trên **những source module nằm bên ngoài workspace chung**, gửi kết quả cho Lead kiểm tra; Lead có thể yêu cầu sửa và chạy lại.
+- Người dùng chỉ cần giao tiếp với Lead.
+- Lead quyết định tạo/resume bao nhiêu Peer sessions trong module nào.
+- Mỗi Peer duy trì Codex Thread riêng, có thể nhận nhiều lượt yêu cầu liên tục.
+- Cùng một module có thể có nhiều Peer sessions độc lập.
+- Không có đường giao tiếp Peer-to-Peer; mọi dữ liệu qua Lead.
+- Lead quyết định bổ sung, làm lại, giải quyết blocker và hoàn thành.
+- App chỉ truyền message, chạy session, lưu trạng thái và hiển thị kết quả.
 
-AI Agent Control Center thay đổi **cách điều khiển và quan sát** quy trình này từ terminal sang Dashboard; không thay thế Codex bằng một LLM API riêng.
+**Ngoài MVP:** workflow quality gates, DAG, acceptance checklist, Final Reviewer bắt buộc, Business Approval, Git worktree isolation, Git conflict prevention, patch approval, provider adapter khác Codex.
 
-## Mục tiêu
-
-1. Quản lý Lead, Peer, Task, Codex Thread/Turn và đường dẫn module trong một giao diện.
-2. Hiển thị trạng thái, lịch sử hoạt động và kết quả theo thời gian thực. Trong YOLO mode không có runtime approval; Business Approval cuối workflow vẫn được giữ.
-3. Định tuyến filesystem: Lead khởi chạy với `cwd` của workspace chung, Peer với `cwd` module được đăng ký; đây không phải rào chắn bảo mật trong YOLO mode.
-4. Trong YOLO mode, Runtime Approval được bỏ qua theo lựa chọn của người dùng; người dùng vẫn quyết định chấp nhận kết quả và merge ở cấp Business Approval.
-5. Có lớp `AgentRuntime` tách khỏi nghiệp vụ để sau này hỗ trợ Claude Code khi cần.
-
-## Success criteria của foundation
-
-- Một người dùng cấu hình lead workspace và ít nhất một source module ngoài repo.
-- UI tạo được Task cho Lead hoặc Peer, Backend ghi Task bền vững.
-- Backend khởi chạy Codex app-server qua stdio, tạo Thread/Turn và nhận event.
-- UI phản ánh Task status, event stream và runtime approval.
-- Có thể interrupt một Turn đang chạy.
-- Có ranh giới rõ giữa session thực tế của Codex và Task do ứng dụng sở hữu.
-
-## Ngoài phạm vi foundation
-
-- Lead tự lập kế hoạch theo schema rồi tự dispatch Peer và tự lặp review/rework.
-- Quản lý Git worktree, diff viewer, merge, CI và tự động publish.
-- Multi-user, đăng nhập từ xa, billing, cloud hosting.
-- 3D/isometric game UI theo ảnh; ưu tiên dữ liệu và luồng vận hành thật.
-- Cam kết isolation tuyệt đối bằng cách đặt `cwd`. Codex sandbox và quyền filesystem của host vẫn phải được cấu hình/kiểm chứng.
-
-## Nguyên tắc
-
-Ứng dụng quản lý **Task, Agent definition, Session mapping, Approval, Event**; Codex quản lý **agent loop, tools và context của từng Thread**. Phân công và review nghiệp vụ thuộc ứng dụng/Lead, không gán cho Codex app-server.
+Giữ an toàn kỹ thuật tối thiểu: không tự replay turn sau crash, không định tuyến sai session/module, API chỉ bind localhost.
