@@ -38,6 +38,8 @@ export interface Message {
 export interface Delivery {
   id: string; conversationId: string; sessionId: string; messageId: string;
   generation: number;
+  /** Enforce one routing phase per Lead turn: either Discovery handoff or implementation. */
+  routingPhase?: "discovery" | "execution";
   status: "queued" | "running" | "completed" | "interrupted" | "superseded";
   error?: string; createdAt: string; updatedAt: string;
 }

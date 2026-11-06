@@ -59,6 +59,7 @@ Runtime truyền `model` trong `thread/start` và `model`/`effort` trong `turn/s
 
 - Cấu hình `discovery.cwd` riêng và `discovery.enabled: true` trong `config/workspace.local.json`. Nếu thiếu hoặc tắt, Lead tiếp tục điều phối Peer trực tiếp. `discovery.mode` cũ vẫn được đọc để tương thích: `off` → tắt, `auto`/`always` → bật **khả năng gọi tool**, không tự khởi chạy.
 - Khi tạo conversation, **Lead luôn nhận delivery đầu tiên**. Lead chủ động dùng `spawn_discovery(message)` khi cần hiểu tổng quan các module. Chỉ có **một Discovery Session mỗi conversation**, có thể giao khảo sát bổ sung bằng `send_discovery(sessionId,message)` trong cùng Codex Thread; không hỏi tiến độ.
+- **Discovery là một giai đoạn bắt buộc phải hoàn thành nếu đã được chọn:** sau `spawn_discovery` hoặc `send_discovery` thành công, Lead phải kết thúc turn ngay. Store từ chối các tool Peer/`finish()` tiếp theo trong cùng Lead turn, đồng thời không bắt đầu Lead turn khác khi Discovery còn `queued/running`. Chỉ event báo cáo/lỗi Discovery mới cho phép Lead tiếp tục. Một Lead turn đã giao Peer cũng không được giao Discovery trong cùng turn.
 - Discovery có `cwd` riêng và truy cập nhiều module qua `thread/start.runtimeWorkspaceRoots: [discovery.cwd, ...module paths]`. Đây là cách app-server mở thêm các thư mục, tương ứng mục tiêu CLI `--add-dir`. Không dùng `readOnly.access`, named permission profile hay hạn chế sandbox riêng.
 - Discovery dùng **cùng sandbox và approval policy với Peer**: mặc định `danger-full-access`/`never`; `CODEX_SECURITY_MODE=sandbox` dùng `workspace-write`/`on-request`, với `writableRoots` gồm Discovery cwd và các module. Quy tắc *chỉ khám phá sơ bộ, không triển khai hoặc điều tra root cause* là instruction về vai trò, **không phải giới hạn runtime**. Cấu hình module phải được người dùng tin cậy.
 - Model/effort của Discovery có lựa chọn riêng trong **App Settings · Model & Effort** (SQLite). Thứ tự từng trường: `App Settings Discovery → discovery workspace config → Codex default`.
@@ -68,8 +69,8 @@ Runtime truyền `model` trong `thread/start` và `model`/`effort` trong `turn/s
 ## Lifecycle theo sự kiện
 
 1. Người dùng tạo task. App tạo **Lead delivery**. Discovery chưa tự chạy.
-2. Lead quyết định cần khám phá không. Nếu cần, gọi `spawn_discovery(message)` và kết thúc turn. Nếu không, giao việc trực tiếp cho Peer.
-3. Discovery thực hiện khảo sát sơ bộ nhiều module trong session riêng; trả báo cáo về Lead bằng event. `send_discovery(sessionId,message)` cho phép yêu cầu bổ sung thực sự trong cùng Thread.
+2. Lead quyết định cần khám phá không. Nếu cần, gọi `spawn_discovery(message)` **trước khi giao Peer**, sau đó **kết thúc turn ngay**. App không cho kết hợp Discovery và Peer trong một turn. Nếu không, giao việc trực tiếp cho Peer.
+3. Discovery thực hiện khảo sát sơ bộ nhiều module trong session riêng; trả báo cáo hoặc lỗi về Lead bằng event. Trong lúc Discovery pending, message người dùng vẫn được lưu nhưng không kích hoạt Lead sớm. `send_discovery(sessionId,message)` chỉ có thể tạo một giai đoạn khảo sát mới trong Lead turn sau khi báo cáo trước đã về.
 4. Lead nhận báo cáo Discovery, yêu cầu Peer khảo sát sâu khi thiếu bằng chứng hoặc giao `spawn_peer`/`send_peer` để triển khai. Peer report hoặc lỗi tiếp tục đánh thức Lead theo cơ chế event-driven.
 5. Khi toàn task xong, Lead gọi `finish()` rồi trả Codex `finalText` bình thường. Task chuyển `finished`, queued deliveries bị `superseded`; báo cáo muộn không đánh thức Lead.
 6. Người dùng gửi message mới có thể mở lại conversation `finished` và đánh thức Lead; Discovery không tự chạy lại.

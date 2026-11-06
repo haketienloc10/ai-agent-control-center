@@ -68,7 +68,15 @@ function deliver(data: Data, conversationId: string, sessionId: string, messageI
   return entry;
 }
 
-/** Một Peer event chỉ đánh thức Lead nếu chưa có Lead delivery đang chờ. */
+/** Discovery is a prerequisite when Lead explicitly requests an overview. */
+function pendingDiscovery(data: Data, conversation: Conversation): boolean {
+  return data.deliveries.some(d => d.conversationId === conversation.id &&
+    (d.generation ?? 0) === (conversation.generation ?? 0) &&
+    (d.status === "queued" || d.status === "running") &&
+    data.sessions.some(s => s.id === d.sessionId && s.role === "discovery"));
+}
+
+/** An agent event wakes Lead only once per pending Lead delivery. */
 function wakeLead(data: Data, conversation: Conversation, messageId: string): void {
   if (conversation.status !== "active") return;
   const pending = data.deliveries.some(d => d.conversationId === conversation.id &&
@@ -201,7 +209,11 @@ export class CoordinationStore extends EventEmitter {
       if (!conversation) throw new Error("Conversation not found");
       conversation.status = "active"; conversation.updatedAt = now();
       const item = message(data, conversationId, "user", "lead", value);
-      deliver(data, conversationId, conversation.leadSessionId, item.id);
+      // Persist user input, but never resume Lead during the Discovery phase.
+      // The Discovery result/error will wake Lead with the complete recent history.
+      if (!pendingDiscovery(data, conversation)) {
+        deliver(data, conversationId, conversation.leadSessionId, item.id);
+      }
       return item;
     });
   }
@@ -215,6 +227,10 @@ export class CoordinationStore extends EventEmitter {
       if (!conversation || conversation.status !== "active" ||
         (item.generation ?? 0) !== (conversation.generation ?? 0)) {
         throw new Error("Delivery thuộc task đã kết thúc");
+      }
+      // Also gate Lead deliveries already queued before Discovery was dispatched.
+      if (session.role === "lead" && pendingDiscovery(data, conversation)) {
+        throw new Error("Lead đang chờ Discovery; chưa được bắt đầu turn mới");
       }
       item.status = "running"; item.updatedAt = now();
       session.status = "running"; session.error = undefined; session.updatedAt = now();
@@ -240,6 +256,19 @@ export class CoordinationStore extends EventEmitter {
       if (lead.handledToolCalls?.includes(callId)) return "Already executed (idempotent replay)";
       const conversation = data.conversations.find(c => c.id === active.conversationId)!;
       if (conversation.status !== "active") throw new Error("Task đã hoàn thành");
+      const isDiscoveryCommand = command.type === "spawn_discovery" ||
+        command.type === "send_discovery";
+      // Synchronous SQLite transaction serializes even back-to-back app-server calls.
+      // A Lead turn must never mix Discovery with implementation or finish().
+      if (active.routingPhase === "discovery") {
+        throw new Error("Đã giao Discovery trong turn này. Kết thúc Lead turn và chờ kết quả Discovery trước khi giao Peer hoặc finish.");
+      }
+      if (active.routingPhase === "execution" && isDiscoveryCommand) {
+        throw new Error("Turn này đã giao Peer. Không thể đồng thời giao Discovery; kết thúc turn trước.");
+      }
+      if (pendingDiscovery(data, conversation)) {
+        throw new Error("Discovery đang chạy hoặc chờ thực thi. Lead phải chờ báo cáo hoặc lỗi trước khi tiếp tục.");
+      }
       let result: string;
       if (command.type === "finish") {
         finishConversation(data, conversation);
@@ -265,7 +294,8 @@ export class CoordinationStore extends EventEmitter {
           text(command.message, "Discovery message"), discovery.id);
         deliver(data, conversation.id, discovery.id, outbound.id);
         result = "Đã giao khám phá sơ bộ cho Discovery (sessionId=" + discovery.id +
-          "). Kết quả hoặc lỗi tự gửi lại Lead; không hỏi tiến độ.";
+          "). Kết thúc Lead turn ngay, không giao Peer hoặc finish trong turn này. Chờ kết quả/lỗi Discovery tự đánh thức Lead.";
+        active.routingPhase = "discovery";
       } else {
         let peer: AgentSession | undefined;
         if (command.type === "spawn_peer") {
@@ -293,6 +323,7 @@ export class CoordinationStore extends EventEmitter {
         deliver(data, conversation.id, peer.id, outbound.id);
         result = "Đã giao việc tới " + peer.label + " (sessionId=" + peer.id +
           "). Kết quả sẽ tự gửi lại Lead.";
+        active.routingPhase = "execution";
       }
       lead.handledToolCalls ??= [];
       lead.handledToolCalls.push(callId);
