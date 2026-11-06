@@ -51,9 +51,11 @@ function message(data: Data, conversationId: string, from: MessageAuthor,
   data.messages.push(entry);
   return entry;
 }
-function deliver(data: Data, conversationId: string, sessionId: string, messageId: string) {
+function deliver(data: Data, conversationId: string, sessionId: string, messageId: string,
+  eventMessageIds?: string[]) {
   const entry: Delivery = {
     id: randomUUID(), conversationId, sessionId, messageId,
+    ...(eventMessageIds ? { eventMessageIds } : {}),
     generation: data.conversations.find(c => c.id === conversationId)?.generation ?? 0,
     status: "queued", createdAt: now(), updatedAt: now()
   };
@@ -61,12 +63,20 @@ function deliver(data: Data, conversationId: string, sessionId: string, messageI
   return entry;
 }
 
-/** Một Peer event chỉ đánh thức Lead nếu chưa có Lead delivery đang chờ. */
+/** Route each new event to exactly one queued Lead delivery, independently of App chat history.
+ * Queued events coalesce; a running delivery's frozen batch is never modified.
+ */
 function wakeLead(data: Data, conversation: Conversation, messageId: string): void {
   if (conversation.status !== "active") return;
-  const pending = data.deliveries.some(d => d.conversationId === conversation.id &&
+  const pending = data.deliveries.find(d => d.conversationId === conversation.id &&
     d.sessionId === conversation.leadSessionId && d.status === "queued");
-  if (!pending) deliver(data, conversation.id, conversation.leadSessionId, messageId);
+  if (pending) {
+    pending.eventMessageIds ??= [pending.messageId];
+    if (!pending.eventMessageIds.includes(messageId)) pending.eventMessageIds.push(messageId);
+    pending.updatedAt = now();
+  } else {
+    deliver(data, conversation.id, conversation.leadSessionId, messageId, [messageId]);
+  }
 }
 
 function finishConversation(data: Data, conversation: Conversation): void {
@@ -100,8 +110,27 @@ export class CoordinationStore extends EventEmitter {
       : { conversations: [], sessions: [], messages: [], deliveries: [], settings: emptySettings() };
     const missingSettings = !this.state.settings;
     this.state.settings ??= emptySettings();
-    // Never replay turns already started before a crash. Queued deliveries were not started.
+    // Upgrade queued legacy Lead deliveries before dropping RECENT_CONVERSATION.
+    // Reconstruct all pending Lead-directed events from the first queued anchor,
+    // preserving more than 50 events and coalescing older per-user deliveries.
     let changed = false;
+    for (const conversation of this.state.conversations) {
+      const queued = this.state.deliveries.filter(d => d.conversationId === conversation.id &&
+        d.sessionId === conversation.leadSessionId && d.status === "queued");
+      if (!queued.length || queued.every(d => d.eventMessageIds)) continue;
+      const first = queued[0];
+      const start = this.state.messages.findIndex(m => m.id === first.messageId);
+      if (start < 0) throw new Error("Cannot migrate Lead delivery without its event message");
+      first.eventMessageIds = this.state.messages.slice(start)
+        .filter(m => m.conversationId === conversation.id && m.to === "lead").map(m => m.id);
+      first.updatedAt = now();
+      for (const redundant of queued.slice(1)) {
+        redundant.status = "superseded";
+        redundant.updatedAt = now();
+      }
+      changed = true;
+    }
+    // Never replay turns already started before a crash. Queued deliveries were not started.
     for (const delivery of this.state.deliveries) {
       if (delivery.status === "running") {
         delivery.status = "interrupted";
@@ -145,6 +174,11 @@ export class CoordinationStore extends EventEmitter {
     const value = this.state.sessions.find(s => s.id === id);
     return value && structuredClone(value);
   }
+  /** Read only Peer session metadata; never load App messages into Lead prompt construction. */
+  peerSessions(conversationId: string): AgentSession[] {
+    return this.state.sessions.filter(s => s.conversationId === conversationId &&
+      s.role === "peer").map(s => structuredClone(s));
+  }
   queued(): Delivery[] { return this.state.deliveries.filter(d => d.status === "queued").map(d => ({ ...d })); }
   delivery(id: string): Delivery | undefined {
     const found = this.state.deliveries.find(d => d.id === id);
@@ -154,6 +188,25 @@ export class CoordinationStore extends EventEmitter {
     const delivery = this.state.deliveries.find(d => d.id === id);
     const found = this.state.messages.find(m => m.id === delivery?.messageId);
     return found && { ...found };
+  }
+  /** The persisted input batch for this Lead delivery, not recent App chat messages. */
+  leadInputs(id: string): Message[] {
+    const delivery = this.state.deliveries.find(d => d.id === id);
+    const conversation = this.state.conversations.find(c => c.id === delivery?.conversationId);
+    if (!delivery || !conversation || delivery.sessionId !== conversation.leadSessionId) {
+      throw new Error("Not a Lead delivery");
+    }
+    const ids = delivery.eventMessageIds ?? [delivery.messageId];
+    const requested = new Set(ids);
+    const byId = new Map(this.state.messages.filter(m => requested.has(m.id))
+      .map(m => [m.id, m]));
+    return ids.map(messageId => {
+      const item = byId.get(messageId);
+      if (!item || item.conversationId !== conversation.id || item.to !== "lead") {
+        throw new Error("Invalid Lead event message: " + messageId);
+      }
+      return { ...item };
+    });
   }
   conversation(id: string) { return this.state.conversations.find(c => c.id === id); }
 
@@ -171,7 +224,7 @@ export class CoordinationStore extends EventEmitter {
         label: "Lead", status: "idle", createdAt: now(), updatedAt: now()
       });
       const item = message(data, conversation.id, "user", "lead", value);
-      deliver(data, conversation.id, conversation.leadSessionId, item.id);
+      wakeLead(data, conversation, item.id);
       return conversation;
     });
   }
@@ -182,7 +235,7 @@ export class CoordinationStore extends EventEmitter {
       if (!conversation) throw new Error("Conversation not found");
       conversation.status = "active"; conversation.updatedAt = now();
       const item = message(data, conversationId, "user", "lead", value);
-      deliver(data, conversationId, conversation.leadSessionId, item.id);
+      wakeLead(data, conversation, item.id);
       return item;
     });
   }
@@ -267,6 +320,10 @@ export class CoordinationStore extends EventEmitter {
       const s = data.sessions.find(s => s.id === sessionId);
       if (!s) throw new Error("Session not found");
       s.turnId = turnId; s.updatedAt = now();
+      if (s.role === "lead") {
+        const running = data.deliveries.find(d => d.sessionId === sessionId && d.status === "running");
+        if (running) running.codexTurnId = turnId;
+      }
     });
   }
   /** End one Lead turn; task remains active unless finish was called explicitly. */

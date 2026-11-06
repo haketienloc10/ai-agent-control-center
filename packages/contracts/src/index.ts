@@ -37,6 +37,10 @@ export interface Message {
 export interface Delivery {
   id: string; conversationId: string; sessionId: string; messageId: string;
   generation: number;
+  /** Frozen per-turn Lead input: only newly routed event IDs; absent on Peer deliveries. */
+  eventMessageIds?: string[];
+  /** Persisted when Codex acknowledges turn/start; not proof that the turn completed. */
+  codexTurnId?: string;
   status: "queued" | "running" | "completed" | "interrupted" | "superseded";
   error?: string; createdAt: string; updatedAt: string;
 }

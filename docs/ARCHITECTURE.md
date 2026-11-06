@@ -24,7 +24,7 @@ sequenceDiagram
 ## Trách nhiệm
 
 - `apps/api/src/index.ts`: API HTTP/SSE chỉ localhost.
-- `apps/api/src/coordination-store.ts`: SQLite transaction, routing idempotent, kết quả Peer đánh thức Lead, `finish` chặn delivery cũ.
+- `apps/api/src/coordination-store.ts`: SQLite transaction, routing idempotent, kết quả Peer đánh thức Lead, `finish` chặn delivery cũ. Lead event inbox được lưu bằng `Delivery.eventMessageIds`, tách khỏi App chat history.
 - `apps/api/src/coordinator.ts`: scheduler theo `store.on('change')`, tối đa một turn/session và tối đa bốn turn đồng thời. Không polling.
 - `apps/api/src/codex-runtime.ts`: transport `thread/start`, `thread/resume`, `turn/start`, terminal notifications, `item/tool/call`.
 - `apps/web/src/main.tsx`: giao diện conversation, trạng thái Peer, transcript.
@@ -46,7 +46,7 @@ Chỉ Lead có `spawn_peer`, `send_peer`, `finish` khi `thread/start.dynamicTool
 
 Codex turn không có timer thực thi 10 phút. RPC có deadline riêng để phát hiện lỗi kết nối. Không có watchdog 15 phút trong bản này; Peer không phát terminal event nhưng process còn sống có thể chờ vô hạn.
 
-SQLite giữ trạng thái sau restart; delivery đang chạy thành interrupted và không replay. CI dùng fake Codex transport, không chứng minh E2E với Codex thật.
+SQLite giữ trạng thái sau restart. Batch Lead đã queued được giữ nguyên và được migrate từ dữ liệu legacy khi cần; batch running thành interrupted và không tự replay vì không thể khẳng định Codex đã nhận/xử lý tới đâu. `codexTurnId` chỉ chứng minh `turn/start` đã trả về. `NEW_EVENTS` chỉ chứa các sự kiện đầu vào của Lead delivery đang chạy, không phải 50 App messages gần nhất. CI dùng fake Codex transport, không chứng minh E2E với Codex thật.
 
 Lead read-only; Peer sửa source trực tiếp. Không có OS isolation khi YOLO, và nhiều Peer cùng module có thể ghi xung đột.
 
