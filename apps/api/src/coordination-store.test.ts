@@ -142,7 +142,7 @@ test("Idempotent tool calls persist across restart; running turn is never replay
     const c = ctx.store.createConversation("Todo");
     const lead = startLead(ctx.store, c.id);
     ctx.store.setThread(c.leadSessionId, "thread-1");
-    const cmd = { type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế" as const, moduleId: "web",
+    const cmd = { type: "spawn_peer" as const, expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "web",
       message: 'GET /api/todos → {"todos":[]}' };
     ctx.store.routeLeadTool(lead.id, "thread-1:call-1", cmd, ["web"]);
     assert.match(ctx.store.routeLeadTool(lead.id, "thread-1:call-1", cmd, ["web"]),

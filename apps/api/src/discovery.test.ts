@@ -158,7 +158,7 @@ test("send_discovery only works in a new Lead turn after the prior Discovery rep
     const original = ctx.store.queued()[0];
     ctx.store.startDelivery(original.id);
     ctx.store.setThread(d.id, "thread-1");
-    const cmd = { type: "send_discovery", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế" as const, sessionId: d.id,
+    const cmd = { type: "send_discovery" as const, expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", sessionId: d.id,
       message: "Bổ sung sơ bộ: xem entry points" };
     assert.throws(() => ctx.store.routeLeadTool(leadA.id, "too-early", cmd, [], true),
       /Kết thúc Lead turn/);

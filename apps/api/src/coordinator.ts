@@ -1,3 +1,7 @@
+import type { AgentSession, ContextPacket, Delivery, Message, WorkspaceConfig } from "@aacc/contracts";
+import { CoordinationStore } from "./coordination-store.js";
+import type { AgentRuntime } from "./codex-runtime.js";
+
 function leadPrompt(config: WorkspaceConfig, store: CoordinationStore, delivery: Delivery): string {
   const events = store.leadInputs(delivery.id);
   const peers = store.agentSessions(delivery.conversationId, "peer").map(s => ({
