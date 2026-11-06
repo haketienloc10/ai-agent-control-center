@@ -9,7 +9,7 @@ import { CoordinationStore } from "./coordination-store.js";
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "aacc-events-"));
   let store = new CoordinationStore(dir);
-  return { get store() { return store; },
+  return { dir, get store() { return store; },
     reopen() { store.close(); store = new CoordinationStore(dir); },
     cleanup() { store.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
@@ -308,4 +308,125 @@ test("Old SQLite snapshots without Discovery settings migrate to an empty select
     store?.close();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("Lead inbox coalesces all 75 new events, excludes history and freezes a running batch", () => {
+  const ctx = fixture();
+  try {
+    const conversation = ctx.store.createConversation("Initial request");
+    const first = ctx.store.queued()[0];
+    assert.deepEqual(ctx.store.leadInputs(first.id).map(m => m.text), ["Initial request"]);
+    ctx.store.startDelivery(first.id);
+    // New user events while the Lead turn is running belong to the next turn.
+    for (let i = 0; i < 75; i++) ctx.store.postUser(conversation.id, "New event " + i);
+    assert.deepEqual(ctx.store.leadInputs(first.id).map(m => m.text), ["Initial request"]);
+    const waiting = ctx.store.queued().filter(d => d.sessionId === conversation.leadSessionId);
+    assert.equal(waiting.length, 1);
+    const queued = waiting[0];
+    assert.deepEqual(ctx.store.leadInputs(queued.id).map(m => m.text),
+      Array.from({ length: 75 }, (_, i) => "New event " + i));
+    assert.equal(queued.eventMessageIds?.length, 75);
+    ctx.store.completeLead(first.id, "Lead visible history remains separate");
+    assert.equal(ctx.store.snapshot().messages.filter(m => m.to === "user").length, 1);
+    ctx.store.startDelivery(queued.id);
+    assert.deepEqual(ctx.store.leadInputs(queued.id).map(m => m.text),
+      Array.from({ length: 75 }, (_, i) => "New event " + i));
+  } finally { ctx.cleanup(); }
+});
+
+test("Peer completions and errors in one queued Lead wake-up are delivered without replay", () => {
+  const ctx = fixture();
+  try {
+    const conversation = ctx.store.createConversation("Build app");
+    const lead = startLead(ctx.store, conversation.id);
+    for (const [i, moduleId] of ["api", "web", "tests"].entries()) {
+      ctx.store.routeLeadTool(lead.id, "spawn-" + i,
+        { type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId, message: "Work " + i },
+        ["api", "web", "tests"]);
+    }
+    ctx.store.completeLead(lead.id, "Dispatch complete");
+    const peers = ctx.store.queued();
+    peers.forEach(p => ctx.store.startDelivery(p.id));
+    ctx.store.completePeer(peers[0].id, "API complete");
+    ctx.store.failDelivery(peers[1].id, "Web test failed");
+    ctx.store.completePeer(peers[2].id, "Tests complete");
+    const waiting = ctx.store.queued().filter(d => d.sessionId === conversation.leadSessionId);
+    assert.equal(waiting.length, 1);
+    assert.deepEqual(ctx.store.leadInputs(waiting[0].id).map(m => m.text),
+      ["API complete", "Peer web gặp lỗi: Web test failed", "Tests complete"]);
+    assert.equal(ctx.store.leadInputs(waiting[0].id).filter(m => m.from === "system").length, 1);
+    assert.ok(ctx.store.snapshot().messages.some(m => m.text === "Dispatch complete"));
+    assert.ok(!ctx.store.leadInputs(waiting[0].id).some(m => m.text === "Dispatch complete"));
+    ctx.store.startDelivery(waiting[0].id);
+    ctx.store.setTurn(conversation.leadSessionId, "codex-ack-1");
+    assert.equal(ctx.store.delivery(waiting[0].id)?.codexTurnId, "codex-ack-1");
+    ctx.store.completeLead(waiting[0].id, "Reviewed");
+    assert.equal(ctx.store.queued().length, 0);
+  } finally { ctx.cleanup(); }
+});
+
+test("Pending Lead event batch persists across SQLite restart", () => {
+  const ctx = fixture();
+  try {
+    const conversation = ctx.store.createConversation("Task");
+    ctx.store.postUser(conversation.id, "Update 1");
+    ctx.store.postUser(conversation.id, "Update 2");
+    assert.equal(ctx.store.queued().length, 1);
+    const id = ctx.store.queued()[0].id;
+    ctx.reopen();
+    assert.equal(ctx.store.queued()[0].id, id);
+    assert.deepEqual(ctx.store.leadInputs(id).map(m => m.text), ["Task", "Update 1", "Update 2"]);
+  } finally { ctx.cleanup(); }
+});
+
+test("Interrupted Lead turn retains its event batch and acknowledged turn ID without unsafe replay", () => {
+  const ctx = fixture();
+  try {
+    const c = ctx.store.createConversation("First");
+    const first = startLead(ctx.store, c.id);
+    ctx.store.setTurn(c.leadSessionId, "codex-turn-1");
+    ctx.reopen();
+    assert.equal(ctx.store.delivery(first.id)?.status, "interrupted");
+    assert.equal(ctx.store.delivery(first.id)?.codexTurnId, "codex-turn-1");
+    assert.deepEqual(ctx.store.leadInputs(first.id).map(m => m.text), ["First"]);
+    assert.equal(ctx.store.queued().length, 0, "Interrupted input is not blindly replayed");
+    ctx.store.postUser(c.id, "Manual follow-up");
+    const next = ctx.store.queued()[0];
+    assert.deepEqual(ctx.store.leadInputs(next.id).map(m => m.text), ["Manual follow-up"]);
+    assert.equal(ctx.store.snapshot().messages.filter(m => m.from === "user").length, 2);
+  } finally { ctx.cleanup(); }
+});
+
+test("Legacy queued Lead deliveries migrate to a durable complete batch once", () => {
+  const ctx = fixture();
+  try {
+    const c = ctx.store.createConversation("Legacy initial");
+    ctx.store.postUser(c.id, "Legacy follow-up A");
+    ctx.store.postUser(c.id, "Legacy follow-up B");
+    const firstId = ctx.store.queued()[0].id;
+    // Simulate the pre-batch schema with one queued delivery per additional user message.
+    const existing = ctx.store.snapshot();
+    const original = existing.deliveries[0];
+    delete original.eventMessageIds;
+    for (const item of existing.messages.filter(m => m.to === "lead").slice(1)) {
+      existing.deliveries.push({
+        ...original, id: "legacy-" + item.id, messageId: item.id,
+        createdAt: item.createdAt, updatedAt: item.createdAt
+      });
+    }
+    assert.equal(existing.deliveries.length, 3);
+    const db = new DatabaseSync(join(ctx.dir, "coordination.sqlite"));
+    db.prepare("UPDATE snapshot SET body = ? WHERE id = 1").run(JSON.stringify(existing));
+    db.close();
+    ctx.reopen(); 
+    const upgraded = ctx.store;
+    try {
+      assert.equal(upgraded.queued().length, 1);
+      assert.equal(upgraded.queued()[0].id, firstId);
+      assert.deepEqual(upgraded.leadInputs(firstId).map(m => m.text),
+        ["Legacy initial", "Legacy follow-up A", "Legacy follow-up B"]);
+      assert.equal(upgraded.snapshot().deliveries.filter(d => d.status === "superseded").length, 2);
+      assert.equal(upgraded.queued()[0].eventMessageIds?.length, 3);
+    } finally { /* fixture cleanup closes the upgraded store */ }
+  } finally { ctx.cleanup(); }
 });

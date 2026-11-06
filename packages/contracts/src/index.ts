@@ -63,6 +63,10 @@ export interface Message {
 export interface Delivery {
   id: string; conversationId: string; sessionId: string; messageId: string;
   generation: number;
+  /** Frozen per-turn Lead input batch. Worker deliveries do not use this. */
+  eventMessageIds?: string[];
+  /** Codex acknowledged turn/start; not proof the turn completed. */
+  codexTurnId?: string;
   /** Enforce one routing phase per Lead turn: either Discovery handoff or implementation. */
   routingPhase?: "discovery" | "execution";
   status: "queued" | "running" | "completed" | "interrupted" | "superseded";

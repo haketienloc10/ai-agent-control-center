@@ -4,7 +4,7 @@ import type { LeadCommand } from "@aacc/contracts";
 const contextRefField = {
   type: "array", maxItems: 8, uniqueItems: true,
   items: { type: "string" },
-  description: "Message IDs trong RECENT_CONVERSATION; App đính kèm nguyên văn các nguồn được chọn"
+  description: "Message IDs từ NEW_EVENTS hoặc turn trước của Lead; App đính kèm nguyên văn các nguồn được chọn"
 };
 const expectedResultField = {
   type: "string", description: "Kết quả và bằng chứng cụ thể cần báo lại Lead; tiêu chí kiểm chứng cho phạm vi này"

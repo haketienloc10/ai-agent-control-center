@@ -85,4 +85,8 @@ Lead routeLeadTool()
       → Codex turn/start (Thread độc lập)
 ```
 
-Lead nhận `RECENT_CONVERSATION` kèm message ID để chọn `contextRefs`, nhưng Worker chỉ nhận những nguồn được chọn, yêu cầu gốc và Task Brief. UI có thể mở Context Packet đã lưu để xác minh thông tin thực tế được chuyển giao. Nguồn `discovery-preliminary` luôn là nhận định sơ bộ; App không đánh giá chất lượng nội dung Peer hay chứng thực kết luận Lead.
+Lead nhận `NEW_EVENTS` kèm message ID để chọn `contextRefs`; các event trước nằm trong chính Codex Thread, nhưng Worker chỉ nhận những nguồn được chọn, yêu cầu gốc và Task Brief. UI có thể mở Context Packet đã lưu để xác minh thông tin thực tế được chuyển giao. Nguồn `discovery-preliminary` luôn là nhận định sơ bộ; App không đánh giá chất lượng nội dung Peer hay chứng thực kết luận Lead.
+
+## Event inbox không phát lại lịch sử App
+
+Mỗi Lead delivery có `eventMessageIds`, append khi queued và đóng băng khi running. `leadInputs(delivery.id)` chỉ trả các event đến lượt đó; `NEW_EVENTS` không phải toàn bộ App chat. `postUser` trong lúc Discovery chạy vẫn đưa event vào queued Lead delivery; `startDelivery()` chặn Lead đến khi Discovery hoàn tất, lúc đó kết quả được append vào cùng batch. `codexTurnId` đánh dấu `turn/start` đã được xác nhận, không chứng minh xử lý xong; running delivery không tự replay sau restart. SQLite snapshot cũ có queued Lead deliveries được quy về một batch khi mở DB.

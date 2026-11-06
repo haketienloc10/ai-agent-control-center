@@ -268,12 +268,19 @@ test("User follow-ups are stored but do not resume Lead until Discovery resolves
     const d = ctx.store.queued()[0];
     ctx.store.startDelivery(d.id);
     ctx.store.postUser(task.id, "Thêm yêu cầu Web");
-    assert.equal(ctx.store.queued().length, 0, "Lead must stay idle until Discovery completes");
+    const queuedDuringDiscovery = ctx.store.queued().filter(x =>
+      x.sessionId === task.leadSessionId);
+    assert.equal(queuedDuringDiscovery.length, 1, "User event is queued durably");
+    assert.throws(() => ctx.store.startDelivery(queuedDuringDiscovery[0].id),
+      /chờ Discovery/, "Lead cannot start until the report arrives");
     assert.deepEqual(ctx.store.snapshot().messages.filter(m => m.from === "user").map(m => m.text),
       ["Build API", "Thêm yêu cầu Web"]);
     ctx.store.completeDiscovery(d.id, "Khảo sát xong");
     assert.equal(ctx.store.queued().filter(x => x.sessionId === task.leadSessionId).length, 1,
       "Discovery completion batches into the pending Lead wake");
+    const leadBatch = ctx.store.queued().find(x => x.sessionId === task.leadSessionId)!;
+    assert.deepEqual(ctx.store.leadInputs(leadBatch.id).map(m => m.text),
+      ["Thêm yêu cầu Web", "Khảo sát xong"]);
     assert.deepEqual(ctx.store.snapshot().messages.filter(m => m.from === "user").map(m => m.text),
       ["Build API", "Thêm yêu cầu Web"]);
   } finally { ctx.cleanup(); }

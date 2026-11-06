@@ -28,7 +28,7 @@ Giao diện Web dùng ba khu vực: **Sidebar** (chọn task, tạo yêu cầu, 
 **Workspace** (trạng thái task, hội thoại và gửi Lead), **Agent Monitor**
 (trạng thái Discovery/Lead/Peer, lượt xử lý cuối, hoạt động gần đây và danh sách module).
 
-- Mọi chỉ số và trạng thái đều được tính từ `GET /api/snapshot`, cập nhật bằng SSE `/api/events`; không polling Peer bằng message.
+- Mọi chỉ số và trạng thái đều được tính từ `GET /api/snapshot`, cập nhật bằng SSE `/api/events`; không polling Peer bằng message. `Delivery.eventMessageIds` lưu event batch đầu vào Lead; không đưa toàn bộ App chat history vào Codex turn.
 - `Idle` biểu thị Codex session không chạy turn; không đồng nghĩa task đã hoàn thành. Trạng thái task `finished` chỉ được tạo bởi `finish()`.
 - Bảng sự kiện gần đây chỉ tổng hợp từ message đã lưu; chưa có progress stream hoặc event audit log chuyên dụng. Chỉ báo kết nối Backend qua SSE, không suy ra tình trạng Codex từ kết nối đó.
 - `Xem luồng điều phối` hiển thị message routing (Lead ↔ Discovery và Lead ↔ Peer) dưới dạng các dòng mở rộng được. Agent Monitor hiển thị yêu cầu Lead giao Discovery và báo cáo gửi lại.
@@ -57,11 +57,11 @@ Runtime truyền `model` trong `thread/start` và `model`/`effort` trong `turn/s
 
 ## Lead là bộ não; ba agent có context độc lập
 
-- **Lead** hiểu yêu cầu, nắm tiêu chí hoàn thành, quản lý điều đã biết/chưa biết, phân tích dependency, giao Discovery/Peer và xử lý blocker. Lead cập nhật `Task Brief` bằng `update_task_brief(brief)`: `goal`, `acceptanceCriteria`, `verified` (kèm `evidenceRefs`), `preliminary`, `unknowns`, `nextDecision`. App chỉ lưu đánh giá của Lead, không chứng thực kết luận hay tạo quality gate.
+- **Lead** hiểu yêu cầu qua `NEW_EVENTS` và Codex Thread của chính mình, nắm tiêu chí hoàn thành, quản lý điều đã biết/chưa biết, phân tích dependency, giao Discovery/Peer và xử lý blocker. Lead cập nhật `Task Brief` bằng `update_task_brief(brief)`: `goal`, `acceptanceCriteria`, `verified` (kèm `evidenceRefs`), `preliminary`, `unknowns`, `nextDecision`. App chỉ lưu đánh giá của Lead, không chứng thực kết luận hay tạo quality gate.
 - **Discovery** khám phá sơ bộ đúng phạm vi. Báo cáo của Discovery là `discovery-preliminary`, cần Peer kiểm tra khi quyết định phụ thuộc implementation cụ thể.
 - **Peer** điều tra source chi tiết, sửa phần còn thiếu, báo cáo file, kết quả và bằng chứng; phân biệt build, HTTP integration, browser E2E. Lead chỉ định trách nhiệm kiểm chứng tích hợp khi giao việc đa module.
 - Mỗi `spawn_peer`/`send_peer`/`spawn_discovery`/`send_discovery` cần `message` tự đầy đủ và `expectedResult`, có thể chọn `contextRefs` (tối đa 8 message IDs từ cùng conversation). App snapshot nguyên văn yêu cầu gốc, Task Brief và các source được chọn thành **Context Packet** lưu cùng message trong SQLite, rồi chuyển cho worker trong prompt. Không tự gửi toàn bộ Lead/Discovery Thread.
-- `RECENT_CONVERSATION` của Lead chứa message IDs để chọn nguồn. Nếu Lead nói “dựa trên Discovery” hoặc dựa trên kết quả một Peer, phải đính kèm message ID liên quan trong `contextRefs`; người nhận không tự biết nội dung đó.
+- `NEW_EVENTS` của Lead chứa message IDs mới đến trong lượt; các event trước nằm trong Codex Thread của Lead. Nếu Lead nói “dựa trên Discovery” hoặc dựa trên kết quả một Peer, phải đính kèm message ID liên quan trong `contextRefs`; người nhận không tự biết nội dung đó.
 - UI **Xem luồng điều phối** và Agent Monitor cho phép xem đúng Context Packet đã gửi, gồm nguồn, nhãn `discovery-preliminary`/`peer-report` và `expectedResult`. Không tái tạo context từ lịch sử mới hơn.
 - Lead không giao triển khai các phần phụ thuộc contract chưa xác minh; có thể chạy song song các việc thực sự độc lập. Trước `finish()`, Lead đối chiếu kết quả Peer với tiêu chí và nêu giới hạn test chưa thực hiện.
 - Quy tắc vận hành agent là cố định trong App; quy tắc code, test và conventions tùy chỉnh thuộc `AGENTS.md` của workspace/module. `workspace.local.json` chỉ nhận `lead.cwd`, `discovery.cwd/enabled` và danh sách module; model/effort thuộc App Settings.

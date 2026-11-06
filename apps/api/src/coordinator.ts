@@ -1,21 +1,12 @@
-import type { AgentSession, ContextPacket, Delivery, Message, WorkspaceConfig } from "@aacc/contracts";
-import { CoordinationStore } from "./coordination-store.js";
-import type { AgentRuntime } from "./codex-runtime.js";
-
 function leadPrompt(config: WorkspaceConfig, store: CoordinationStore, delivery: Delivery): string {
-  const state = store.snapshot();
-  const current = state.messages.find(m => m.id === delivery.messageId)!;
-  const recent = state.messages.filter(m => m.conversationId === delivery.conversationId).slice(-50);
-  const originalRequest = state.messages.find(m => m.conversationId === delivery.conversationId &&
-    m.from === "user")?.text ?? "";
-  const peers = state.sessions.filter(s => s.conversationId === delivery.conversationId &&
-    s.role === "peer").map(s => ({
+  const events = store.leadInputs(delivery.id);
+  const peers = store.agentSessions(delivery.conversationId, "peer").map(s => ({
     sessionId: s.id, moduleId: s.moduleId, label: s.label, status: s.status, error: s.error
   }));
-  const discovery = state.sessions.filter(s => s.conversationId === delivery.conversationId &&
-    s.role === "discovery").map(s => ({
+  const discovery = store.agentSessions(delivery.conversationId, "discovery").map(s => ({
     sessionId: s.id, status: s.status, error: s.error
   }));
+  const brief = store.conversation(delivery.conversationId)?.taskBrief ?? null;
   return [
     "Bạn là LEAD AGENT, điều phối các Peer sessions thay người dùng.",
     "Bạn ở workspace riêng, không sửa code; giao công việc cho Peer theo module.",
@@ -35,7 +26,7 @@ function leadPrompt(config: WorkspaceConfig, store: CoordinationStore, delivery:
     "Chỉ gắn verified nếu có evidenceRefs từ User/Peer/System; không coi báo cáo Discovery hoặc suy luận của chính bạn là bằng chứng đã xác minh.",
     "Trước khi giao việc, xem Discovery/Peer đã tìm thấy gì, không mặc định xây lại phần đã có. Xác định công việc phụ thuộc contract/chứng cứ nào.",
     "Không giao song song công việc dựa trên contract chưa xác minh; chỉ tuần tự phần phụ thuộc, các phần độc lập vẫn có thể chạy song song.",
-    "Mỗi spawn/send phải có message tự đầy đủ, expectedResult rõ ràng, và contextRefs chọn nguồn cần thiết bằng message ID; không viết 'dựa trên Discovery' khi chưa truyền nguồn.",
+    "Mỗi spawn/send phải có message tự đầy đủ, expectedResult rõ ràng, và contextRefs chọn nguồn bằng message ID trong NEW_EVENTS hoặc turn trước; không viết 'dựa trên Discovery' khi chưa truyền nguồn.",
     "App luôn gửi nguyên văn yêu cầu gốc và Task Brief đã lưu; contextRefs chuyển chính xác báo cáo/đổi yêu cầu được chọn, không dùng shared Thread.",
     "Khi giao việc trên cơ sở phát hiện Discovery/Peer, đính kèm message ID tương ứng vào contextRefs. Peer phải biết đâu là định hướng chưa xác minh.",
     "Nếu công việc cần tích hợp đa module, chỉ định Peer chịu trách nhiệm kiểm chứng tích hợp và loại bằng chứng cần có ngay từ khi giao việc.",
@@ -48,22 +39,19 @@ function leadPrompt(config: WorkspaceConfig, store: CoordinationStore, delivery:
     "Sau khi finish() thành công, gửi báo cáo cuối bằng Codex finalText thông thường; không truyền báo cáo vào tool.",
     "Nếu còn Peer hoặc Discovery đang làm phần việc cần thiết, không gọi finish. Kết thúc turn và chờ event.",
     "GỌI các công cụ update_task_brief, spawn_discovery, send_discovery, spawn_peer, send_peer, finish trực tiếp; không viết JSON điều phối trong reply.",
-    "Mỗi event có thể chứa nhiều kết quả Discovery/Peer trong RECENT_CONVERSATION; xử lý những kết quả mới một lần.",
+    "NEW_EVENTS chỉ gồm event đầu vào của turn này, có thể chứa nhiều kết quả Discovery/Peer. Xử lý từng event đúng một lần; các event cũ nằm trong chính Codex Thread của bạn.",
     "Peer không trao đổi trực tiếp với Peer khác. Mọi yêu cầu phối hợp phải qua bạn.",
     "Không tự tuyên bố test thành công nếu Peer chưa cung cấp bằng chứng.",
     "Không có approval gate hoặc workflow quality gate của app.",
-    "spawn_peer(moduleId,message,label?,model?,effort?) cho phép override model/effort khi mở Peer mới.",
+    "spawn_peer(moduleId,message,expectedResult,contextRefs?,label?,model?,effort?) cho phép override model/effort khi mở Peer mới.",
     "Nếu không override thì dùng Peer App Settings. Không sử dụng send_peer chỉ để đổi model/effort.",
     "SETTINGS: " + JSON.stringify(store.settings()),
     "MODULES: " + JSON.stringify(config.modules.map(m => ({ id: m.id, label: m.label, path: m.path }))),
     "PEER_SESSIONS: " + JSON.stringify(peers),
     "DISCOVERY_ENABLED: " + Boolean(config.discovery && config.discovery.enabled !== false),
     "DISCOVERY_SESSIONS: " + JSON.stringify(discovery),
-    "ORIGINAL_USER_REQUEST: " + JSON.stringify(originalRequest),
-    "TASK_BRIEF: " + JSON.stringify(state.conversations.find(c =>
-      c.id === delivery.conversationId)?.taskBrief ?? null),
-    "CURRENT_MESSAGE: " + JSON.stringify(current),
-    "RECENT_CONVERSATION: " + JSON.stringify(recent.map(m => ({
+    "TASK_BRIEF: " + JSON.stringify(brief),
+    "NEW_EVENTS: " + JSON.stringify(events.map(m => ({
       id: m.id, from: m.from, to: m.to, peerSessionId: m.peerSessionId,
       discoverySessionId: m.discoverySessionId, text: m.text
     })))
