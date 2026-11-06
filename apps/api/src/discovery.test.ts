@@ -312,8 +312,9 @@ test("Queued Lead deliveries cannot start during a Discovery phase, even if queu
     ctx.store.postUser(task.id, "Thêm yêu cầu Web");
     const queuedLead = ctx.store.queued().find(d => d.sessionId === task.leadSessionId)!;
     spawn(ctx.store, lead.id);
-    assert.throws(() => ctx.store.startDelivery(queuedLead.id), /chờ Discovery/);
     ctx.store.completeLead(lead.id, "");
+    // Now the Lead session is idle: only the Discovery barrier can prevent this delivery.
+    assert.throws(() => ctx.store.startDelivery(queuedLead.id), /chờ Discovery/);
     const discovery = ctx.store.queued().find(d => d.sessionId !== task.leadSessionId)!;
     ctx.store.startDelivery(discovery.id);
     assert.throws(() => ctx.store.startDelivery(queuedLead.id), /chờ Discovery/);
