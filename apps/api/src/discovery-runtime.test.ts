@@ -61,3 +61,22 @@ test("Discovery app-server turn uses named restricted permissions without legacy
     assert.equal(response.profile, "aacc-discovery-discovery-id");
   } finally { client.stop(); }
 });
+
+
+test("Discovery refuses an app-server response that silently applies a different profile", async () => {
+  const wrongServer = server
+    .replace('name!=="aacc-discovery-discovery-id"', 'name!=="aacc-discovery-discovery-wrong"')
+    .replace("activePermissionProfile:{id:name}", 'activePermissionProfile:{id:":read-only"}');
+  const client = new CodexClient(process.execPath, ["-e", wrongServer]);
+  const at = "2026-11-05T00:00:00Z";
+  const session: AgentSession = {
+    id: "discovery-wrong", conversationId: "task", role: "discovery", label: "Discovery",
+    status: "idle", createdAt: at, updatedAt: at
+  };
+  try {
+    await assert.rejects(new CodexAgentRuntime(client).run(session, "/work/discovery",
+      "Khảo sát tổng quan", { onThread: () => {}, onTurn: () => {} },
+      {}, ["/work/discovery", "/work/api", "/work/web"]),
+    /không xác nhận Discovery permission profile/);
+  } finally { client.stop(); }
+});
