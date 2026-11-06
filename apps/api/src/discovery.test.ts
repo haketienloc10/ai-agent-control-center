@@ -72,7 +72,14 @@ test("New tasks begin with Lead; only Lead can spawn optional Discovery", () => 
     assert.match(ctx.store.routeLeadTool(lead.id, "spawn-enabled",
       { type: "spawn_discovery", message: "Khảo sát API và Web ở mức tổng quan" },
       ["api", "web"], true), /Already executed/);
-    assert.throws(() => spawn(ctx.store, lead.id, "duplicate"), /đã có Discovery/);
+    assert.throws(() => spawn(ctx.store, lead.id, "duplicate"), /Đã giao Discovery/);
+    assert.equal(ctx.store.delivery(lead.id)?.routingPhase, "discovery");
+    assert.throws(() => ctx.store.routeLeadTool(lead.id, "same-turn-peer",
+      { type: "spawn_peer", moduleId: "api", message: "Implement API" }, ["api"], true),
+      /Kết thúc Lead turn/);
+    assert.throws(() => ctx.store.routeLeadTool(lead.id, "same-turn-finish",
+      { type: "finish" }, ["api"], true), /Kết thúc Lead turn/);
+    assert.equal(ctx.store.snapshot().sessions.some(x => x.role === "peer"), false);
     ctx.store.completeLead(lead.id, "");
     assert.equal(ctx.store.conversation(task.id)?.status, "active");
   } finally { ctx.cleanup(); }
@@ -139,7 +146,7 @@ test("Lead dispatches Discovery, waits without polling and receives an independe
   } finally { release(); ctx.cleanup(); }
 });
 
-test("send_discovery reuses the same session/thread, queues behind running turn and rejects other roles", () => {
+test("send_discovery only works in a new Lead turn after the prior Discovery report", () => {
   const ctx = fixture();
   try {
     const a = ctx.store.createConversation("A");
@@ -153,23 +160,50 @@ test("send_discovery reuses the same session/thread, queues behind running turn 
     ctx.store.setThread(d.id, "thread-1");
     const cmd = { type: "send_discovery" as const, sessionId: d.id,
       message: "Bổ sung sơ bộ: xem entry points" };
-    assert.match(ctx.store.routeLeadTool(leadA.id, "followup", cmd, [], true), /sessionId=/);
-    assert.equal(ctx.store.queued().length, 1);
-    assert.equal(ctx.store.queued()[0].sessionId, d.id);
-    assert.match(ctx.store.routeLeadTool(leadA.id, "followup", cmd, [], true), /Already executed/);
+    assert.throws(() => ctx.store.routeLeadTool(leadA.id, "too-early", cmd, [], true),
+      /Kết thúc Lead turn/);
     assert.throws(() => ctx.store.routeLeadTool(leadB.id, "foreign", cmd, [], true),
-      /Discovery session/);
-    assert.throws(() => ctx.store.routeLeadTool(leadA.id, "unknown",
-      { ...cmd, sessionId: a.leadSessionId }, [], true), /Discovery session/);
+      /Discovery đang chạy/);
     ctx.store.completeLead(leadA.id, "");
     ctx.store.completeDiscovery(original.id, "Đã khảo sát");
-    assert.equal(ctx.store.queued().some(item => item.sessionId === a.leadSessionId), true);
+    assert.equal(ctx.store.queued().filter(item => item.sessionId === a.leadSessionId).length, 1);
+    const wake = startLead(ctx.store, a.id);
+    assert.throws(() => ctx.store.routeLeadTool(wake.id, "wrong",
+      { ...cmd, sessionId: a.leadSessionId }, [], true), /Discovery session/);
+    assert.match(ctx.store.routeLeadTool(wake.id, "followup", cmd, [], true), /sessionId=/);
+    assert.match(ctx.store.routeLeadTool(wake.id, "followup", cmd, [], true), /Already executed/);
+    assert.throws(() => ctx.store.routeLeadTool(wake.id, "peer-after-followup",
+      { type: "spawn_peer", moduleId: "api", message: "Build" }, ["api"], true),
+      /Kết thúc Lead turn/);
+    ctx.store.completeLead(wake.id, "");
     const next = ctx.store.queued().find(item => item.sessionId === d.id)!;
     ctx.store.startDelivery(next.id);
     assert.equal(ctx.store.session(d.id)?.threadId, "thread-1");
     assert.equal(ctx.store.input(next.id)?.text, "Bổ sung sơ bộ: xem entry points");
     ctx.store.completeDiscovery(next.id, "Báo cáo bổ sung");
     assert.equal(ctx.store.snapshot().sessions.filter(s => s.role === "discovery").length, 1);
+    assert.equal(ctx.store.queued().filter(item => item.sessionId === a.leadSessionId).length, 1);
+  } finally { ctx.cleanup(); }
+});
+
+test("Peer-first Lead turn cannot retroactively add Discovery; later turn can request it", () => {
+  const ctx = fixture();
+  try {
+    const task = ctx.store.createConversation("Tạo API");
+    const first = startLead(ctx.store, task.id);
+    ctx.store.routeLeadTool(first.id, "peer-first",
+      { type: "spawn_peer", moduleId: "api", message: "Implement" }, ["api"], true);
+    assert.equal(ctx.store.delivery(first.id)?.routingPhase, "execution");
+    assert.throws(() => spawn(ctx.store, first.id, "discovery-after-peer"),
+      /đã giao Peer/);
+    assert.equal(ctx.store.snapshot().sessions.filter(x => x.role === "discovery").length, 0);
+    ctx.store.completeLead(first.id, "");
+    const peer = ctx.store.queued()[0];
+    ctx.store.startDelivery(peer.id);
+    ctx.store.completePeer(peer.id, "API complete");
+    const second = startLead(ctx.store, task.id);
+    spawn(ctx.store, second.id);
+    assert.equal(ctx.store.snapshot().sessions.filter(x => x.role === "discovery").length, 1);
   } finally { ctx.cleanup(); }
 });
 
@@ -224,7 +258,7 @@ test("Discovery restarted mid-turn is not replayed and wakes Lead just once", ()
   } finally { ctx.cleanup(); }
 });
 
-test("User messages are delivered to Lead even if Discovery is running", () => {
+test("User follow-ups are stored but do not resume Lead until Discovery resolves", () => {
   const ctx = fixture();
   try {
     const task = ctx.store.createConversation("Build API");
@@ -234,9 +268,9 @@ test("User messages are delivered to Lead even if Discovery is running", () => {
     const d = ctx.store.queued()[0];
     ctx.store.startDelivery(d.id);
     ctx.store.postUser(task.id, "Thêm yêu cầu Web");
-    const queued = ctx.store.queued();
-    assert.equal(queued.length, 1);
-    assert.equal(queued[0].sessionId, task.leadSessionId);
+    assert.equal(ctx.store.queued().length, 0, "Lead must stay idle until Discovery completes");
+    assert.deepEqual(ctx.store.snapshot().messages.filter(m => m.from === "user").map(m => m.text),
+      ["Build API", "Thêm yêu cầu Web"]);
     ctx.store.completeDiscovery(d.id, "Khảo sát xong");
     assert.equal(ctx.store.queued().filter(x => x.sessionId === task.leadSessionId).length, 1,
       "Discovery completion batches into the pending Lead wake");
@@ -245,7 +279,7 @@ test("User messages are delivered to Lead even if Discovery is running", () => {
   } finally { ctx.cleanup(); }
 });
 
-test("Finish supersedes queued Discovery; late result remains recorded without waking Lead", () => {
+test("Discovery is a mandatory phase boundary: finish requires the next Lead turn", () => {
   const ctx = fixture();
   try {
     const task = ctx.store.createConversation("Build API");
@@ -253,14 +287,61 @@ test("Finish supersedes queued Discovery; late result remains recorded without w
     spawn(ctx.store, lead.id);
     const d = ctx.store.queued()[0];
     ctx.store.startDelivery(d.id);
-    ctx.store.routeLeadTool(lead.id, "finish", { type: "finish" }, [], true);
-    ctx.store.completeLead(lead.id, "## Done", true);
-    ctx.store.completeDiscovery(d.id, "Late preliminary report");
+    assert.throws(() => ctx.store.routeLeadTool(lead.id, "finish-early",
+      { type: "finish" }, [], true), /Kết thúc Lead turn/);
+    ctx.store.completeLead(lead.id, "");
+    assert.equal(ctx.store.conversation(task.id)?.status, "active");
+    ctx.store.completeDiscovery(d.id, "Khảo sát sơ bộ");
+    const resume = startLead(ctx.store, task.id);
+    ctx.store.routeLeadTool(resume.id, "finish-after-report",
+      { type: "finish" }, [], true);
+    ctx.store.completeLead(resume.id, "## Done", true);
     assert.equal(ctx.store.conversation(task.id)?.status, "finished");
     assert.equal(ctx.store.queued().length, 0);
-    assert.ok(ctx.store.snapshot().messages.some(m => m.text === "Late preliminary report"));
     ctx.store.postUser(task.id, "Mở lại");
     assert.equal(ctx.store.queued().length, 1);
+  } finally { ctx.cleanup(); }
+});
+
+test("Queued Lead deliveries cannot start during a Discovery phase, even if queued earlier", () => {
+  const ctx = fixture();
+  try {
+    const task = ctx.store.createConversation("Build API");
+    const lead = startLead(ctx.store, task.id);
+    // Queue a user follow-up before Discovery starts. It must not bypass the phase.
+    ctx.store.postUser(task.id, "Thêm yêu cầu Web");
+    const queuedLead = ctx.store.queued().find(d => d.sessionId === task.leadSessionId)!;
+    spawn(ctx.store, lead.id);
+    assert.throws(() => ctx.store.startDelivery(queuedLead.id), /chờ Discovery/);
+    ctx.store.completeLead(lead.id, "");
+    const discovery = ctx.store.queued().find(d => d.sessionId !== task.leadSessionId)!;
+    ctx.store.startDelivery(discovery.id);
+    assert.throws(() => ctx.store.startDelivery(queuedLead.id), /chờ Discovery/);
+    ctx.store.completeDiscovery(discovery.id, "Đã khảo sát API và Web");
+    ctx.store.startDelivery(queuedLead.id);
+    assert.equal(ctx.store.session(task.leadSessionId)?.status, "running");
+    assert.match(ctx.store.snapshot().messages.find(m => m.from === "discovery")!.text,
+      /Đã khảo sát/);
+  } finally { ctx.cleanup(); }
+});
+
+test("Discovery finishing before Lead turn end cannot be bypassed in that same turn", () => {
+  const ctx = fixture();
+  try {
+    const task = ctx.store.createConversation("Build API");
+    const first = startLead(ctx.store, task.id);
+    spawn(ctx.store, first.id);
+    const discovery = ctx.store.queued()[0];
+    ctx.store.startDelivery(discovery.id);
+    ctx.store.completeDiscovery(discovery.id, "Fast discovery");
+    assert.throws(() => ctx.store.routeLeadTool(first.id, "peer-after-fast-discovery",
+      { type: "spawn_peer", moduleId: "api", message: "Implement" }, ["api"], true),
+      /Kết thúc Lead turn/);
+    ctx.store.completeLead(first.id, "");
+    const second = startLead(ctx.store, task.id);
+    ctx.store.routeLeadTool(second.id, "peer-after-resume",
+      { type: "spawn_peer", moduleId: "api", message: "Implement" }, ["api"], true);
+    assert.equal(ctx.store.snapshot().sessions.filter(x => x.role === "peer").length, 1);
   } finally { ctx.cleanup(); }
 });
 
