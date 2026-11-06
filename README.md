@@ -122,6 +122,8 @@ npm test
 npm run build
 ```
 
-CI dùng fake Codex transport, không thay thế E2E thực tế với Codex CLI. Xem [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+CI dùng fake Codex transport, không thay thế E2E thực tế với Codex CLI. Xem [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Transcript và kết quả đối chiếu Codex thật: [PEER_PROMPT_REAL_E2E.md](docs/PEER_PROMPT_REAL_E2E.md).
+
+Chạy `npm run e2e:codex` để kiểm tra Store → Coordinator → Codex app-server thật với Lead, Discovery và Peer dùng `gpt-6-luna`. Lệnh tốn token, tạo fixture Todo Node riêng trong thư mục tạm, chạy hai lượt trên cùng Peer Thread và đối chiếu các section/checkpoint/dedup với demo. Payload `turn/start`, tool calls, snapshot, prompt nguyên văn và kết quả kiểm thử lưu trong `.data/codex-e2e/<timestamp>/`; không thay App Settings hoặc module của người dùng. Đây là E2E điều phối và thư viện Node, chưa bao gồm HTTP/browser UI. Nội dung Lead viết có thể khác từng lần; không yêu cầu prompt trùng nguyên văn với demo lập kịch bản.
 
 **Bảo mật:** Lead chỉ ghi trong `lead.cwd` (`workspace-write`), không đọc/chạy trong module theo chỉ dẫn; Discovery và Peer mặc định `approvalPolicy: never` và `danger-full-access` (Discovery truy cập nhiều module). Backend không có authentication và chỉ bind localhost. Không expose lên Internet.
