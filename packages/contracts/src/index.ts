@@ -1,8 +1,8 @@
-/** MVP: trao đổi giữa người dùng, Lead và các Peer, không có workflow gate. */
+/** Các agent có context độc lập; Lead quyết định và chuyển giao bằng chứng tường minh. */
 export interface ModuleConfig { id: string; label: string; path: string; }
 export interface WorkspaceConfig {
-  lead: { cwd: string; instructions: string };
-  discovery?: { cwd: string; enabled?: boolean; model?: string; effort?: string };
+  lead: { cwd: string };
+  discovery?: { cwd: string; enabled?: boolean };
   modules: ModuleConfig[];
 }
 /** Giá trị bỏ trống sẽ kế thừa cấu hình Codex. */
@@ -17,7 +17,8 @@ export type AgentRole = "lead" | "peer" | "discovery";
 export type SessionStatus = "idle" | "running" | "interrupted";
 export interface Conversation {
   id: string; title: string; status: "active" | "finished";
-  leadSessionId: string; generation: number; createdAt: string; updatedAt: string;
+  leadSessionId: string; generation: number; taskBrief?: TaskBrief;
+  createdAt: string; updatedAt: string;
 }
 export interface AgentSession {
   id: string; conversationId: string; role: AgentRole;
@@ -30,10 +31,34 @@ export interface AgentSession {
   createdAt: string; updatedAt: string;
 }
 export type MessageAuthor = "user" | "lead" | "peer" | "discovery" | "system";
+/** Lead tự đánh giá, App chỉ lưu nội dung và không chứng thực tính đúng đắn. */
+export interface TaskBrief {
+  goal: string;
+  acceptanceCriteria: string[];
+  verified: Array<{ finding: string; evidenceRefs: string[] }>;
+  preliminary: string[];
+  unknowns: string[];
+  nextDecision: string;
+}
+export interface ContextSource {
+  messageId: string;
+  from: MessageAuthor;
+  kind: "user-request" | "discovery-preliminary" | "peer-report" | "lead-note" | "system-event";
+  text: string;
+  createdAt: string;
+}
+/** Bản chụp bất biến tại thời điểm giao việc, không phụ thuộc lịch sử Thread. */
+export interface ContextPacket {
+  originalRequest: { messageId: string; text: string };
+  taskBrief?: TaskBrief;
+  sources: ContextSource[];
+  expectedResult: string;
+}
 export interface Message {
   id: string; conversationId: string; from: MessageAuthor;
   to: "user" | "lead" | "peer" | "discovery";
-  text: string; peerSessionId?: string; discoverySessionId?: string; createdAt: string;
+  text: string; peerSessionId?: string; discoverySessionId?: string;
+  contextPacket?: ContextPacket; createdAt: string;
 }
 export interface Delivery {
   id: string; conversationId: string; sessionId: string; messageId: string;
@@ -52,9 +77,13 @@ export interface Snapshot {
   settings: AppSettings;
 }
 export type LeadCommand =
-  | { type: "spawn_peer"; moduleId: string; message: string; label?: string;
-      model?: string; effort?: string }
-  | { type: "send_peer"; sessionId: string; message: string }
-  | { type: "spawn_discovery"; message: string }
-  | { type: "send_discovery"; sessionId: string; message: string }
+  | { type: "spawn_peer"; moduleId: string; message: string; expectedResult: string;
+      contextRefs?: string[]; label?: string; model?: string; effort?: string }
+  | { type: "send_peer"; sessionId: string; message: string; expectedResult: string;
+      contextRefs?: string[] }
+  | { type: "spawn_discovery"; message: string; expectedResult: string;
+      contextRefs?: string[] }
+  | { type: "send_discovery"; sessionId: string; message: string; expectedResult: string;
+      contextRefs?: string[] }
+  | { type: "update_task_brief"; brief: TaskBrief }
   | { type: "finish" };

@@ -9,7 +9,7 @@ import { Coordinator } from "./coordinator.js";
 import type { AgentRuntime } from "./codex-runtime.js";
 
 const config: WorkspaceConfig = {
-  lead: { cwd: "/tmp/agent-workspace", instructions: "Điều phối" },
+  lead: { cwd: "/tmp/agent-workspace" },
   modules: [{ id: "web", label: "Web", path: "/tmp/module-web" }]
 };
 async function until(check: () => boolean, timeout = 4000) {
@@ -34,7 +34,7 @@ test("Lead returns to idle after dispatch; only Peer completion starts another L
         if (leadTurns === 1) {
           assert.match(prompt, /không gọi send_peer chỉ để hỏi trạng thái/);
           await hooks.onLeadTool!("lead:spawn", {
-            type: "spawn_peer", moduleId: "web", message: "Create Todo UI"
+            type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "web", message: "Create Todo UI"
           });
           return "Đã giao Web";
         }
@@ -78,7 +78,7 @@ test("Peer error emits an event; does not create polling loop", async () => {
       leadTurns++;
       if (leadTurns === 1) {
         await hooks.onLeadTool!("lead:spawn", {
-          type: "spawn_peer", moduleId: "web", message: "Implement UI"
+          type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "web", message: "Implement UI"
         });
         return "Đã giao";
       }
@@ -109,9 +109,9 @@ test("Two Peers run concurrently; Lead stays idle until event", async () => {
         leadTurns++;
         if (leadTurns === 1) {
           await hooks.onLeadTool!("lead:a",
-            { type: "spawn_peer", moduleId: "web", message: "Task A" });
+            { type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "web", message: "Task A" });
           await hooks.onLeadTool!("lead:b",
-            { type: "spawn_peer", moduleId: "web", message: "Task B" });
+            { type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "web", message: "Task B" });
         }
         return "";
       }
@@ -158,7 +158,7 @@ test("Coordinator uses current Lead defaults and frozen Peer selection without p
       if (captured.filter(c => c.role === "lead").length === 1) {
         assert.match(prompt, /không gọi send_peer chỉ để hỏi trạng thái/);
         await hooks.onLeadTool!("lead:spawn", {
-          type: "spawn_peer", moduleId: "web", message: "Build Todo",
+          type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "web", message: "Build Todo",
           model: "peer-override"
         });
         return "Dispatched";

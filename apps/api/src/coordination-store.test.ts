@@ -26,7 +26,7 @@ test("Lead dispatches and becomes idle until Peer emits an event", () => {
     const c = ctx.store.createConversation("Todo");
     const lead = startLead(ctx.store, c.id);
     ctx.store.routeLeadTool(lead.id, "spawn-1",
-      { type: "spawn_peer", moduleId: "web", message: "Build UI" }, ["web"]);
+      { type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "web", message: "Build UI" }, ["web"]);
     ctx.store.completeLead(lead.id, "Đã giao");
     assert.equal(ctx.store.conversation(c.id)?.status, "active");
     assert.equal(ctx.store.queued().filter(d => d.sessionId === c.leadSessionId).length, 0);
@@ -46,7 +46,7 @@ test("Multiple Peer results are batched into one pending Lead wake-up", () => {
     const lead = startLead(ctx.store, c.id);
     for (const [n, moduleId] of ["api", "web"].entries()) {
       ctx.store.routeLeadTool(lead.id, "call-" + n,
-        { type: "spawn_peer", moduleId, message: "Implement " + moduleId }, ["api", "web"]);
+        { type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId, message: "Implement " + moduleId }, ["api", "web"]);
     }
     ctx.store.completeLead(lead.id, "");
     const work = ctx.store.queued();
@@ -66,9 +66,9 @@ test("finish supersedes queued Peer; late result is recorded but cannot wake Lea
     const c = ctx.store.createConversation("Todo");
     const lead = startLead(ctx.store, c.id);
     ctx.store.routeLeadTool(lead.id, "spawn-1",
-      { type: "spawn_peer", moduleId: "api", message: "API" }, ["api"]);
+      { type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "api", message: "API" }, ["api"]);
     ctx.store.routeLeadTool(lead.id, "spawn-2",
-      { type: "spawn_peer", moduleId: "api", message: "Tests" }, ["api"]);
+      { type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "api", message: "Tests" }, ["api"]);
     const peers = ctx.store.queued().filter(d => d.sessionId !== c.leadSessionId);
     ctx.store.startDelivery(peers[0].id);
     ctx.store.routeLeadTool(lead.id, "finish",
@@ -98,7 +98,7 @@ test("Old Peer completion after user reopens task cannot wake a second Lead turn
     const c = ctx.store.createConversation("Todo");
     const lead = startLead(ctx.store, c.id);
     ctx.store.routeLeadTool(lead.id, "spawn", {
-      type: "spawn_peer", moduleId: "web", message: "Build UI"
+      type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "web", message: "Build UI"
     }, ["web"]);
     const peer = ctx.store.queued()[0];
     ctx.store.startDelivery(peer.id);
@@ -121,7 +121,7 @@ test("Peer errors wake Lead once; finish prevents further queued work", () => {
     const c = ctx.store.createConversation("Todo");
     const lead = startLead(ctx.store, c.id);
     ctx.store.routeLeadTool(lead.id, "spawn",
-      { type: "spawn_peer", moduleId: "web", message: "UI" }, ["web"]);
+      { type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "web", message: "UI" }, ["web"]);
     const peer = ctx.store.queued()[0];
     ctx.store.startDelivery(peer.id);
     ctx.store.completeLead(lead.id, "");
@@ -142,7 +142,7 @@ test("Idempotent tool calls persist across restart; running turn is never replay
     const c = ctx.store.createConversation("Todo");
     const lead = startLead(ctx.store, c.id);
     ctx.store.setThread(c.leadSessionId, "thread-1");
-    const cmd = { type: "spawn_peer" as const, moduleId: "web",
+    const cmd = { type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế" as const, moduleId: "web",
       message: 'GET /api/todos → {"todos":[]}' };
     ctx.store.routeLeadTool(lead.id, "thread-1:call-1", cmd, ["web"]);
     assert.match(ctx.store.routeLeadTool(lead.id, "thread-1:call-1", cmd, ["web"]),
@@ -164,9 +164,9 @@ test("Unknown module and foreign session are rejected before dispatch", () => {
     const b = ctx.store.createConversation("B");
     const lead = startLead(ctx.store, a.id);
     assert.throws(() => ctx.store.routeLeadTool(lead.id, "1",
-      { type: "spawn_peer", moduleId: "ghost", message: "X" }, ["web"]), /Module/);
+      { type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "ghost", message: "X" }, ["web"]), /Module/);
     assert.throws(() => ctx.store.routeLeadTool(lead.id, "2",
-      { type: "send_peer", sessionId: b.leadSessionId, message: "X" }, ["web"]), /Peer session/);
+      { type: "send_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", sessionId: b.leadSessionId, message: "X" }, ["web"]), /Peer session/);
     assert.equal(ctx.store.snapshot().sessions.filter(s => s.role === "peer").length, 0);
     assert.equal(ctx.store.queued().filter(d => d.conversationId === a.id).length, 0);
   } finally { ctx.cleanup(); }
@@ -185,11 +185,11 @@ test("App Settings persist; spawn override and defaults are frozen on Peer sessi
     const delivery = ctx.store.queued()[0];
     ctx.store.startDelivery(delivery.id);
     ctx.store.routeLeadTool(delivery.id, "spawn-1", {
-      type: "spawn_peer", moduleId: "web", message: "UI",
+      type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "web", message: "UI",
       model: "peer-special", effort: "xhigh"
     }, ["web"]);
     ctx.store.routeLeadTool(delivery.id, "spawn-2", {
-      type: "spawn_peer", moduleId: "web", message: "Tests", effort: "low"
+      type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "web", message: "Tests", effort: "low"
     }, ["web"]);
     const peers = ctx.store.snapshot().sessions.filter(s => s.role === "peer");
     assert.deepEqual(peers.map(s => [s.model, s.effort]), [
@@ -204,7 +204,7 @@ test("App Settings persist; spawn override and defaults are frozen on Peer sessi
       ["peer-special", "xhigh"], ["peer-default", "low"]
     ]);
     ctx.store.routeLeadTool(delivery.id, "spawn-3", {
-      type: "spawn_peer", moduleId: "web", message: "Docs"
+      type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "web", message: "Docs"
     }, ["web"]);
     const latest = ctx.store.snapshot().sessions.filter(s => s.role === "peer").at(-1)!;
     assert.deepEqual([latest.model, latest.effort], ["peer-new", "high"]);
@@ -235,7 +235,7 @@ test("App Settings validate transport and empty values inherit Codex without aff
     const lead = ctx.store.queued()[0];
     ctx.store.startDelivery(lead.id);
     ctx.store.routeLeadTool(lead.id, "override", {
-      type: "spawn_peer", moduleId: "web", message: "Work", model: "custom-model", effort: "high"
+      type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "web", message: "Work", model: "custom-model", effort: "high"
     }, ["web"]);
     const peer = ctx.store.snapshot().sessions.find(s => s.role === "peer")!;
     assert.equal(peer.conversationId, c.id);

@@ -1,6 +1,7 @@
 import type { AgentSession, Conversation, Message, Snapshot } from "@aacc/contracts";
 import { peerMessages } from "../message-view.js";
 import { MarkdownContent } from "./MarkdownContent.js";
+import { ContextPacketView, TaskBriefView } from "./ContextPacketView.js";
 import { latestDelivery, recentActivity, sessionStatus, shortTime } from "../selectors.js";
 
 function lastTurnText(session: AgentSession, data: Snapshot): string {
@@ -22,7 +23,9 @@ function PeerTranscript({ peer, messages }: { peer: AgentSession; messages: Mess
     {transcript.slice(-8).map(message => <div key={message.id} className="transcript-message">
       <strong>{message.from === "lead" ? "Lead giao việc" : "Peer phản hồi"}
         <time dateTime={message.createdAt}>{shortTime(message.createdAt)}</time></strong>
-      <div className="peer-message-content"><MarkdownContent content={message.text}/></div>
+      <div className="peer-message-content"><MarkdownContent content={message.text}/>
+        {message.contextPacket && <ContextPacketView packet={message.contextPacket}/>}
+      </div>
     </div>)}
     {!transcript.length && <p>Chưa có trao đổi với Peer này.</p>}
     {peer.error && <p className="peer-error" role="alert">{peer.error}</p>}
@@ -64,6 +67,10 @@ export function AgentMonitor({ data, conversation, selectedPeerId, onSelectPeer 
         </div>
       </div>
     </div>
+    {conversation.taskBrief && <div className="monitor-section">
+      <div className="monitor-section-title"><h3>Task Brief · Lead</h3></div>
+      <TaskBriefView brief={conversation.taskBrief}/>
+    </div>}
     {discovery && <div className="monitor-section">
       <div className="monitor-section-title"><h3>Discovery Session</h3><span>1</span></div>
       <div className="peer-unit">
@@ -92,7 +99,9 @@ export function AgentMonitor({ data, conversation, selectedPeerId, onSelectPeer 
             <div className="transcript-message" key={m.id}>
               <strong>{m.from === "lead" ? "Lead giao khám phá" : "Discovery báo cáo"}
                 <time dateTime={m.createdAt}>{shortTime(m.createdAt)}</time></strong>
-              <div className="peer-message-content"><MarkdownContent content={m.text}/></div>
+              <div className="peer-message-content"><MarkdownContent content={m.text}/>
+                {m.contextPacket && <ContextPacketView packet={m.contextPacket}/>}
+              </div>
             </div>)}
           {!conversationMessages.some(m => m.discoverySessionId === discovery.id &&
             (m.from === "lead" || m.from === "discovery")) &&

@@ -6,10 +6,7 @@ const defaults: AppSettings = { lead: {}, peer: {}, discovery: {} };
 export function AgentSettingsModal({ initial, onClose, onSaved }: {
   initial: AppSettings; onClose: () => void; onSaved: () => Promise<void>;
 }) {
-  const [draft, setDraft] = useState<AppSettings>(() => ({
-    ...structuredClone(initial ?? defaults),
-    discovery: structuredClone(initial?.discovery ?? {})
-  }));
+  const [draft, setDraft] = useState<AppSettings>(() => structuredClone(initial ?? defaults));
   const [models, setModels] = useState<CodexModelOption[]>([]);
   const [catalogError, setCatalogError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -45,12 +42,12 @@ export function AgentSettingsModal({ initial, onClose, onSaved }: {
       <label htmlFor={role + "-model"}>Model</label>
       <input id={role + "-model"} list="codex-models" value={selection.model ?? ""}
         autoComplete="off"
-        placeholder={role === "discovery" ? "Để trống = workspace config / Codex" : "Để trống = mặc định Codex"}
+        placeholder="Để trống = mặc định Codex"
         onChange={event => patch(role, "model", event.target.value)}/>
       <label htmlFor={role + "-effort"}>Reasoning effort</label>
       <input id={role + "-effort"} list={role + "-effort-choices"}
         value={selection.effort ?? ""} autoComplete="off"
-        placeholder={role === "discovery" ? "Để trống = workspace config / Codex" : "Để trống = mặc định Codex"}
+        placeholder="Để trống = mặc định Codex"
         onChange={event => patch(role, "effort", event.target.value)}/>
       <datalist id={role + "-effort-choices"}>
         {efforts.map(effort => <option key={effort} value={effort}/>)}
@@ -85,7 +82,7 @@ export function AgentSettingsModal({ initial, onClose, onSaved }: {
         <h2>App Settings · Model &amp; Effort</h2>
         <button type="button" onClick={onClose}>Đóng</button>
       </div>
-      <p className="settings-intro">Giá trị để trống kế thừa cấu hình Codex (Discovery có thể kế thừa workspace config). Lead được phép override model và effort khi tạo Peer.</p>
+      <p className="settings-intro">Giá trị để trống kế thừa cấu hình Codex. Lead được phép override model và effort khi tạo Peer.</p>
       {catalogError
         ? <p className="settings-note" role="status">Không tải được model/list: {catalogError}. Bạn vẫn có thể nhập model thủ công.</p>
         : <p className="settings-note">Danh sách model lấy từ Codex app-server đang chạy trên máy này.</p>}
@@ -94,12 +91,12 @@ export function AgentSettingsModal({ initial, onClose, onSaved }: {
       </datalist>
       <form onSubmit={event => { event.preventDefault(); void save(); }}>
         {modelForm("lead", "Lead Agent", "Áp dụng cho các lượt Lead tiếp theo, kể cả Thread hiện tại.")}
-        {modelForm("discovery", "Discovery Agent", "Áp dụng cho Discovery session mới. Để trống kế thừa discovery.model/effort trong workspace config (nếu có), sau đó là Codex.")}
+        {modelForm("discovery", "Discovery Agent", "Áp dụng cho các Discovery turn tiếp theo. Để trống kế thừa Codex default.")}
         {modelForm("peer", "Peer Agents", "Áp dụng khi Lead tạo Peer session mới. Peer đang tồn tại giữ cấu hình đã chọn.")}
         {error && <p role="alert" className="settings-error">{error}</p>}
         {saved && <p role="status" className="settings-saved">Đã lưu App Settings vào SQLite.</p>}
         <div className="settings-actions">
-          <button type="button" onClick={() => setDraft({ lead: {}, peer: {}, discovery: {} })}>Đặt về giá trị kế thừa</button>
+          <button type="button" onClick={() => setDraft({ lead: {}, peer: {}, discovery: {} })}>Dùng mặc định Codex</button>
           <button type="submit" className="primary" disabled={saving}>
             {saving ? "Đang lưu…" : "Lưu Settings"}
           </button>

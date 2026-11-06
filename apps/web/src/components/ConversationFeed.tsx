@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { MarkdownContent } from "./MarkdownContent.js";
+import { ContextPacketView } from "./ContextPacketView.js";
 import type { AgentSession, Message } from "@aacc/contracts";
 import { visibleMessages } from "../message-view.js";
 import { shortTime } from "../selectors.js";
@@ -35,7 +36,10 @@ function MessageRow({ message, sessions }: { message: Message; sessions: AgentSe
     return <details className="route-event">
       <summary><span className="event-mark" aria-hidden="true">↳</span>
         <strong>{label}</strong><time>{shortTime(message.createdAt)}</time></summary>
-      <div className="event-detail"><MarkdownContent content={message.text}/></div>
+      <div className="event-detail">
+        <MarkdownContent content={message.text}/>
+        {message.contextPacket && <ContextPacketView packet={message.contextPacket}/>}
+      </div>
     </details>;
   }
   const author = message.from === "user" ? "Bạn" :

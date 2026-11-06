@@ -4,7 +4,8 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type {
-  AgentSession, AppSettings, Conversation, Delivery, LeadCommand, Message, MessageAuthor, ModelSelection, Snapshot
+  AgentSession, AppSettings, ContextPacket, ContextSource, Conversation, Delivery, LeadCommand,
+  Message, MessageAuthor, ModelSelection, Snapshot, TaskBrief
 } from "@aacc/contracts";
 
 type Data = Omit<Snapshot, "modules">;
@@ -47,16 +48,76 @@ const text = (value: unknown, label: string, limit = 20000): string => {
   return value.trim();
 };
 function message(data: Data, conversationId: string, from: MessageAuthor,
-  to: Message["to"], body: string, agentSessionId?: string): Message {
+  to: Message["to"], body: string, agentSessionId?: string, contextPacket?: ContextPacket): Message {
   const entry: Message = {
     id: randomUUID(), conversationId, from, to, text: body,
     ...(agentSessionId ? (data.sessions.some(s => s.id === agentSessionId &&
         s.role === "discovery")
       ? { discoverySessionId: agentSessionId } : { peerSessionId: agentSessionId }) : {}),
+    ...(contextPacket ? { contextPacket } : {}),
     createdAt: now()
   };
   data.messages.push(entry);
   return entry;
+}
+/** Resolve selected evidence strictly within the same conversation, before queueing. */
+function contextSources(data: Data, conversationId: string, refs: string[] = []): ContextSource[] {
+  if (!Array.isArray(refs) || refs.length > 8 || new Set(refs).size !== refs.length) {
+    throw new Error("contextRefs cần tối đa 8 message IDs không trùng");
+  }
+  let total = 0;
+  return refs.map(ref => {
+    if (typeof ref !== "string" || !ref.trim()) throw new Error("contextRefs phải là message IDs");
+    const item = data.messages.find(m => m.id === ref && m.conversationId === conversationId);
+    if (!item) throw new Error("contextRef không thuộc conversation hoặc không tồn tại: " + ref);
+    total += item.text.length;
+    if (total > 30000) throw new Error("contextRefs vượt giới hạn 30000 ký tự; Lead cần chọn nguồn liên quan hơn");
+    const kind: ContextSource["kind"] = item.from === "discovery" ? "discovery-preliminary" :
+      item.from === "peer" ? "peer-report" :
+      item.from === "user" ? "user-request" :
+      item.from === "lead" ? "lead-note" : "system-event";
+    return { messageId: item.id, from: item.from, kind, text: item.text,
+      createdAt: item.createdAt };
+  });
+}
+
+function assignmentPacket(data: Data, conversation: Conversation,
+  command: Extract<LeadCommand, { message: string }>): ContextPacket {
+  const original = data.messages.find(m => m.conversationId === conversation.id &&
+    m.from === "user");
+  if (!original) throw new Error("Conversation không có yêu cầu gốc");
+  const expectedResult = text(command.expectedResult, "expectedResult", 4000);
+  return {
+    originalRequest: { messageId: original.id, text: original.text },
+    ...(conversation.taskBrief ? { taskBrief: structuredClone(conversation.taskBrief) } : {}),
+    sources: contextSources(data, conversation.id, command.contextRefs),
+    expectedResult
+  };
+}
+
+function checkTaskBrief(data: Data, conversation: Conversation, brief: TaskBrief): void {
+  if (!brief || typeof brief !== "object") throw new Error("Task Brief không hợp lệ");
+  text(brief.goal, "Task Brief goal", 5000);
+  text(brief.nextDecision, "Task Brief nextDecision", 3000);
+  const checkItems = (items: string[], name: string) => {
+    if (!Array.isArray(items) || items.length > 20) throw new Error(name + " phải là mảng tối đa 20 phần tử");
+    for (const value of items) text(value, name, 2000);
+  };
+  checkItems(brief.acceptanceCriteria, "acceptanceCriteria");
+  checkItems(brief.preliminary, "preliminary");
+  checkItems(brief.unknowns, "unknowns");
+  if (!Array.isArray(brief.verified) || brief.verified.length > 20) throw new Error("verified không hợp lệ");
+  for (const item of brief.verified) {
+    text(item.finding, "verified finding", 2000);
+    if (!Array.isArray(item.evidenceRefs) || !item.evidenceRefs.length) {
+      throw new Error("verified finding bắt buộc có evidenceRefs");
+    }
+    const sources = contextSources(data, conversation.id, item.evidenceRefs);
+    if (sources.some(source => source.kind === "discovery-preliminary" ||
+      source.kind === "lead-note")) {
+      throw new Error("Không thể coi báo cáo sơ bộ hoặc nhận định Lead là bằng chứng verified");
+    }
+  }
 }
 function deliver(data: Data, conversationId: string, sessionId: string, messageId: string) {
   const entry: Delivery = {
@@ -270,7 +331,11 @@ export class CoordinationStore extends EventEmitter {
         throw new Error("Discovery đang chạy hoặc chờ thực thi. Lead phải chờ báo cáo hoặc lỗi trước khi tiếp tục.");
       }
       let result: string;
-      if (command.type === "finish") {
+      if (command.type === "update_task_brief") {
+        checkTaskBrief(data, conversation, command.brief);
+        conversation.taskBrief = structuredClone(command.brief);
+        result = "Đã cập nhật Task Brief; Lead chịu trách nhiệm về các nhận định và bằng chứng.";
+      } else if (command.type === "finish") {
         finishConversation(data, conversation);
         result = "Finished conversation " + conversation.id;
       } else if (command.type === "spawn_discovery" || command.type === "send_discovery") {
@@ -290,8 +355,9 @@ export class CoordinationStore extends EventEmitter {
             s.conversationId === conversation.id && s.role === "discovery");
           if (!discovery) throw new Error("Discovery session không tồn tại trong conversation: " + command.sessionId);
         }
+        const packet = assignmentPacket(data, conversation, command);
         const outbound = message(data, conversation.id, "lead", "discovery",
-          text(command.message, "Discovery message"), discovery.id);
+          text(command.message, "Discovery message"), discovery.id, packet);
         deliver(data, conversation.id, discovery.id, outbound.id);
         result = "Đã giao khám phá sơ bộ cho Discovery (sessionId=" + discovery.id +
           "). Kết thúc Lead turn ngay, không giao Peer hoặc finish trong turn này. Chờ kết quả/lỗi Discovery tự đánh thức Lead.";
@@ -319,7 +385,9 @@ export class CoordinationStore extends EventEmitter {
           if (!peer) throw new Error("Peer session không tồn tại trong conversation: " + command.sessionId);
         }
         if (!command.message.trim()) throw new Error("Peer message không được trống");
-        const outbound = message(data, conversation.id, "lead", "peer", command.message.trim(), peer.id);
+        const packet = assignmentPacket(data, conversation, command);
+        const outbound = message(data, conversation.id, "lead", "peer",
+          command.message.trim(), peer.id, packet);
         deliver(data, conversation.id, peer.id, outbound.id);
         result = "Đã giao việc tới " + peer.label + " (sessionId=" + peer.id +
           "). Kết quả sẽ tự gửi lại Lead.";

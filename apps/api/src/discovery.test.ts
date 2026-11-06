@@ -10,8 +10,8 @@ import { Coordinator } from "./coordinator.js";
 import type { AgentRuntime } from "./codex-runtime.js";
 
 const config: WorkspaceConfig = {
-  lead: { cwd: "/work/lead", instructions: "" },
-  discovery: { cwd: "/work/discovery", enabled: true, model: "discovery-model", effort: "low" },
+  lead: { cwd: "/work/lead" },
+  discovery: { cwd: "/work/discovery", enabled: true },
   modules: [
     { id: "api", label: "API", path: "/work/api" },
     { id: "web", label: "Web", path: "/work/web" }
@@ -41,7 +41,7 @@ function startLead(store: CoordinationStore, id: string) {
 }
 function spawn(store: CoordinationStore, leadId: string, callId = "spawn") {
   return store.routeLeadTool(leadId, callId,
-    { type: "spawn_discovery", message: "Khảo sát API và Web ở mức tổng quan" },
+    { type: "spawn_discovery", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", message: "Khảo sát API và Web ở mức tổng quan" },
     ["api", "web"], true);
 }
 function discoverySession(store: CoordinationStore) {
@@ -56,7 +56,7 @@ test("New tasks begin with Lead; only Lead can spawn optional Discovery", () => 
     assert.equal(ctx.store.queued()[0].sessionId, task.leadSessionId);
     const lead = startLead(ctx.store, task.id);
     assert.throws(() => ctx.store.routeLeadTool(lead.id, "disabled",
-      { type: "spawn_discovery", message: "Khảo sát" }, [], false), /chưa được cấu hình/);
+      { type: "spawn_discovery", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", message: "Khảo sát" }, [], false), /chưa được cấu hình/);
     const text = spawn(ctx.store, lead.id, "spawn-enabled");
     assert.match(text, /sessionId=/);
     const d = discoverySession(ctx.store);
@@ -70,12 +70,12 @@ test("New tasks begin with Lead; only Lead can spawn optional Discovery", () => 
     assert.equal(outbound.peerSessionId, undefined);
     assert.match(outbound.text, /Khảo sát API và Web/);
     assert.match(ctx.store.routeLeadTool(lead.id, "spawn-enabled",
-      { type: "spawn_discovery", message: "Khảo sát API và Web ở mức tổng quan" },
+      { type: "spawn_discovery", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", message: "Khảo sát API và Web ở mức tổng quan" },
       ["api", "web"], true), /Already executed/);
     assert.throws(() => spawn(ctx.store, lead.id, "duplicate"), /Đã giao Discovery/);
     assert.equal(ctx.store.delivery(lead.id)?.routingPhase, "discovery");
     assert.throws(() => ctx.store.routeLeadTool(lead.id, "same-turn-peer",
-      { type: "spawn_peer", moduleId: "api", message: "Implement API" }, ["api"], true),
+      { type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "api", message: "Implement API" }, ["api"], true),
       /Kết thúc Lead turn/);
     assert.throws(() => ctx.store.routeLeadTool(lead.id, "same-turn-finish",
       { type: "finish" }, ["api"], true), /Kết thúc Lead turn/);
@@ -103,7 +103,7 @@ test("Lead dispatches Discovery, waits without polling and receives an independe
           assert.match(prompt, /spawn_discovery/);
           assert.match(prompt, /ORIGINAL_USER_REQUEST: "Build Todo"/);
           const result = await hooks.onLeadTool!("lead:spawn", {
-            type: "spawn_discovery", message: "Chỉ khảo sát cấu trúc API và Web"
+            type: "spawn_discovery", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", message: "Chỉ khảo sát cấu trúc API và Web"
           });
           assert.match(result, /Discovery/);
           return "Đã giao Discovery";
@@ -119,8 +119,8 @@ test("Lead dispatches Discovery, waits without polling and receives an independe
       assert.equal(hooks.onLeadTool, undefined);
       assert.match(prompt, /LEAD_MESSAGE: Chỉ khảo sát cấu trúc API và Web/);
       assert.match(prompt, /không kết luận root cause/);
-      assert.equal(selection?.model, "discovery-model");
-      assert.equal(selection?.effort, "low");
+      assert.equal(selection?.model, undefined);
+      assert.equal(selection?.effort, undefined);
       assert.deepEqual(roots, ["/work/discovery", "/work/api", "/work/web"]);
       await gate;
       return "### Đã xác minh\n- API, Web\n\n### Chưa rõ\n- API contract";
@@ -158,7 +158,7 @@ test("send_discovery only works in a new Lead turn after the prior Discovery rep
     const original = ctx.store.queued()[0];
     ctx.store.startDelivery(original.id);
     ctx.store.setThread(d.id, "thread-1");
-    const cmd = { type: "send_discovery" as const, sessionId: d.id,
+    const cmd = { type: "send_discovery", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế" as const, sessionId: d.id,
       message: "Bổ sung sơ bộ: xem entry points" };
     assert.throws(() => ctx.store.routeLeadTool(leadA.id, "too-early", cmd, [], true),
       /Kết thúc Lead turn/);
@@ -173,7 +173,7 @@ test("send_discovery only works in a new Lead turn after the prior Discovery rep
     assert.match(ctx.store.routeLeadTool(wake.id, "followup", cmd, [], true), /sessionId=/);
     assert.match(ctx.store.routeLeadTool(wake.id, "followup", cmd, [], true), /Already executed/);
     assert.throws(() => ctx.store.routeLeadTool(wake.id, "peer-after-followup",
-      { type: "spawn_peer", moduleId: "api", message: "Build" }, ["api"], true),
+      { type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "api", message: "Build" }, ["api"], true),
       /Kết thúc Lead turn/);
     ctx.store.completeLead(wake.id, "");
     const next = ctx.store.queued().find(item => item.sessionId === d.id)!;
@@ -192,7 +192,7 @@ test("Peer-first Lead turn cannot retroactively add Discovery; later turn can re
     const task = ctx.store.createConversation("Tạo API");
     const first = startLead(ctx.store, task.id);
     ctx.store.routeLeadTool(first.id, "peer-first",
-      { type: "spawn_peer", moduleId: "api", message: "Implement" }, ["api"], true);
+      { type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "api", message: "Implement" }, ["api"], true);
     assert.equal(ctx.store.delivery(first.id)?.routingPhase, "execution");
     assert.throws(() => spawn(ctx.store, first.id, "discovery-after-peer"),
       /đã giao Peer/);
@@ -217,7 +217,7 @@ test("Discovery failure wakes Lead with evidence gap, not a fake Peer report", a
       if (session.role === "discovery") throw new Error("Workspace inaccessible");
       leadTurns++;
       if (leadTurns === 1) {
-        await hooks.onLeadTool!("spawn", { type: "spawn_discovery", message: "Khảo sát API" });
+        await hooks.onLeadTool!("spawn", { type: "spawn_discovery", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", message: "Khảo sát API" });
         return "";
       }
       assert.match(prompt, /Workspace inaccessible/);
@@ -336,25 +336,24 @@ test("Discovery finishing before Lead turn end cannot be bypassed in that same t
     ctx.store.startDelivery(discovery.id);
     ctx.store.completeDiscovery(discovery.id, "Fast discovery");
     assert.throws(() => ctx.store.routeLeadTool(first.id, "peer-after-fast-discovery",
-      { type: "spawn_peer", moduleId: "api", message: "Implement" }, ["api"], true),
+      { type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "api", message: "Implement" }, ["api"], true),
       /Kết thúc Lead turn/);
     ctx.store.completeLead(first.id, "");
     const second = startLead(ctx.store, task.id);
     ctx.store.routeLeadTool(second.id, "peer-after-resume",
-      { type: "spawn_peer", moduleId: "api", message: "Implement" }, ["api"], true);
+      { type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "api", message: "Implement" }, ["api"], true);
     assert.equal(ctx.store.snapshot().sessions.filter(x => x.role === "peer").length, 1);
   } finally { ctx.cleanup(); }
 });
 
-test("Workspace config accepts enabled and legacy modes without automatic Discovery", () => {
+test("Workspace config accepts only enabled and rejects obsolete Discovery settings", () => {
   const root = mkdtempSync(join(tmpdir(), "aacc-discovery-config-"));
   try {
     for (const dir of ["lead", "discovery", "api", "web"]) mkdirSync(join(root, dir));
     const path = join(root, "workspace.json");
     const body: WorkspaceConfig = {
-      lead: { cwd: join(root, "lead"), instructions: "" },
-      discovery: { cwd: join(root, "discovery"), enabled: true,
-        model: "gpt-test", effort: "medium" },
+      lead: { cwd: join(root, "lead") },
+      discovery: { cwd: join(root, "discovery"), enabled: true },
       modules: [
         { id: "api", label: "API", path: join(root, "api") },
         { id: "web", label: "Web", path: join(root, "web") }
@@ -363,24 +362,22 @@ test("Workspace config accepts enabled and legacy modes without automatic Discov
     const save = (v: unknown) => writeFileSync(path, JSON.stringify(v));
     save(body);
     assert.deepEqual(loadWorkspaceConfig(path).discovery, body.discovery);
-    save({ ...body, discovery: { cwd: body.discovery!.cwd, mode: "off" } });
+    save({ ...body, discovery: { cwd: body.discovery!.cwd, enabled: false } });
     assert.equal(loadWorkspaceConfig(path).discovery?.enabled, false);
-    save({ ...body, discovery: { cwd: body.discovery!.cwd, mode: "auto" } });
-    assert.equal(loadWorkspaceConfig(path).discovery?.enabled, true);
     save({ ...body, discovery: { cwd: body.discovery!.cwd, enabled: "yes" } });
     assert.throws(() => loadWorkspaceConfig(path), /discovery.enabled/);
-    save({ ...body, discovery: { cwd: body.discovery!.cwd, mode: "invalid" } });
+    save({ ...body, discovery: { cwd: body.discovery!.cwd, mode: "auto" } });
     assert.throws(() => loadWorkspaceConfig(path), /discovery.mode/);
     save({ ...body, discovery: { cwd: body.lead.cwd } });
     assert.throws(() => loadWorkspaceConfig(path), /thư mục riêng/);
-    save({ ...body, discovery: { cwd: body.discovery!.cwd, model: "bad model" } });
+    save({ ...body, discovery: { cwd: body.discovery!.cwd, model: "gpt-test" } });
     assert.throws(() => loadWorkspaceConfig(path), /discovery.model/);
     save(body);
     assert.equal(loadWorkspaceConfig(path).discovery?.enabled, true);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("Discovery App Settings override workspace config when the Lead-requested survey starts", async () => {
+test("Discovery App Settings are the single source of model/effort for new Discovery turns", async () => {
   const ctx = fixture();
   const calls: Array<{ role: string; model?: string; effort?: string }> = [];
   const runtime: AgentRuntime = {
@@ -389,7 +386,7 @@ test("Discovery App Settings override workspace config when the Lead-requested s
       hooks.onTurn(session.id + "-turn");
       calls.push({ role: session.role, model: selection?.model, effort: selection?.effort });
       if (session.role === "lead" && calls.filter(c => c.role === "lead").length === 1) {
-        await hooks.onLeadTool!("spawn", { type: "spawn_discovery", message: "Khảo sát API" });
+        await hooks.onLeadTool!("spawn", { type: "spawn_discovery", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", message: "Khảo sát API" });
       }
       return session.role === "discovery" ? "Sơ bộ API" : "Đã nhận báo cáo";
     }
@@ -406,7 +403,7 @@ test("Discovery App Settings override workspace config when the Lead-requested s
     assert.equal(ctx.store.conversation(task.id)?.status, "active");
     assert.deepEqual(calls.slice(0, 2), [
       { role: "lead", model: "lead-model", effort: "medium" },
-      { role: "discovery", model: "ui-model", effort: "low" }
+      { role: "discovery", model: "ui-model", effort: undefined }
     ]);
   } finally { ctx.cleanup(); }
 });
