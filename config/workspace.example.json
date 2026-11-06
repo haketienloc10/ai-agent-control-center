@@ -5,7 +5,7 @@
   },
   "discovery": {
     "cwd": "/ABSOLUTE/PATH/TO/discovery-workspace",
-    "mode": "auto"
+    "enabled": true
   },
   "modules": [
     {

@@ -9,7 +9,7 @@ export interface AgentRunHooks {
 }
 export interface AgentRuntime {
   run(session: AgentSession, cwd: string, prompt: string, hooks: AgentRunHooks,
-    selection?: ModelSelection, readableRoots?: string[]): Promise<string>;
+    selection?: ModelSelection, workspaceRoots?: string[]): Promise<string>;
 }
 
 /** Event-driven Codex turn; Lead actions use dynamic tools, never text/JSON envelopes. */
@@ -22,48 +22,30 @@ export class CodexAgentRuntime implements AgentRuntime {
   }
 
   async run(session: AgentSession, cwd: string, prompt: string, hooks: AgentRunHooks,
-    selection: ModelSelection = {}, readableRoots?: string[]): Promise<string> {
+    selection: ModelSelection = {}, workspaceRoots?: string[]): Promise<string> {
     await this.client.start();
-    const peer = session.role === "peer";
-    const discovery = session.role === "discovery";
+    const worker = session.role !== "lead";
     const safe = process.env.CODEX_SECURITY_MODE === "sandbox";
-    const approvalPolicy = peer && safe ? "on-request" : "never";
-    const sandbox = peer ? (safe ? "workspace-write" : "danger-full-access") : "read-only";
-    const sandboxPolicy = peer ? (safe
-      ? { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false }
+    const approvalPolicy = worker && safe ? "on-request" : "never";
+    const sandbox = worker ? (safe ? "workspace-write" : "danger-full-access") : "read-only";
+    // Discovery and Peer share the same execution policy. Only Discovery has multiple workspace roots.
+    const roots = session.role === "discovery"
+      ? [...new Set([cwd, ...(workspaceRoots ?? [])])]
+      : [cwd];
+    const sandboxPolicy = worker ? (safe
+      ? { type: "workspaceWrite", writableRoots: roots, networkAccess: false }
       : { type: "dangerFullAccess" }) : { type: "readOnly" };
 
-    // Restricted reads moved from readOnly.access to named permission profiles.
-    // A per-thread profile grants read access only to Discovery and module roots.
-    const discoveryProfile = "aacc-discovery-" + session.id.replace(/[^a-zA-Z0-9_-]/g, "");
-    const discoveryRoots = [...new Set([cwd, ...(readableRoots ?? [])])];
-    const discoveryPermissions = {
-      permissions: discoveryProfile,
-      runtimeWorkspaceRoots: discoveryRoots,
-      config: {
-        ["permissions." + discoveryProfile]: {
-          filesystem: {
-            ":minimal": "read",
-            ":workspace_roots": { ".": "read" }
-          },
-          network: { enabled: false }
-        }
-      }
-    };
-
-    const started: { thread: { id: string }; activePermissionProfile?: { id: string } } = session.threadId
+    const started: { thread: { id: string } } = session.threadId
       ? await this.client.request("thread/resume", { threadId: session.threadId, excludeTurns: true })
       : await this.client.request("thread/start", {
-          cwd, approvalPolicy,
-          ...(discovery ? discoveryPermissions : { sandbox }),
+          cwd, approvalPolicy, sandbox,
+          ...(session.role === "discovery" ? { runtimeWorkspaceRoots: roots } : {}),
           ...(selection.model ? { model: selection.model } : {}),
           ...(session.role === "lead" ? { dynamicTools: leadDynamicTools } : {})
         });
     const threadId = started?.thread?.id;
     if (!threadId) throw new Error("Codex không trả về thread.id");
-    if (discovery && started.activePermissionProfile?.id !== discoveryProfile) {
-      throw new Error("Codex không xác nhận Discovery permission profile: " + discoveryProfile);
-    }
     if (session.threadId && threadId !== session.threadId) {
       throw new Error("Codex resume returned unexpected thread.id");
     }
@@ -103,7 +85,9 @@ export class CodexAgentRuntime implements AgentRuntime {
       const id = event.id;
       void (async () => {
         try {
-          if (peer || !hooks.onLeadTool) throw new Error("Tool routing is available only to Lead");
+          if (session.role !== "lead" || !hooks.onLeadTool) {
+            throw new Error("Tool routing is available only to Lead");
+          }
           const params = event.params!;
           const args = typeof params.arguments === "string"
             ? JSON.parse(params.arguments) as unknown : params.arguments;
@@ -128,7 +112,7 @@ export class CodexAgentRuntime implements AgentRuntime {
       const turn: { turn: { id: string } } = await this.client.request("turn/start", {
         threadId, input: [{ type: "text", text: prompt }],
         cwd, approvalPolicy,
-        ...(discovery ? { permissions: discoveryProfile } : { sandboxPolicy }),
+        sandboxPolicy,
         ...(selection.model ? { model: selection.model } : {}),
         ...(selection.effort ? { effort: selection.effort } : {})
       });

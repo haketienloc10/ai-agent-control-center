@@ -6,146 +6,209 @@ import { join } from "node:path";
 import type { WorkspaceConfig } from "@aacc/contracts";
 import { loadWorkspaceConfig } from "./config.js";
 import { CoordinationStore } from "./coordination-store.js";
-import { Coordinator, shouldDiscover } from "./coordinator.js";
+import { Coordinator } from "./coordinator.js";
 import type { AgentRuntime } from "./codex-runtime.js";
 
 const config: WorkspaceConfig = {
   lead: { cwd: "/work/lead", instructions: "" },
-  discovery: { cwd: "/work/discovery", mode: "auto", model: "discovery-model", effort: "low" },
+  discovery: { cwd: "/work/discovery", enabled: true, model: "discovery-model", effort: "low" },
   modules: [
     { id: "api", label: "API", path: "/work/api" },
     { id: "web", label: "Web", path: "/work/web" }
   ]
 };
-
 async function until(check: () => boolean, timeout = 4000) {
   const started = Date.now();
   while (!check()) {
-    if (Date.now() - started > timeout) throw new Error("Timed out waiting for discovery");
+    if (Date.now() - started > timeout) throw new Error("Timed out waiting for coordination");
     await new Promise(resolve => setTimeout(resolve, 8));
   }
 }
-
 function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), "aacc-discovery-"));
+  const dir = mkdtempSync(join(tmpdir(), "aacc-lead-discovery-"));
   let store = new CoordinationStore(dir);
-  return { get store() { return store; },
+  return {
+    get store() { return store; },
     reopen() { store.close(); store = new CoordinationStore(dir); },
-    cleanup() { store.close(); rmSync(dir, { recursive: true, force: true }); } };
+    cleanup() { store.close(); rmSync(dir, { recursive: true, force: true }); }
+  };
+}
+function startLead(store: CoordinationStore, id: string) {
+  const c = store.conversation(id)!;
+  const delivery = store.queued().find(d => d.sessionId === c.leadSessionId)!;
+  store.startDelivery(delivery.id);
+  return delivery;
+}
+function spawn(store: CoordinationStore, leadId: string, callId = "spawn") {
+  return store.routeLeadTool(leadId, callId,
+    { type: "spawn_discovery", message: "Khảo sát API và Web ở mức tổng quan" },
+    ["api", "web"], true);
+}
+function discoverySession(store: CoordinationStore) {
+  return store.snapshot().sessions.find(s => s.role === "discovery")!;
 }
 
-test("Discovery auto mode is conditional; off/absent skip and always overrides status", () => {
-  assert.equal(shouldDiscover(config, "Thêm Todo API và UI"), true);
-  assert.equal(shouldDiscover(config, "Sửa bug authentication"), true);
-  assert.equal(shouldDiscover(config, "Trạng thái task hiện tại?"), false);
-  assert.equal(shouldDiscover(config, "Cho tôi xem tiến độ task"), false);
-  assert.equal(shouldDiscover({ ...config, discovery: { cwd: "/work/discovery", mode: "always" } },
-    "Trạng thái task hiện tại?"), true);
-  assert.equal(shouldDiscover({ ...config, discovery: { cwd: "/work/discovery", mode: "off" } },
-    "Thêm Todo API"), false);
-  assert.equal(shouldDiscover({ ...config, discovery: undefined }, "Thêm Todo API"), false);
+test("New tasks begin with Lead; only Lead can spawn optional Discovery", () => {
+  const ctx = fixture();
+  try {
+    const task = ctx.store.createConversation("Tạo Todo API và Web");
+    assert.equal(ctx.store.snapshot().sessions.filter(s => s.role === "discovery").length, 0);
+    assert.equal(ctx.store.queued()[0].sessionId, task.leadSessionId);
+    const lead = startLead(ctx.store, task.id);
+    assert.throws(() => spawn(ctx.store, lead.id), /chưa được cấu hình/);
+    const text = spawn(ctx.store, lead.id, "spawn-enabled");
+    assert.match(text, /sessionId=/);
+    const d = discoverySession(ctx.store);
+    assert.notEqual(d.id, task.leadSessionId);
+    assert.equal(ctx.store.snapshot().sessions.filter(s => s.role === "peer").length, 0);
+    assert.equal(ctx.store.queued()[0].sessionId, d.id);
+    const outbound = ctx.store.input(ctx.store.queued()[0].id)!;
+    assert.equal(outbound.from, "lead");
+    assert.equal(outbound.to, "discovery");
+    assert.equal(outbound.discoverySessionId, d.id);
+    assert.equal(outbound.peerSessionId, undefined);
+    assert.match(outbound.text, /Khảo sát API và Web/);
+    assert.match(ctx.store.routeLeadTool(lead.id, "spawn-enabled",
+      { type: "spawn_discovery", message: "Khảo sát API và Web ở mức tổng quan" },
+      ["api", "web"], true), /Already executed/);
+    assert.throws(() => spawn(ctx.store, lead.id, "duplicate"), /đã có Discovery/);
+    ctx.store.completeLead(lead.id, "");
+    assert.equal(ctx.store.conversation(task.id)?.status, "active");
+  } finally { ctx.cleanup(); }
 });
 
-test("Discovery owns a separate session and gates the first Lead turn; report is not a Peer result", async () => {
+test("Lead dispatches Discovery, waits without polling and receives an independent preliminary report", async () => {
   const ctx = fixture();
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
-  const runs: string[] = [];
+  let leadTurns = 0, discoveryTurns = 0;
+  const calls: string[] = [];
   const runtime: AgentRuntime = {
-    async run(session, cwd, prompt, hooks, selection, readableRoots) {
-      hooks.onThread(session.id + "-thread");
+    async run(session, cwd, prompt, hooks, selection, roots) {
+      hooks.onThread(session.threadId ?? session.id + "-thread");
       hooks.onTurn(session.id + "-turn");
-      runs.push(session.role);
-      if (session.role === "discovery") {
-        assert.equal(cwd, config.discovery?.cwd);
-        assert.match(prompt, /không kết luận root cause/);
-        assert.match(prompt, /USER_REQUEST: Thêm Todo API và UI/);
-        assert.equal(selection?.model, "discovery-model");
-        assert.equal(selection?.effort, "low");
-        assert.deepEqual(readableRoots, ["/work/discovery", "/work/api", "/work/web"]);
-        assert.equal(hooks.onLeadTool, undefined);
-        await gate;
-        return "### Đã xác minh\n- API tại /work/api\n\n### Chưa rõ\n- contract thực tế";
+      calls.push(session.role);
+      if (session.role === "lead") {
+        leadTurns++;
+        if (leadTurns === 1) {
+          assert.match(prompt, /DISCOVERY_ENABLED: true/);
+          assert.match(prompt, /spawn_discovery/);
+          assert.match(prompt, /ORIGINAL_USER_REQUEST: "Build Todo"/);
+          const result = await hooks.onLeadTool!("lead:spawn", {
+            type: "spawn_discovery", message: "Chỉ khảo sát cấu trúc API và Web"
+          });
+          assert.match(result, /Discovery/);
+          return "Đã giao Discovery";
+        }
+        assert.match(prompt, /Chỉ khảo sát cấu trúc API và Web/);
+        assert.match(prompt, /Đã xác minh/);
+        assert.match(prompt, /DISCOVERY_SESSIONS:/);
+        return "Đã nhận báo cáo sơ bộ";
       }
-      assert.equal(session.role, "lead");
-      assert.equal(cwd, config.lead.cwd);
-      assert.match(prompt, /ORIGINAL_USER_REQUEST: "Thêm Todo API và UI"/);
-      assert.match(prompt, /API tại \/work\/api/);
-      assert.match(prompt, /Chưa rõ/);
-      return "Lead đã nhận báo cáo Discovery";
+      discoveryTurns++;
+      assert.equal(session.role, "discovery");
+      assert.equal(cwd, config.discovery!.cwd);
+      assert.equal(hooks.onLeadTool, undefined);
+      assert.match(prompt, /LEAD_MESSAGE: Chỉ khảo sát cấu trúc API và Web/);
+      assert.match(prompt, /không kết luận root cause/);
+      assert.equal(selection?.model, "discovery-model");
+      assert.equal(selection?.effort, "low");
+      assert.deepEqual(roots, ["/work/discovery", "/work/api", "/work/web"]);
+      await gate;
+      return "### Đã xác minh\n- API, Web\n\n### Chưa rõ\n- API contract";
     }
   };
   try {
     new Coordinator(config, ctx.store, runtime);
-    const task = ctx.store.createConversation("Thêm Todo API và UI", undefined, true);
-    const discovery = ctx.store.snapshot().sessions.find(s => s.role === "discovery")!;
-    assert.notEqual(discovery.id, task.leadSessionId);
-    await until(() => ctx.store.session(discovery.id)?.status === "running");
-    assert.deepEqual(runs, ["discovery"], "Lead cannot run before Discovery completes");
-    assert.equal(ctx.store.queued().some(d => d.sessionId === task.leadSessionId), false);
+    const c = ctx.store.createConversation("Build Todo");
+    await until(() => discoveryTurns === 1);
+    assert.equal(leadTurns, 1);
+    assert.equal(ctx.store.session(c.leadSessionId)?.status, "idle");
+    assert.deepEqual(calls, ["lead", "discovery"]);
     release();
-    await until(() => ctx.store.session(task.leadSessionId)?.status === "idle" &&
-      ctx.store.snapshot().messages.some(m => m.text === "Lead đã nhận báo cáo Discovery"));
-    assert.deepEqual(runs, ["discovery", "lead"]);
+    await until(() => leadTurns === 2 && ctx.store.snapshot().messages.some(m =>
+      m.text === "Đã nhận báo cáo sơ bộ"));
+    assert.deepEqual(calls, ["lead", "discovery", "lead"]);
     const report = ctx.store.snapshot().messages.find(m => m.from === "discovery")!;
     assert.equal(report.to, "lead");
-    assert.equal(report.discoverySessionId, discovery.id);
+    assert.equal(report.discoverySessionId, discoverySession(ctx.store).id);
     assert.equal(report.peerSessionId, undefined);
-    assert.equal(ctx.store.snapshot().sessions.some(s => s.role === "peer"), false);
+    assert.equal(ctx.store.snapshot().messages.filter(m => m.from === "discovery").length, 1);
     assert.equal(ctx.store.queued().length, 0);
   } finally { release(); ctx.cleanup(); }
 });
 
-test("User follow-up during Discovery does not wake Lead early; Lead sees both messages", () => {
+test("send_discovery reuses the same session/thread, queues behind running turn and rejects other roles", () => {
   const ctx = fixture();
   try {
-    const c = ctx.store.createConversation("Build API", undefined, true);
-    const d = ctx.store.queued()[0];
-    const discovery = ctx.store.session(d.sessionId)!;
-    assert.equal(discovery.role, "discovery");
-    ctx.store.startDelivery(d.id);
-    ctx.store.postUser(c.id, "Và hỗ trợ Web");
-    assert.equal(ctx.store.queued().length, 0);
-    ctx.store.completeDiscovery(d.id, "Chưa rõ API contract");
-    const lead = ctx.store.queued().filter(d => d.sessionId === c.leadSessionId);
-    assert.equal(lead.length, 1);
-    assert.equal(ctx.store.input(lead[0].id)?.from, "discovery");
-    assert.deepEqual(ctx.store.snapshot().messages.filter(m => m.from === "user").map(m => m.text),
-      ["Build API", "Và hỗ trợ Web"]);
-    assert.throws(() => ctx.store.completeDiscovery(d.id, "Duplicate"), /not running/);
+    const a = ctx.store.createConversation("A");
+    const b = ctx.store.createConversation("B");
+    const leadA = startLead(ctx.store, a.id);
+    const leadB = startLead(ctx.store, b.id);
+    spawn(ctx.store, leadA.id);
+    const d = discoverySession(ctx.store);
+    const original = ctx.store.queued()[0];
+    ctx.store.startDelivery(original.id);
+    ctx.store.setThread(d.id, "thread-1");
+    const cmd = { type: "send_discovery" as const, sessionId: d.id,
+      message: "Bổ sung sơ bộ: xem entry points" };
+    assert.match(ctx.store.routeLeadTool(leadA.id, "followup", cmd, [], true), /sessionId=/);
+    assert.equal(ctx.store.queued().length, 1);
+    assert.equal(ctx.store.queued()[0].sessionId, d.id);
+    assert.match(ctx.store.routeLeadTool(leadA.id, "followup", cmd, [], true), /Already executed/);
+    assert.throws(() => ctx.store.routeLeadTool(leadB.id, "foreign", cmd, [], true),
+      /Discovery session/);
+    assert.throws(() => ctx.store.routeLeadTool(leadA.id, "unknown",
+      { ...cmd, sessionId: a.leadSessionId }, [], true), /Discovery session/);
+    ctx.store.completeLead(leadA.id, "");
+    ctx.store.completeDiscovery(original.id, "Đã khảo sát");
+    assert.equal(ctx.store.queued().some(item => item.sessionId === a.leadSessionId), true);
+    const next = ctx.store.queued().find(item => item.sessionId === d.id)!;
+    ctx.store.startDelivery(next.id);
+    assert.equal(ctx.store.session(d.id)?.threadId, "thread-1");
+    assert.equal(ctx.store.input(next.id)?.text, "Bổ sung sơ bộ: xem entry points");
+    ctx.store.completeDiscovery(next.id, "Báo cáo bổ sung");
+    assert.equal(ctx.store.snapshot().sessions.filter(s => s.role === "discovery").length, 1);
   } finally { ctx.cleanup(); }
 });
 
-test("Discovery failure wakes Lead with uncertainty, without creating a Peer or re-running Discovery", async () => {
+test("Discovery failure wakes Lead with evidence gap, not a fake Peer report", async () => {
   const ctx = fixture();
-  const runs: string[] = [];
+  let leadTurns = 0;
   const runtime: AgentRuntime = {
     async run(session, _cwd, prompt, hooks) {
       hooks.onThread(session.id + "-thread");
       hooks.onTurn(session.id + "-turn");
-      runs.push(session.role);
       if (session.role === "discovery") throw new Error("Workspace inaccessible");
+      leadTurns++;
+      if (leadTurns === 1) {
+        await hooks.onLeadTool!("spawn", { type: "spawn_discovery", message: "Khảo sát API" });
+        return "";
+      }
       assert.match(prompt, /Workspace inaccessible/);
-      return "Đã nhận cảnh báo; cần Peer khảo sát chi tiết";
+      return "Lead sẽ giao Peer nếu cần bằng chứng";
     }
   };
   try {
     new Coordinator(config, ctx.store, runtime);
-    const c = ctx.store.createConversation("Build API", undefined, true);
-    await until(() => ctx.store.snapshot().messages.some(m =>
-      m.text === "Đã nhận cảnh báo; cần Peer khảo sát chi tiết"));
-    assert.deepEqual(runs, ["discovery", "lead"]);
-    assert.equal(ctx.store.conversation(c.id)?.status, "active");
-    assert.equal(ctx.store.snapshot().messages.some(m =>
-      m.from === "system" && m.to === "lead" && m.text.includes("Workspace inaccessible")), true);
-    assert.equal(ctx.store.queued().length, 0);
+    const task = ctx.store.createConversation("Build API");
+    await until(() => ctx.store.snapshot().messages.some(m => m.text ===
+      "Lead sẽ giao Peer nếu cần bằng chứng"));
+    assert.equal(leadTurns, 2);
+    assert.equal(ctx.store.conversation(task.id)?.status, "active");
+    assert.equal(ctx.store.snapshot().sessions.some(s => s.role === "peer"), false);
+    assert.ok(ctx.store.snapshot().messages.some(m => m.from === "system" &&
+      m.to === "lead" && m.text.includes("Workspace inaccessible")));
   } finally { ctx.cleanup(); }
 });
 
-test("Interrupted Discovery after restart is not replayed; it queues one Lead fallback", () => {
+test("Discovery restarted mid-turn is not replayed and wakes Lead just once", () => {
   const ctx = fixture();
   try {
-    const c = ctx.store.createConversation("Build API", undefined, true);
+    const task = ctx.store.createConversation("Build API");
+    const lead = startLead(ctx.store, task.id);
+    spawn(ctx.store, lead.id);
+    ctx.store.completeLead(lead.id, "");
     const d = ctx.store.queued()[0];
     ctx.store.startDelivery(d.id);
     ctx.reopen();
@@ -153,69 +216,114 @@ test("Interrupted Discovery after restart is not replayed; it queues one Lead fa
     assert.equal(ctx.store.session(d.sessionId)?.status, "interrupted");
     const queued = ctx.store.queued();
     assert.equal(queued.length, 1);
-    assert.equal(queued[0].sessionId, c.leadSessionId);
+    assert.equal(queued[0].sessionId, task.leadSessionId);
     assert.match(ctx.store.input(queued[0].id)?.text ?? "", /Discovery bị gián đoạn/);
     ctx.reopen();
     assert.equal(ctx.store.queued().length, 1);
   } finally { ctx.cleanup(); }
 });
 
-test("Workspace config validates independent discovery cwd, mode and selection", () => {
+test("User messages are delivered to Lead even if Discovery is running", () => {
+  const ctx = fixture();
+  try {
+    const task = ctx.store.createConversation("Build API");
+    const lead = startLead(ctx.store, task.id);
+    spawn(ctx.store, lead.id);
+    ctx.store.completeLead(lead.id, "");
+    const d = ctx.store.queued()[0];
+    ctx.store.startDelivery(d.id);
+    ctx.store.postUser(task.id, "Thêm yêu cầu Web");
+    const queued = ctx.store.queued();
+    assert.equal(queued.length, 1);
+    assert.equal(queued[0].sessionId, task.leadSessionId);
+    ctx.store.completeDiscovery(d.id, "Khảo sát xong");
+    assert.equal(ctx.store.queued().filter(x => x.sessionId === task.leadSessionId).length, 1,
+      "Discovery completion batches into the pending Lead wake");
+    assert.deepEqual(ctx.store.snapshot().messages.filter(m => m.from === "user").map(m => m.text),
+      ["Build API", "Thêm yêu cầu Web"]);
+  } finally { ctx.cleanup(); }
+});
+
+test("Finish supersedes queued Discovery; late result remains recorded without waking Lead", () => {
+  const ctx = fixture();
+  try {
+    const task = ctx.store.createConversation("Build API");
+    const lead = startLead(ctx.store, task.id);
+    spawn(ctx.store, lead.id);
+    const d = ctx.store.queued()[0];
+    ctx.store.startDelivery(d.id);
+    ctx.store.routeLeadTool(lead.id, "finish", { type: "finish" }, [], true);
+    ctx.store.completeLead(lead.id, "## Done", true);
+    ctx.store.completeDiscovery(d.id, "Late preliminary report");
+    assert.equal(ctx.store.conversation(task.id)?.status, "finished");
+    assert.equal(ctx.store.queued().length, 0);
+    assert.ok(ctx.store.snapshot().messages.some(m => m.text === "Late preliminary report"));
+    ctx.store.postUser(task.id, "Mở lại");
+    assert.equal(ctx.store.queued().length, 1);
+  } finally { ctx.cleanup(); }
+});
+
+test("Workspace config accepts enabled and legacy modes without automatic Discovery", () => {
   const root = mkdtempSync(join(tmpdir(), "aacc-discovery-config-"));
   try {
     for (const dir of ["lead", "discovery", "api", "web"]) mkdirSync(join(root, dir));
     const path = join(root, "workspace.json");
     const body: WorkspaceConfig = {
       lead: { cwd: join(root, "lead"), instructions: "" },
-      discovery: { cwd: join(root, "discovery"), mode: "auto", model: "gpt-test", effort: "medium" },
+      discovery: { cwd: join(root, "discovery"), enabled: true,
+        model: "gpt-test", effort: "medium" },
       modules: [
         { id: "api", label: "API", path: join(root, "api") },
         { id: "web", label: "Web", path: join(root, "web") }
       ]
     };
-    const save = () => writeFileSync(path, JSON.stringify(body));
-    save();
+    const save = (v: unknown) => writeFileSync(path, JSON.stringify(v));
+    save(body);
     assert.deepEqual(loadWorkspaceConfig(path).discovery, body.discovery);
-    body.discovery!.mode = "invalid" as "auto";
-    save();
+    save({ ...body, discovery: { cwd: body.discovery!.cwd, mode: "off" } });
+    assert.equal(loadWorkspaceConfig(path).discovery?.enabled, false);
+    save({ ...body, discovery: { cwd: body.discovery!.cwd, mode: "auto" } });
+    assert.equal(loadWorkspaceConfig(path).discovery?.enabled, true);
+    save({ ...body, discovery: { cwd: body.discovery!.cwd, enabled: "yes" } });
+    assert.throws(() => loadWorkspaceConfig(path), /discovery.enabled/);
+    save({ ...body, discovery: { cwd: body.discovery!.cwd, mode: "invalid" } });
     assert.throws(() => loadWorkspaceConfig(path), /discovery.mode/);
-    body.discovery!.mode = "auto";
-    body.discovery!.cwd = body.lead.cwd;
-    save();
+    save({ ...body, discovery: { cwd: body.lead.cwd } });
     assert.throws(() => loadWorkspaceConfig(path), /thư mục riêng/);
-    body.discovery!.cwd = join(root, "discovery");
-    body.discovery!.model = "bad model";
-    save();
+    save({ ...body, discovery: { cwd: body.discovery!.cwd, model: "bad model" } });
     assert.throws(() => loadWorkspaceConfig(path), /discovery.model/);
+    save(body);
+    assert.equal(loadWorkspaceConfig(path).discovery?.enabled, true);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-
-test("Discovery App Settings override workspace config per field when the Discovery turn starts", async () => {
+test("Discovery App Settings override workspace config when the Lead-requested survey starts", async () => {
   const ctx = fixture();
-  const captured: Array<{ role: string; model?: string; effort?: string }> = [];
+  const calls: Array<{ role: string; model?: string; effort?: string }> = [];
   const runtime: AgentRuntime = {
     async run(session, _cwd, _prompt, hooks, selection) {
       hooks.onThread(session.id + "-thread");
       hooks.onTurn(session.id + "-turn");
-      captured.push({ role: session.role, model: selection?.model, effort: selection?.effort });
-      return session.role === "discovery" ? "Sơ bộ: module API" : "Đã nhận báo cáo";
+      calls.push({ role: session.role, model: selection?.model, effort: selection?.effort });
+      if (session.role === "lead" && calls.filter(c => c.role === "lead").length === 1) {
+        await hooks.onLeadTool!("spawn", { type: "spawn_discovery", message: "Khảo sát API" });
+      }
+      return session.role === "discovery" ? "Sơ bộ API" : "Đã nhận báo cáo";
     }
   };
   try {
-    const task = ctx.store.createConversation("Khảo sát API", undefined, true);
+    const task = ctx.store.createConversation("Build API");
     ctx.store.updateSettings({
       lead: { model: "lead-model", effort: "medium" },
       discovery: { model: "ui-model" },
       peer: { model: "peer-model" }
     });
     new Coordinator(config, ctx.store, runtime);
-    await until(() => ctx.store.snapshot().messages.some(m => m.text === "Đã nhận báo cáo"));
+    await until(() => ctx.store.snapshot().messages.some(m => m.from === "discovery"));
     assert.equal(ctx.store.conversation(task.id)?.status, "active");
-    assert.deepEqual(captured, [
-      { role: "discovery", model: "ui-model", effort: "low" },
-      { role: "lead", model: "lead-model", effort: "medium" }
+    assert.deepEqual(calls.slice(0, 2), [
+      { role: "lead", model: "lead-model", effort: "medium" },
+      { role: "discovery", model: "ui-model", effort: "low" }
     ]);
-    assert.equal(ctx.store.queued().length, 0);
   } finally { ctx.cleanup(); }
 });

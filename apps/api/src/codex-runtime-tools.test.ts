@@ -15,7 +15,7 @@ const code = [
   'if(m.params?.capabilities?.experimentalApi!==true)send({id:m.id,error:{code:-32602,message:"Missing experimentalApi"}});',
   'else send({id:m.id,result:{}});}',
   'if(m.method==="thread/start"){',
-  'if(!m.params.dynamicTools || m.params.dynamicTools.length!==3)',
+  'if(!m.params.dynamicTools || m.params.dynamicTools.length!==5)',
   'send({id:m.id,error:{code:-32602,message:"Missing dynamicTools"}});',
   'else send({id:m.id,result:{thread:{id:"lead-thread"}}});}',
   'if(m.method==="thread/resume")send({id:m.id,result:{thread:{id:m.params.threadId}}});',

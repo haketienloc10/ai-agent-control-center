@@ -12,19 +12,28 @@ function leadPrompt(config: WorkspaceConfig, store: CoordinationStore, delivery:
     s.role === "peer").map(s => ({
     sessionId: s.id, moduleId: s.moduleId, label: s.label, status: s.status, error: s.error
   }));
+  const discovery = state.sessions.filter(s => s.conversationId === delivery.conversationId &&
+    s.role === "discovery").map(s => ({
+    sessionId: s.id, status: s.status, error: s.error
+  }));
   return [
     "Bạn là LEAD AGENT, điều phối các Peer sessions thay người dùng.",
     "Bạn ở workspace riêng, không sửa code; giao công việc cho Peer theo module.",
     "Điều phối theo sự kiện: sau khi giao việc, kết thúc Codex turn của bạn ngay. Task vẫn active.",
-    "App tự gửi kết quả hoặc lỗi của Peer cho bạn bằng một event mới; không cần chờ hoặc hỏi Peer.",
-    "TUYỆT ĐỐI không gọi send_peer chỉ để hỏi trạng thái, nhắc tiến độ hoặc yêu cầu báo cáo.",
+    "App tự gửi kết quả hoặc lỗi của Peer/Discovery cho bạn bằng event mới; không cần chờ hoặc hỏi tiến độ.",
+    "TUYỆT ĐỐI không gọi send_peer/send_discovery chỉ để hỏi trạng thái, nhắc tiến độ hoặc yêu cầu báo cáo.",
     "Trạng thái Peer nằm trong PEER_SESSIONS. Peer running thì không can thiệp nếu không có thay đổi công việc thực sự.",
     "Chỉ dùng send_peer để giao yêu cầu mới, sửa hoặc bổ sung công việc có nội dung cụ thể.",
+    "Khi thiếu ngữ cảnh tổng quan, chủ động dùng spawn_discovery(message) để yêu cầu khám phá sơ bộ nhiều module; không bắt buộc với mọi task.",
+    "Discovery chỉ cung cấp định hướng, không thay thế bằng chứng kỹ thuật; khi cần chi tiết, giao Peer điều tra sâu.",
+    "Một conversation chỉ có một Discovery session; dùng send_discovery(sessionId,message) nếu cần khảo sát bổ sung thực sự.",
+    "Nếu DISCOVERY_SESSIONS đang running, không nhắc tiến độ; kết thúc turn và chờ event.",
+    "Discovery chỉ khả dụng khi DISCOVERY_ENABLED=true.",
     "Dùng spawn_peer để mở Peer mới. Dùng finish() CHỈ khi toàn bộ task thật sự hoàn thành.",
     "Sau khi finish() thành công, gửi báo cáo cuối bằng Codex finalText thông thường; không truyền báo cáo vào tool.",
-    "Nếu còn Peer đang làm phần việc cần thiết, không gọi finish. Kết thúc turn và chờ event.",
-    "GỌI các công cụ spawn_peer, send_peer, finish trực tiếp để điều phối; không viết JSON điều phối trong reply.",
-    "Mỗi event có thể chứa nhiều kết quả Peer trong RECENT_CONVERSATION; xử lý những kết quả mới một lần.",
+    "Nếu còn Peer hoặc Discovery đang làm phần việc cần thiết, không gọi finish. Kết thúc turn và chờ event.",
+    "GỌI các công cụ spawn_discovery, send_discovery, spawn_peer, send_peer, finish trực tiếp; không viết JSON điều phối trong reply.",
+    "Mỗi event có thể chứa nhiều kết quả Discovery/Peer trong RECENT_CONVERSATION; xử lý những kết quả mới một lần.",
     "Peer không trao đổi trực tiếp với Peer khác. Mọi yêu cầu phối hợp phải qua bạn.",
     "Không tự tuyên bố test thành công nếu Peer chưa cung cấp bằng chứng.",
     "Không có approval gate hoặc workflow quality gate của app.",
@@ -34,24 +43,28 @@ function leadPrompt(config: WorkspaceConfig, store: CoordinationStore, delivery:
     "SETTINGS: " + JSON.stringify(store.settings()),
     "MODULES: " + JSON.stringify(config.modules.map(m => ({ id: m.id, label: m.label, path: m.path }))),
     "PEER_SESSIONS: " + JSON.stringify(peers),
+    "DISCOVERY_ENABLED: " + Boolean(config.discovery && config.discovery.enabled !== false),
+    "DISCOVERY_SESSIONS: " + JSON.stringify(discovery),
     "ORIGINAL_USER_REQUEST: " + JSON.stringify(originalRequest),
     "CURRENT_MESSAGE: " + JSON.stringify(current),
     "RECENT_CONVERSATION: " + JSON.stringify(recent.map(m => ({
-      from: m.from, to: m.to, peerSessionId: m.peerSessionId, text: m.text
+      from: m.from, to: m.to, peerSessionId: m.peerSessionId,
+      discoverySessionId: m.discoverySessionId, text: m.text
     })))
   ].join("\n\n");
 }
-/** One limited read-only survey; no implementation, root-cause claim, or task planning. */
+/** Preliminary survey under Lead's direction; runtime privileges follow Peer policy. */
 function discoveryPrompt(config: WorkspaceConfig, message: Message): string {
   return [
-    "Bạn là DISCOVERY AGENT. Khám phá sơ bộ các module để Lead biết nên bắt đầu từ đâu.",
+    "Bạn là DISCOVERY AGENT. Thực hiện yêu cầu khảo sát sơ bộ do Lead giao trong các module được cấu hình.",
     "Chỉ đọc có chọn lọc cấu trúc dự án, công nghệ, entry points và những file có khả năng liên quan.",
     "Không điều tra sâu call chain, không kết luận root cause, không tự lập kế hoạch triển khai hoặc phân công Peer.",
-    "Không sửa code, không chạy build/test mặc định, không gọi tool điều phối của Lead.",
+    "Không triển khai nhiệm vụ hoặc chạy build/test mặc định; không gọi tool điều phối của Lead.",
     "Phân biệt điều đã đọc xác minh với giả định; nêu rõ thông tin còn thiếu và nơi Peer nên khảo sát sâu.",
     "Báo cáo ngắn gọn cho Lead, ưu tiên đường dẫn file đã kiểm tra. Không quyết định thay Lead.",
+    "Có thể nhận yêu cầu khảo sát bổ sung trong cùng Codex Thread; báo cáo kết quả và blocker về Lead.",
     "MODULES: " + JSON.stringify(config.modules.map(m => ({ id: m.id, label: m.label, path: m.path }))),
-    "USER_REQUEST: " + message.text
+    "LEAD_MESSAGE: " + message.text
   ].join("\n\n");
 }
 function peerPrompt(config: WorkspaceConfig, session: AgentSession, message: Message): string {
@@ -65,15 +78,6 @@ function peerPrompt(config: WorkspaceConfig, session: AgentSession, message: Mes
     "WORKSPACE MODULE: " + config.modules.find(m => m.id === session.moduleId)?.path,
     "LEAD MESSAGE: " + message.text
   ].join("\n\n");
-}
-
-/** Whether an initial task needs a lightweight workspace survey. No LLM classification turn. */
-export function shouldDiscover(config: WorkspaceConfig, request: string): boolean {
-  if (!config.discovery || config.discovery.mode === "off") return false;
-  if (config.discovery.mode === "always") return true;
-  // Pure status requests about an existing task do not need source discovery.
-  return !/^\s*(?:(?:cho (?:tôi|mình) )?(?:xem|báo|cập nhật)\s+)?(?:trạng thái|tình trạng|tiến độ|status)(?=$|[\s?!.,:])/i
-    .test(request.trim());
 }
 
 /** Queued event deliveries wake idle sessions; no Lead polling turn is scheduled. */
@@ -126,7 +130,8 @@ export class Coordinator {
         ...(session.role === "lead" ? { onLeadTool: (callId: string,
           command: import("@aacc/contracts").LeadCommand) => {
           const result = this.store.routeLeadTool(
-            delivery.id, callId, command, this.config.modules.map(m => m.id));
+            delivery.id, callId, command, this.config.modules.map(m => m.id),
+            Boolean(this.config.discovery && this.config.discovery.enabled !== false));
           if (command.type === "finish") finished = true;
           return result;
         } } : {})
@@ -140,10 +145,10 @@ export class Coordinator {
               effort: this.store.settings().discovery.effort ?? this.config.discovery?.effort
             }
           : { model: session.model, effort: session.effort };
-      const readableRoots = session.role === "discovery"
+      const workspaceRoots = session.role === "discovery"
         ? [...new Set([cwd, ...this.config.modules.map(m => m.path)])]
         : undefined;
-      const output = await this.runtime.run(session, cwd, prompt, hooks, selection, readableRoots);
+      const output = await this.runtime.run(session, cwd, prompt, hooks, selection, workspaceRoots);
       if (session.role === "lead") {
         // finish() only updates task state; the final Codex response is persisted once.
         this.store.completeLead(delivery.id, output, finished);

@@ -42,12 +42,16 @@ export function loadWorkspaceConfig(file = process.env.WORKSPACE_CONFIG ?? defau
     if (cwd === lead.cwd || modules.some(module => module.path === cwd)) {
       throw new Error("discovery.cwd phải là thư mục riêng, khác Lead và các module");
     }
-    const mode = raw.discovery.mode ?? "auto";
-    if (!["auto", "always", "off"].includes(mode)) {
+    // The legacy mode only controls availability; Lead decides whether a survey is needed.
+    const legacyMode = (raw.discovery as typeof raw.discovery & { mode?: string }).mode;
+    if (legacyMode !== undefined && !["auto", "always", "off"].includes(legacyMode)) {
       throw new Error("discovery.mode phải là auto, always hoặc off");
     }
+    if (raw.discovery.enabled !== undefined && typeof raw.discovery.enabled !== "boolean") {
+      throw new Error("discovery.enabled phải là boolean");
+    }
     discovery = {
-      cwd, mode,
+      cwd, enabled: raw.discovery.enabled ?? (legacyMode !== "off"),
       ...(selection(raw.discovery.model, "model") ? { model: selection(raw.discovery.model, "model") } : {}),
       ...(selection(raw.discovery.effort, "effort") ? { effort: selection(raw.discovery.effort, "effort") } : {})
     };

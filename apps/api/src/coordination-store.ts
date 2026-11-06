@@ -50,7 +50,8 @@ function message(data: Data, conversationId: string, from: MessageAuthor,
   to: Message["to"], body: string, agentSessionId?: string): Message {
   const entry: Message = {
     id: randomUUID(), conversationId, from, to, text: body,
-    ...(agentSessionId ? (from === "discovery"
+    ...(agentSessionId ? (data.sessions.some(s => s.id === agentSessionId &&
+        s.role === "discovery")
       ? { discoverySessionId: agentSessionId } : { peerSessionId: agentSessionId }) : {}),
     createdAt: now()
   };

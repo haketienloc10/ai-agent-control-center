@@ -30,6 +30,27 @@ export const leadDynamicTools = [
     }
   },
   {
+    name: "spawn_discovery",
+    description: "Mở một Discovery session để khảo sát sơ bộ nhiều module theo yêu cầu cụ thể của Lead; chỉ một Discovery session mỗi conversation. Không điều tra sâu hoặc triển khai.",
+    inputSchema: {
+      type: "object", additionalProperties: false,
+      properties: { message: { type: "string", description: "Câu hỏi/phạm vi cần khám phá sơ bộ và thông tin cần báo về Lead" } },
+      required: ["message"]
+    }
+  },
+  {
+    name: "send_discovery",
+    description: "Giao yêu cầu khảo sát sơ bộ bổ sung vào Discovery Thread đã có. Không dùng để hỏi tiến độ hoặc yêu cầu điều tra sâu.",
+    inputSchema: {
+      type: "object", additionalProperties: false,
+      properties: {
+        sessionId: { type: "string", description: "Discovery session ID từ DISCOVERY_SESSIONS" },
+        message: { type: "string", description: "Nhiệm vụ khám phá sơ bộ mới, không phải status poll" }
+      },
+      required: ["sessionId", "message"]
+    }
+  },
+  {
     name: "finish",
     description: "Đánh dấu toàn bộ task hoàn thành. Không truyền báo cáo vào tool; sau khi finish() thành công, trả lời người dùng bằng Codex finalText thông thường.",
     inputSchema: {
@@ -65,6 +86,16 @@ export function commandFromTool(tool: unknown, args: unknown): LeadCommand {
   if (tool === "send_peer") {
     return {
       type: "send_peer",
+      sessionId: nonempty(input.sessionId, "sessionId", 100),
+      message: nonempty(input.message, "message")
+    };
+  }
+  if (tool === "spawn_discovery") {
+    return { type: "spawn_discovery", message: nonempty(input.message, "message") };
+  }
+  if (tool === "send_discovery") {
+    return {
+      type: "send_discovery",
       sessionId: nonempty(input.sessionId, "sessionId", 100),
       message: nonempty(input.message, "message")
     };

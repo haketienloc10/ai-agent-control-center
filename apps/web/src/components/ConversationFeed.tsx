@@ -22,11 +22,13 @@ export function MessageBody({ text }: { text: string }) {
 }
 function MessageRow({ message, sessions }: { message: Message; sessions: AgentSession[] }) {
   const peer = sessions.find(s => s.id === message.peerSessionId)?.label ?? "Peer";
-  const routed = message.to === "peer" || message.from === "discovery" ||
+  const routed = message.to === "peer" || message.to === "discovery" ||
+    message.from === "discovery" ||
     (message.from === "peer" && message.to === "lead") ||
     (message.from === "system" && message.to === "lead");
   if (routed) {
     const label = message.to === "peer" ? "Lead giao việc cho " + peer :
+      message.to === "discovery" ? "Lead giao Discovery khảo sát sơ bộ" :
       message.from === "peer" ? peer + " gửi kết quả" :
       message.from === "discovery" ? "Discovery gửi báo cáo sơ bộ cho Lead" :
       "Hệ thống gửi thông tin cho Lead";

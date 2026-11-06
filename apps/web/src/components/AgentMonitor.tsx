@@ -76,7 +76,7 @@ export function AgentMonitor({ data, conversation, selectedPeerId, onSelectPeer 
             <span className="agent-title"><strong>Discovery</strong>
               <span className={"status-chip " + sessionStatus(discovery).tone}>
                 {sessionStatus(discovery).label}</span></span>
-            <small>Khám phá sơ bộ · read-only · session riêng</small>
+            <small>Khám phá sơ bộ · cùng chính sách thực thi Peer · nhiều module</small>
             <small>Model yêu cầu: {data.settings.discovery?.model || "Mặc định Discovery"}</small>
             <small>Effort: {data.settings.discovery?.effort || "Mặc định Discovery"}</small>
             <small className="turn-meta">{lastTurnText(discovery, data)}</small>
@@ -86,16 +86,17 @@ export function AgentMonitor({ data, conversation, selectedPeerId, onSelectPeer 
         </button>
         {selectedPeerId === discovery.id && <div className="peer-transcript"
           id={"transcript-" + discovery.id}>
-          <div className="transcript-title">Báo cáo sơ bộ gửi Lead</div>
-          {conversationMessages.filter(m => m.from === "discovery" &&
-            m.discoverySessionId === discovery.id).map(m =>
+          <div className="transcript-title">Trao đổi Lead ↔ Discovery</div>
+          {conversationMessages.filter(m => m.discoverySessionId === discovery.id &&
+            (m.from === "lead" || m.from === "discovery")).map(m =>
             <div className="transcript-message" key={m.id}>
-              <strong>Discovery <time dateTime={m.createdAt}>{shortTime(m.createdAt)}</time></strong>
+              <strong>{m.from === "lead" ? "Lead giao khám phá" : "Discovery báo cáo"}
+                <time dateTime={m.createdAt}>{shortTime(m.createdAt)}</time></strong>
               <div className="peer-message-content"><MarkdownContent content={m.text}/></div>
             </div>)}
-          {!conversationMessages.some(m => m.from === "discovery" &&
-            m.discoverySessionId === discovery.id) &&
-            <p>Chưa có báo cáo sơ bộ.</p>}
+          {!conversationMessages.some(m => m.discoverySessionId === discovery.id &&
+            (m.from === "lead" || m.from === "discovery")) &&
+            <p>Chưa có trao đổi với Discovery.</p>}
           {discovery.error && <p className="peer-error" role="alert">{discovery.error}</p>}
         </div>}
       </div>

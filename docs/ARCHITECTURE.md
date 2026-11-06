@@ -1,67 +1,65 @@
-# Kiến trúc Event-driven Discovery → Lead ↔ Peer
+# Kiến trúc Event-driven Lead ↔ Discovery / Peer
 
 ```mermaid
 sequenceDiagram
   actor User
   participant Store as SQLite / Coordinator
-  participant Discovery as Discovery Codex turn
   participant Lead as Lead Codex turn
+  participant Discovery as Discovery Codex turn
   participant Peer as Peer Codex turn
-  User->>Store: Tạo task hoặc gửi message
-  opt Task mới cần khám phá
+  User->>Store: Tạo task
+  Store->>Lead: Lead delivery
+  opt Lead cần khám phá sơ bộ
+    Lead->>Store: spawn_discovery(message)
+    Store-->>Lead: sessionId, tool success
+    Lead-->>Store: turn/completed, Lead idle
     Store->>Discovery: Discovery delivery
-    Discovery-->>Store: Báo cáo sơ bộ hoặc lỗi
+    Discovery-->>Store: Báo cáo hoặc lỗi
     Store->>Lead: Discovery event
+    opt Cần khảo sát bổ sung
+      Lead->>Store: send_discovery(sessionId,message)
+    end
   end
-  Store->>Lead: Lead delivery (trực tiếp nếu không cần Discovery)
   Lead->>Store: spawn_peer / send_peer
-  Store-->>Lead: Tool result
-  Lead-->>Store: turn/completed; Lead idle
+  Lead-->>Store: turn/completed, Lead idle
   Store->>Peer: Peer delivery
-  Note over Lead: Không giữ turn để chờ Peer
-  Peer-->>Store: turn/completed hoặc lỗi
+  Peer-->>Store: Kết quả hoặc lỗi
   Store->>Lead: Peer event nếu task active
   Lead->>Store: finish() khi toàn task xong
   Store-->>Lead: Tool success
-  Lead-->>Store: Codex finalText báo cáo cuối
-  Store-->>User: finished + báo cáo cuối
+  Lead-->>Store: Codex finalText
+  Store-->>User: finished + báo cáo
 ```
 
 ## Trách nhiệm
 
-- `apps/api/src/index.ts`: API HTTP/SSE chỉ localhost.
-- `apps/api/src/coordination-store.ts`: SQLite transaction, Discovery gate đầu conversation, kết quả Discovery/Peer đánh thức Lead, routing idempotent, `finish` chặn delivery cũ.
-- `apps/api/src/coordinator.ts`: scheduler theo `store.on('change')`, tối đa một turn/session và tối đa bốn turn đồng thời. Discovery và Peer chạy session riêng. Không polling.
-- `apps/api/src/codex-runtime.ts`: transport `thread/start`, `thread/resume`, `turn/start`, terminal notifications, `item/tool/call`.
-- `apps/web/src/main.tsx`: giao diện conversation, trạng thái Peer, transcript.
+- `apps/api/src/index.ts`: HTTP/SSE localhost; task mới luôn tạo Lead delivery.
+- `apps/api/src/coordination-store.ts`: transaction SQLite, Lead routing idempotent, một Discovery session mỗi conversation, message Lead ↔ Discovery, wakeLead event-driven, `finish` supersede queued deliveries.
+- `apps/api/src/coordinator.ts`: Lead quyết định khi nào gọi Discovery; Discovery chỉ khám phá sơ bộ theo instruction, Peer điều tra sâu và triển khai. Scheduler theo `store.on('change')`, tối đa một turn/session và bốn turn cùng lúc, không polling.
+- `apps/api/src/codex-runtime.ts`: Codex app-server `thread/start`, `thread/resume`, `turn/start`; Lead có dynamic tools, Discovery và Peer không có. Discovery dùng policy giống Peer, khác ở `thread/start.runtimeWorkspaceRoots`.
+- `apps/web/src/components/ConversationFeed.tsx`, `AgentMonitor.tsx`: hiển thị luồng giao việc, báo cáo Discovery và trạng thái session độc lập.
 
-## Vòng đời
+## Vòng đời và giới hạn
 
-- Task: `active | finished`. Kết thúc Lead turn không có nghĩa là kết thúc task.
-- Session: `idle | running | interrupted`. Lead idle có thể đang chờ Peer.
-- Delivery: `queued | running | completed | interrupted | superseded`.
-- `completeDiscovery()` lưu báo cáo sơ bộ riêng và tạo một Lead wake-up. Nếu lỗi/restart, Lead nhận cảnh báo và không bị kẹt. User gửi message trong khi Discovery đang chạy cũng không khởi động Lead sớm.
-- `completePeer()` ghi nhận kết quả và tạo tối đa một Lead wake-up đang pending. Nếu task `finished`, báo cáo muộn được lưu nhưng không đánh thức Lead.
-- `failDelivery()` thông báo lỗi Peer tới Lead chỉ khi task còn `active`.
-- `finish()` chỉ chuyển task sang `finished` và supersede delivery chưa chạy, không ép dừng Peer đang chạy. Codex `finalText` từ turn gọi finish được lưu làm báo cáo cuối (nếu rỗng có fallback). Nếu turn lỗi sau finish, app hiển thị system message. Người dùng mới có thể chủ động mở lại task.
+- Task: `active | finished`; session: `idle | running | interrupted`; delivery: `queued | running | completed | interrupted | superseded`.
+- `spawn_discovery(message)` tạo Discovery session mới khi đã cấu hình và conversation chưa có Discovery. `send_discovery(sessionId,message)` giao yêu cầu bổ sung vào đúng session của conversation; không dùng làm status poll.
+- Cả Discovery và Peer phát event hoàn thành/lỗi về Lead. Khi có Lead delivery đang queued, `wakeLead()` không tạo delivery trùng. User message mới không bị chặn khi Discovery chạy.
+- `finish()` tăng `generation`, bỏ qua queued work. Kết quả Discovery/Peer đến muộn vẫn được lưu nhưng không mở lại task hoặc wake Lead. User gửi message mới mới mở lại task.
+- Sau restart, delivery đang chạy thành `interrupted`, không replay; Discovery interrupted tạo event cảnh báo cho Lead. Không đặt timeout cứng cho Codex turn; watchdog để giai đoạn sau.
+- Lead xem báo cáo Discovery như **ngữ cảnh định hướng**, không xem là bằng chứng chuyên sâu. Khi cần xác minh logic, root cause hoặc triển khai, Lead giao Peer.
 
-## Dynamic tools
+## Sandbox và nhiều module
 
-Chỉ Lead có `spawn_peer`, `send_peer`, `finish` khi `thread/start.dynamicTools`. Discovery và Peer không có routing tools. Discovery có `cwd` riêng và named permission profile cấu hình trong `thread/start.config`. `thread/start.permissions` và `turn/start.permissions` chọn profile chỉ đọc `:workspace_roots` (Discovery workspace + module paths) và `:minimal`, network tắt. Không dùng `readOnly.access` cũ hoặc fallback full read. Không có JSON routing, `outputSchema` fallback hay parser cũ. `send_peer` dành cho instruction thật sự, không dùng hỏi tiến độ. Tool `callId` được lưu trước khi trả kết quả, chống replay.
+- Lead: `read-only` như trước.
+- Discovery và Peer: cùng chính sách `CODEX_SECURITY_MODE`: mặc định `danger-full-access`, `approvalPolicy: never`; khi `sandbox`, `workspace-write`, `on-request`.
+- Discovery có cwd riêng và `thread/start.runtimeWorkspaceRoots` gồm Discovery cwd và module paths. Khi `workspace-write`, `turn/start.sandboxPolicy.writableRoots` dùng cùng tập roots. Đây là cơ chế app-server tương ứng với mục tiêu `--add-dir`, **không có permission profile riêng**. Discovery được cấp quyền bởi runtime; instruction khám phá sơ bộ không thay thế OS sandbox.
+- Những module được khai báo trong workspace config phải tin cậy. Discovery có thể truy cập nhiều module cùng lúc; không tự tạo Git worktree hoặc cơ chế xử lý conflict.
 
-## Recovery
+## Model / Effort
 
-Codex turn không có timer thực thi 10 phút. RPC có deadline riêng để phát hiện lỗi kết nối. Không có watchdog 15 phút trong bản này; Peer không phát terminal event nhưng process còn sống có thể chờ vô hạn.
+- `Snapshot.settings` lưu Lead/Discovery/Peer trong SQLite, bổ sung `discovery: {}` khi mở snapshot cũ.
+- Discovery lấy `App Settings Discovery → discovery workspace config → Codex default` cho từng trường tại thời điểm bắt đầu turn. Lead đọc defaults mỗi turn; Peer đóng băng settings lúc spawn.
+- `model/list` cấp model/effort catalog. Chỉ Lead có năm dynamic tools `spawn_discovery`, `send_discovery`, `spawn_peer`, `send_peer`, `finish`, với `callId` chống replay.
+- Không thêm parser/JSON protocol, outputSchema fallback, approval gate hoặc trạng thái task mới.
 
-SQLite giữ trạng thái sau restart; delivery đang chạy thành interrupted và không replay. Discovery interrupted tạo event lỗi để Lead tiếp tục. CI dùng fake Codex transport, không chứng minh E2E với Codex thật.
-
-Lead read-only; Peer sửa source trực tiếp. Không có OS isolation khi YOLO, và nhiều Peer cùng module có thể ghi xung đột.
-
-## Model/effort Settings trên event-driven lifecycle
-
-- `Snapshot.settings` lưu `AppSettings.lead`, `AppSettings.discovery` và `AppSettings.peer`. `CoordinationStore.updateSettings()` xác thực trường transport rồi lưu vào SQLite. SQLite snapshot cũ chưa có Discovery được bổ sung `discovery: {}` khi mở.
-- `GET /api/models` dùng `model/list` và phân trang để lấy model/effort hỗ trợ; UI vẫn cho nhập model ID khi catalog lỗi.
-- `Coordinator.execute()` đọc Lead defaults **mỗi turn mới**; Discovery lấy `App Settings Discovery → discovery workspace config → Codex default` cho từng trường khi Discovery bắt đầu. Peer dùng `session.model/effort` đã chốt khi spawn, không bị thay đổi khi App Settings cập nhật.
-- `routeLeadTool(spawn_peer)` áp dụng thứ tự `override → Peer default → Codex default` cho từng trường độc lập. `send_peer` chỉ giao công việc, không hỏi trạng thái.
-- `CodexAgentRuntime.run()` truyền model ở `thread/start` và model/effort ở `turn/start`. Dynamic tools là giao thức điều phối duy nhất. Không thêm legacy JSON parser, schema fallback, timer 10 phút hay status polling.
-- Không thay đổi PR #13: task `generation`, `wakeLead`, `superseded`, `finish`, chống Peer result đến muộn vẫn có hiệu lực.
+CI dùng fake Codex transport; cần E2E với Codex CLI/app-server phiên bản thực tế để xác minh `runtimeWorkspaceRoots`.
