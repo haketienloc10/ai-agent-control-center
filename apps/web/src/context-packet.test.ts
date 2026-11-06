@@ -60,7 +60,7 @@ test("Context Packet renders exact source text, provenance and Lead expected res
   assert.match(html, /discovery-report-1/);
   assert.match(html, /chưa xác minh HTTP integration/);
   assert.match(html, /Báo build, HTTP status/);
-  assert.match(html, /Task Brief/);
+  assert.match(html, /TASK_BRIEF_FROM_LEAD/);
 });
 test("Context Packet stays hidden when routing is off; shown in feed and peer transcript", () => {
   const props = { messages: data.messages, sessions: data.sessions,
