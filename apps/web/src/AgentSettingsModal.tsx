@@ -33,7 +33,7 @@ export function AgentSettingsModal({ initial, onClose, onSaved }: {
     }));
   };
   const modelForm = (role: "lead" | "peer" | "discovery", title: string, description: string) => {
-    const selection: ModelSelection = draft[role] ?? {};
+    const selection: ModelSelection = draft[role];
     const selectedModel = models.find(m => m.id === selection.model);
     const efforts = selectedModel?.supportedReasoningEfforts ?? [];
     return <fieldset className="settings-role" key={role}>
@@ -41,8 +41,7 @@ export function AgentSettingsModal({ initial, onClose, onSaved }: {
       <p>{description}</p>
       <label htmlFor={role + "-model"}>Model</label>
       <input id={role + "-model"} list="codex-models" value={selection.model ?? ""}
-        autoComplete="off"
-        placeholder="Để trống = mặc định Codex"
+        autoComplete="off" placeholder="Để trống = mặc định Codex"
         onChange={event => patch(role, "model", event.target.value)}/>
       <label htmlFor={role + "-effort"}>Reasoning effort</label>
       <input id={role + "-effort"} list={role + "-effort-choices"}

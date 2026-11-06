@@ -75,7 +75,7 @@ test("New tasks begin with Lead; only Lead can spawn optional Discovery", () => 
     assert.throws(() => spawn(ctx.store, lead.id, "duplicate"), /Đã giao Discovery/);
     assert.equal(ctx.store.delivery(lead.id)?.routingPhase, "discovery");
     assert.throws(() => ctx.store.routeLeadTool(lead.id, "same-turn-peer",
-      { type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "api", message: "Implement API" }, ["api"], true),
+      { type: "assign_module", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "api", message: "Implement API" }, ["api"], true),
       /Kết thúc Lead turn/);
     assert.throws(() => ctx.store.routeLeadTool(lead.id, "same-turn-finish",
       { type: "finish" }, ["api"], true), /Kết thúc Lead turn/);
@@ -92,15 +92,15 @@ test("Lead dispatches Discovery, waits without polling and receives an independe
   let leadTurns = 0, discoveryTurns = 0;
   const calls: string[] = [];
   const runtime: AgentRuntime = {
-    async run(session, cwd, prompt, hooks, selection, roots) {
+    async run(session, cwd, prompt, hooks, selection, roots, instructions) {
       hooks.onThread(session.threadId ?? session.id + "-thread");
       hooks.onTurn(session.id + "-turn");
       calls.push(session.role);
       if (session.role === "lead") {
         leadTurns++;
         if (leadTurns === 1) {
-          assert.match(prompt, /DISCOVERY_ENABLED: true/);
-          assert.match(prompt, /spawn_discovery/);
+          assert.match(instructions ?? "", /DISCOVERY_ENABLED: true/);
+          assert.match(instructions ?? "", /spawn_discovery/);
           assert.match(prompt, /NEW_EVENTS:/);
           assert.match(prompt, /Build Todo/);
           const result = await hooks.onLeadTool!("lead:spawn", {
@@ -120,7 +120,7 @@ test("Lead dispatches Discovery, waits without polling and receives an independe
       assert.equal(cwd, config.discovery!.cwd);
       assert.equal(hooks.onLeadTool, undefined);
       assert.match(prompt, /LEAD_MESSAGE: Chỉ khảo sát cấu trúc API và Web/);
-      assert.match(prompt, /không kết luận root cause/);
+      assert.match(instructions ?? "", /không kết luận root cause/);
       assert.equal(selection?.model, undefined);
       assert.equal(selection?.effort, undefined);
       assert.deepEqual(roots, ["/work/discovery", "/work/api", "/work/web"]);
@@ -175,7 +175,7 @@ test("send_discovery only works in a new Lead turn after the prior Discovery rep
     assert.match(ctx.store.routeLeadTool(wake.id, "followup", cmd, [], true), /sessionId=/);
     assert.match(ctx.store.routeLeadTool(wake.id, "followup", cmd, [], true), /Already executed/);
     assert.throws(() => ctx.store.routeLeadTool(wake.id, "peer-after-followup",
-      { type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "api", message: "Build" }, ["api"], true),
+      { type: "assign_module", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "api", message: "Build" }, ["api"], true),
       /Kết thúc Lead turn/);
     ctx.store.completeLead(wake.id, "");
     const next = ctx.store.queued().find(item => item.sessionId === d.id)!;
@@ -194,7 +194,7 @@ test("Peer-first Lead turn cannot retroactively add Discovery; later turn can re
     const task = ctx.store.createConversation("Tạo API");
     const first = startLead(ctx.store, task.id);
     ctx.store.routeLeadTool(first.id, "peer-first",
-      { type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "api", message: "Implement" }, ["api"], true);
+      { type: "assign_module", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "api", message: "Implement" }, ["api"], true);
     assert.equal(ctx.store.delivery(first.id)?.routingPhase, "execution");
     assert.throws(() => spawn(ctx.store, first.id, "discovery-after-peer"),
       /đã giao Peer/);
@@ -345,12 +345,12 @@ test("Discovery finishing before Lead turn end cannot be bypassed in that same t
     ctx.store.startDelivery(discovery.id);
     ctx.store.completeDiscovery(discovery.id, "Fast discovery");
     assert.throws(() => ctx.store.routeLeadTool(first.id, "peer-after-fast-discovery",
-      { type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "api", message: "Implement" }, ["api"], true),
+      { type: "assign_module", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "api", message: "Implement" }, ["api"], true),
       /Kết thúc Lead turn/);
     ctx.store.completeLead(first.id, "");
     const second = startLead(ctx.store, task.id);
     ctx.store.routeLeadTool(second.id, "peer-after-resume",
-      { type: "spawn_peer", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "api", message: "Implement" }, ["api"], true);
+      { type: "assign_module", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "api", message: "Implement" }, ["api"], true);
     assert.equal(ctx.store.snapshot().sessions.filter(x => x.role === "peer").length, 1);
   } finally { ctx.cleanup(); }
 });

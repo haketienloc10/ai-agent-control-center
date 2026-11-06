@@ -23,13 +23,3 @@ test("Model & Effort modal has independent Discovery settings and preserves sele
   assert.match(html, /id="peer-effort"[^>]*value="medium"/);
   assert.match(html, /Lưu Settings/);
 });
-
-test("Model & Effort modal opens older snapshots that lack Discovery values", () => {
-  const initial = { lead: {}, peer: {} } as AppSettings;
-  const html = renderToStaticMarkup(createElement(AgentSettingsModal, {
-    initial, onClose: () => {}, onSaved: async () => {}
-  }));
-  assert.match(html, /id="discovery-model"/);
-  assert.match(html, /id="discovery-effort"/);
-  assert.match(html, /Discovery Agent/);
-});

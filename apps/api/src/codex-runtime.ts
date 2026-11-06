@@ -8,8 +8,9 @@ export interface AgentRunHooks {
   onLeadTool?(callId: string, command: LeadCommand): Promise<string> | string;
 }
 export interface AgentRuntime {
+  /** `instructions` là quy tắc vai trò cố định của Thread (developerInstructions); `prompt` chỉ chứa dữ liệu của lượt này. */
   run(session: AgentSession, cwd: string, prompt: string, hooks: AgentRunHooks,
-    selection?: ModelSelection, workspaceRoots?: string[]): Promise<string>;
+    selection?: ModelSelection, workspaceRoots?: string[], instructions?: string): Promise<string>;
 }
 
 /** Event-driven Codex turn; Lead actions use dynamic tools, never text/JSON envelopes. */
@@ -22,25 +23,29 @@ export class CodexAgentRuntime implements AgentRuntime {
   }
 
   async run(session: AgentSession, cwd: string, prompt: string, hooks: AgentRunHooks,
-    selection: ModelSelection = {}, workspaceRoots?: string[]): Promise<string> {
+    selection: ModelSelection = {}, workspaceRoots?: string[], instructions?: string): Promise<string> {
     await this.client.start();
     const worker = session.role !== "lead";
     const safe = process.env.CODEX_SECURITY_MODE === "sandbox";
     const approvalPolicy = worker && safe ? "on-request" : "never";
-    const sandbox = worker ? (safe ? "workspace-write" : "danger-full-access") : "read-only";
-    // Discovery and Peer share the same execution policy. Only Discovery has multiple workspace roots.
-    const roots = session.role === "discovery"
-      ? [...new Set([cwd, ...(workspaceRoots ?? [])])]
-      : [cwd];
+    // Lead may read/write only its own workspace by sandbox; the module boundary is an instruction.
+    const sandbox = worker ? (safe ? "workspace-write" : "danger-full-access") : "workspace-write";
+    // Discovery and Peer share the same execution policy; the caller passes Discovery's multi-module roots.
+    const roots = workspaceRoots ?? [cwd];
     const sandboxPolicy = worker ? (safe
       ? { type: "workspaceWrite", writableRoots: roots, networkAccess: false }
-      : { type: "dangerFullAccess" }) : { type: "readOnly" };
+      : { type: "dangerFullAccess" })
+      : { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false };
 
     const started: { thread: { id: string } } = session.threadId
-      ? await this.client.request("thread/resume", { threadId: session.threadId, excludeTurns: true })
+      ? await this.client.request("thread/resume", {
+          threadId: session.threadId, excludeTurns: true,
+          ...(instructions ? { developerInstructions: instructions } : {})
+        })
       : await this.client.request("thread/start", {
           cwd, approvalPolicy, sandbox,
           ...(session.role === "discovery" ? { runtimeWorkspaceRoots: roots } : {}),
+          ...(instructions ? { developerInstructions: instructions } : {}),
           ...(selection.model ? { model: selection.model } : {}),
           ...(session.role === "lead" ? { dynamicTools: leadDynamicTools } : {})
         });

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { ContextPacket, Conversation, Message, Snapshot, TaskBrief } from "@aacc/contracts";
+import type { ContextPacket, Conversation, Decision, Message, Snapshot, TaskBrief } from "@aacc/contracts";
 import { ContextPacketView } from "./components/ContextPacketView.js";
 import { ConversationFeed } from "./components/ConversationFeed.js";
 import { AgentMonitor } from "./components/AgentMonitor.js";
@@ -75,8 +75,52 @@ test("Context Packet stays hidden when routing is off; shown in feed and peer tr
   const monitor = renderToStaticMarkup(createElement(AgentMonitor, {
     data, conversation, selectedPeerId: "peer", onSelectPeer: () => {}
   }));
-  assert.match(monitor, /Task Brief · Lead/);
-  assert.match(monitor, /Lead đánh giá đã xác minh/);
+  assert.doesNotMatch(monitor, /Task Brief · Lead/, "Task Brief thu gọn khi chưa chọn Lead");
+  assert.match(monitor, /class="lead-card" aria-expanded="false"/);
+  const leadOpen = renderToStaticMarkup(createElement(AgentMonitor, {
+    data, conversation, selectedPeerId: "lead", onSelectPeer: () => {}
+  }));
+  assert.match(leadOpen, /class="lead-card" aria-expanded="true"/);
+  assert.match(leadOpen, /Task Brief · Lead/);
+  assert.match(leadOpen, /Lead đánh giá đã xác minh/);
+  assert.match(leadOpen, /Browser E2E/);
   assert.match(monitor, /Context Packet đã gửi/);
   assert.match(monitor, /Browser E2E/);
+});
+test("Context Packet delta shows what the Thread already holds instead of resending it", () => {
+  const delta: ContextPacket = {
+    sources: [], expectedResult: "Báo HTTP status",
+    omitted: { taskBrief: true, sourceIds: ["peer-report-1"] }
+  };
+  const html = renderToStaticMarkup(createElement(ContextPacketView, { packet: delta }));
+  assert.match(html, /ORIGINAL_USER_REQUEST: đã có trong Thread/);
+  assert.match(html, /TASK_BRIEF_FROM_LEAD: không đổi/);
+  assert.match(html, /Không gửi lại \(đã có trong Thread\): peer-report-1/);
+  assert.doesNotMatch(html, /Tạo Todo List với backend storage/);
+});
+test("Decision Log opens inside the Lead card; packets show new and already-held decisions", () => {
+  const first: Decision = { id: "dec-1", topic: "api-contract", decision: "GET /api/todos",
+    rationale: "Hai module dùng chung", affects: ["api", "web"], evidenceRefs: [], createdAt: time };
+  const second: Decision = { ...first, id: "dec-2", decision: "GET /api/todos trả { todos }",
+    supersedes: "dec-1" };
+  const withDecisions: Conversation = { ...conversation, taskBrief: undefined, decisions: [first, second] };
+  const snapshot: Snapshot = { ...data, conversations: [withDecisions] };
+  const closed = renderToStaticMarkup(createElement(AgentMonitor, {
+    data: snapshot, conversation: withDecisions, selectedPeerId: "", onSelectPeer: () => {}
+  }));
+  assert.match(closed, /class="lead-card" aria-expanded="false"/, "decisions alone make the Lead card expandable");
+  assert.doesNotMatch(closed, /Decision Log/);
+  const open = renderToStaticMarkup(createElement(AgentMonitor, {
+    data: snapshot, conversation: withDecisions, selectedPeerId: "lead", onSelectPeer: () => {}
+  }));
+  assert.match(open, /Decision Log · 2/);
+  assert.doesNotMatch(open, /Task Brief · Lead/);
+  assert.ok(open.indexOf("trả { todos }") < open.indexOf("GET /api/todos<"), "newest first");
+  assert.match(open, /class="superseded"[^]*đã bị thay/);
+  const html = renderToStaticMarkup(createElement(ContextPacketView, { packet: {
+    sources: [], expectedResult: "Báo cáo", decisions: [second], omitted: { decisionIds: ["dec-9"] }
+  } }));
+  assert.match(html, /DECISIONS_FROM_LEAD/);
+  assert.match(html, /api-contract/);
+  assert.match(html, /Quyết định đã có trong Thread: dec-9/);
 });

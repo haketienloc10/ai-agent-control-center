@@ -4,7 +4,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type {
-  AgentSession, AppSettings, ContextPacket, ContextSource, Conversation, Delivery, LeadCommand,
+  AgentSession, AppSettings, ContextPacket, ContextSource, Conversation, Decision, Delivery, LeadCommand,
   Message, MessageAuthor, ModelSelection, Snapshot, TaskBrief
 } from "@aacc/contracts";
 
@@ -60,39 +60,101 @@ function message(data: Data, conversationId: string, from: MessageAuthor,
   data.messages.push(entry);
   return entry;
 }
-/** Resolve selected evidence strictly within the same conversation, before queueing. */
-function contextSources(data: Data, conversationId: string, refs: string[] = []): ContextSource[] {
+/** Resolve selected evidence strictly within the same conversation, before queueing.
+ * Refs in `skip` are still validated but not copied again. */
+function contextSources(data: Data, conversationId: string, refs: string[] = [],
+  skip: ReadonlySet<string> = new Set()): ContextSource[] {
   if (!Array.isArray(refs) || refs.length > 8 || new Set(refs).size !== refs.length) {
     throw new Error("contextRefs cần tối đa 8 message IDs không trùng");
   }
   let total = 0;
-  return refs.map(ref => {
+  const sources: ContextSource[] = [];
+  for (const ref of refs) {
     if (typeof ref !== "string" || !ref.trim()) throw new Error("contextRefs phải là message IDs");
     const item = data.messages.find(m => m.id === ref && m.conversationId === conversationId);
     if (!item) throw new Error("contextRef không thuộc conversation hoặc không tồn tại: " + ref);
+    if (skip.has(ref)) continue;
     total += item.text.length;
     if (total > 30000) throw new Error("contextRefs vượt giới hạn 30000 ký tự; Lead cần chọn nguồn liên quan hơn");
     const kind: ContextSource["kind"] = item.from === "discovery" ? "discovery-preliminary" :
       item.from === "peer" ? "peer-report" :
       item.from === "user" ? "user-request" :
       item.from === "lead" ? "lead-note" : "system-event";
-    return { messageId: item.id, from: item.from, kind, text: item.text,
-      createdAt: item.createdAt };
-  });
+    sources.push({ messageId: item.id, from: item.from, kind, text: item.text,
+      createdAt: item.createdAt });
+  }
+  return sources;
 }
 
+/** What a worker Thread already holds. Only completed turns count: an interrupted handoff
+ * may not have reached the Thread, so it is sent again in full. */
+function threadKnowledge(data: Data, session: AgentSession) {
+  const messageIds = new Set<string>();
+  const decisionIds = new Set<string>();
+  let hasRequest = false;
+  let brief: string | undefined;
+  for (const delivery of data.deliveries) {
+    if (delivery.sessionId !== session.id || delivery.status !== "completed") continue;
+    const packet = data.messages.find(m => m.id === delivery.messageId)?.contextPacket;
+    if (!packet) continue;
+    messageIds.add(delivery.messageId);
+    if (packet.originalRequest) { hasRequest = true; messageIds.add(packet.originalRequest.messageId); }
+    if (packet.taskBrief) brief = JSON.stringify(packet.taskBrief);
+    for (const source of packet.sources) messageIds.add(source.messageId);
+    for (const decision of packet.decisions ?? []) decisionIds.add(decision.id);
+  }
+  // The worker's own reports were produced inside that Thread.
+  for (const m of data.messages) {
+    if (m.from === session.role && (m.peerSessionId === session.id ||
+      m.discoverySessionId === session.id)) messageIds.add(m.id);
+  }
+  return { messageIds, decisionIds, hasRequest, brief };
+}
+
+/** Current decision per topic: the latest record wins. */
+function currentDecisions(conversation: Conversation): Decision[] {
+  const byTopic = new Map<string, Decision>();
+  for (const decision of conversation.decisions ?? []) byTopic.set(decision.topic, decision);
+  return [...byTopic.values()];
+}
+
+/** Build the delta handoff for `target`: no field the target Thread already holds is resent. */
 function assignmentPacket(data: Data, conversation: Conversation,
-  command: Extract<LeadCommand, { message: string }>): ContextPacket {
+  command: Extract<LeadCommand, { message: string }>, target: AgentSession): ContextPacket {
   const original = data.messages.find(m => m.conversationId === conversation.id &&
     m.from === "user");
   if (!original) throw new Error("Conversation không có yêu cầu gốc");
   const expectedResult = text(command.expectedResult, "expectedResult", 4000);
+  const known = threadKnowledge(data, target);
+  // The original request is always attached by the App, never as a duplicate source.
+  const skip = new Set([...known.messageIds, original.id]);
+  const refs = command.contextRefs ?? [];
+  const skippedIds = refs.filter(ref => skip.has(ref));
+  const brief = conversation.taskBrief;
+  const briefUnchanged = Boolean(brief) && known.brief === JSON.stringify(brief);
+  // Decisions bind module owners only; Discovery is a preliminary survey.
+  const binding = target.role === "peer" ? currentDecisions(conversation)
+    .filter(d => d.affects.includes(target.moduleId!)) : [];
+  const newDecisions = binding.filter(d => !known.decisionIds.has(d.id));
+  const knownDecisionIds = binding.filter(d => known.decisionIds.has(d.id)).map(d => d.id);
   return {
-    originalRequest: { messageId: original.id, text: original.text },
-    ...(conversation.taskBrief ? { taskBrief: structuredClone(conversation.taskBrief) } : {}),
-    sources: contextSources(data, conversation.id, command.contextRefs),
-    expectedResult
+    ...(known.hasRequest ? {} : { originalRequest: { messageId: original.id, text: original.text } }),
+    ...(brief && !briefUnchanged ? { taskBrief: structuredClone(brief) } : {}),
+    sources: contextSources(data, conversation.id, refs, skip),
+    ...(newDecisions.length ? { decisions: structuredClone(newDecisions) } : {}),
+    expectedResult,
+    ...(briefUnchanged || skippedIds.length || knownDecisionIds.length ? { omitted: {
+      ...(briefUnchanged ? { taskBrief: true as const } : {}),
+      ...(skippedIds.length ? { sourceIds: skippedIds } : {}),
+      ...(knownDecisionIds.length ? { decisionIds: knownDecisionIds } : {})
+    } } : {})
   };
+}
+/** Tell Lead what App did not resend, so Lead does not repeat it in the next message. */
+function omissionNote(packet: ContextPacket): string {
+  const ids = packet.omitted?.sourceIds;
+  return ids?.length ? " Không gửi lại " + ids.length + " nguồn đã có trong context của worker: " +
+    ids.join(", ") + "." : "";
 }
 
 function checkTaskBrief(data: Data, conversation: Conversation, brief: TaskBrief): void {
@@ -119,12 +181,43 @@ function checkTaskBrief(data: Data, conversation: Conversation, brief: TaskBrief
     }
   }
 }
+/** Append to the Decision Log. App stores and forwards; it never judges the decision. */
+function recordDecision(data: Data, conversation: Conversation,
+  command: Extract<LeadCommand, { type: "record_decision" }>, allowedModuleIds: string[]): string {
+  const topic = text(command.topic, "topic", 200);
+  if (!Array.isArray(command.affects) || !command.affects.length ||
+    new Set(command.affects).size !== command.affects.length) {
+    throw new Error("affects cần danh sách module ID không rỗng, không trùng");
+  }
+  const unknown = command.affects.filter(id => !allowedModuleIds.includes(id));
+  if (unknown.length) throw new Error("Module không tồn tại: " + unknown.join(", "));
+  const evidenceRefs = command.evidenceRefs ?? [];
+  contextSources(data, conversation.id, evidenceRefs);
+  const previous = currentDecisions(conversation).find(d => d.topic === topic);
+  const decision: Decision = {
+    id: randomUUID(), topic,
+    decision: text(command.decision, "decision", 8000),
+    rationale: text(command.rationale, "rationale", 4000),
+    affects: [...command.affects], evidenceRefs: [...evidenceRefs],
+    ...(previous ? { supersedes: previous.id } : {}),
+    createdAt: now()
+  };
+  (conversation.decisions ??= []).push(decision);
+  // Peers holding the replaced version only receive the new one on their next assignment.
+  const stale = previous ? data.sessions.filter(s => s.conversationId === conversation.id &&
+    s.role === "peer" && s.moduleId && command.affects.includes(s.moduleId) &&
+    threadKnowledge(data, s).decisionIds.has(previous.id)).map(s => s.moduleId!) : [];
+  return "Đã ghi quyết định " + topic + " (id=" + decision.id + ")" +
+    (previous ? ", thay quyết định " + previous.id : "") +
+    ". App đính kèm ở lần assign_module tiếp theo cho module: " + command.affects.join(", ") + "." +
+    (stale.length ? " Peer đang giữ bản cũ: " + [...new Set(stale)].join(", ") + "." : "");
+}
 function deliver(data: Data, conversationId: string, sessionId: string, messageId: string,
   eventMessageIds?: string[]) {
   const entry: Delivery = {
     id: randomUUID(), conversationId, sessionId, messageId,
     ...(eventMessageIds ? { eventMessageIds } : {}),
-    generation: data.conversations.find(c => c.id === conversationId)?.generation ?? 0,
+    generation: data.conversations.find(c => c.id === conversationId)!.generation,
     status: "queued", createdAt: now(), updatedAt: now()
   };
   data.deliveries.push(entry);
@@ -134,7 +227,7 @@ function deliver(data: Data, conversationId: string, sessionId: string, messageI
 /** Discovery is a prerequisite when Lead explicitly requests an overview. */
 function pendingDiscovery(data: Data, conversation: Conversation): boolean {
   return data.deliveries.some(d => d.conversationId === conversation.id &&
-    (d.generation ?? 0) === (conversation.generation ?? 0) &&
+    d.generation === conversation.generation &&
     (d.status === "queued" || d.status === "running") &&
     data.sessions.some(s => s.id === d.sessionId && s.role === "discovery"));
 }
@@ -147,8 +240,8 @@ function wakeLead(data: Data, conversation: Conversation, messageId: string): vo
   const pending = data.deliveries.find(d => d.conversationId === conversation.id &&
     d.sessionId === conversation.leadSessionId && d.status === "queued");
   if (pending) {
-    pending.eventMessageIds ??= [pending.messageId];
-    if (!pending.eventMessageIds.includes(messageId)) pending.eventMessageIds.push(messageId);
+    const ids = pending.eventMessageIds!;
+    if (!ids.includes(messageId)) ids.push(messageId);
     pending.updatedAt = now();
   } else {
     deliver(data, conversation.id, conversation.leadSessionId, messageId, [messageId]);
@@ -159,7 +252,7 @@ function finishConversation(data: Data, conversation: Conversation): void {
   if (conversation.status === "finished") throw new Error("Task đã hoàn thành");
   conversation.status = "finished";
   // Invalidate events from Peer turns started before this finish, even after user reopens.
-  conversation.generation = (conversation.generation ?? 0) + 1;
+  conversation.generation += 1;
   conversation.updatedAt = now();
   // Work not yet started must not execute after finish. Running Peer may still report,
   // but its report is recorded without waking Lead.
@@ -178,33 +271,12 @@ export class CoordinationStore extends EventEmitter {
   constructor(directory: string) {
     super();
     mkdirSync(directory, { recursive: true, mode: 0o700 });
-    // Deliberately new DB; old P1–P3 workflow state is not imported or executed.
     this.db = new DatabaseSync(join(directory, "coordination.sqlite"));
     this.db.exec("PRAGMA journal_mode = WAL; CREATE TABLE IF NOT EXISTS snapshot (id INTEGER PRIMARY KEY CHECK(id = 1), body TEXT NOT NULL);");
     const row = this.db.prepare("SELECT body FROM snapshot WHERE id = 1").get() as { body: string } | undefined;
     this.state = row ? JSON.parse(row.body) as Data
       : { conversations: [], sessions: [], messages: [], deliveries: [], settings: emptySettings() };
-    const missingSettings = !this.state.settings || !this.state.settings.discovery;
-    this.state.settings ??= emptySettings();
-    // Existing SQLite snapshots from Lead/Peer-only versions have no Discovery settings.
-    this.state.settings.discovery ??= {};
-    // Existing SQLite queued Lead deliveries must retain every unprocessed event.
     let changed = false;
-    for (const conversation of this.state.conversations) {
-      const queued = this.state.deliveries.filter(d => d.conversationId === conversation.id &&
-        d.sessionId === conversation.leadSessionId && d.status === "queued");
-      if (!queued.length || queued.every(d => d.eventMessageIds)) continue;
-      const first = queued[0];
-      const start = this.state.messages.findIndex(m => m.id === first.messageId);
-      if (start < 0) throw new Error("Cannot migrate Lead delivery without its event message");
-      first.eventMessageIds = this.state.messages.slice(start)
-        .filter(m => m.conversationId === conversation.id && m.to === "lead").map(m => m.id);
-      first.updatedAt = now();
-      for (const redundant of queued.slice(1)) {
-        redundant.status = "superseded"; redundant.updatedAt = now();
-      }
-      changed = true;
-    }
     // Never replay Codex turns started before a crash.
     for (const delivery of this.state.deliveries) {
       if (delivery.status === "running") {
@@ -222,7 +294,7 @@ export class CoordinationStore extends EventEmitter {
         if (session?.role === "discovery") {
           const conversation = this.state.conversations.find(c => c.id === delivery.conversationId)!;
           if (conversation.status === "active" &&
-              (delivery.generation ?? 0) === (conversation.generation ?? 0)) {
+              delivery.generation === conversation.generation) {
             const item = message(this.state, conversation.id, "system", "lead",
               "Discovery bị gián đoạn sau restart; Lead có thể giao lại khảo sát hoặc nhờ Peer điều tra.");
             wakeLead(this.state, conversation, item.id);
@@ -231,7 +303,7 @@ export class CoordinationStore extends EventEmitter {
         changed = true;
       }
     }
-    if (changed || missingSettings) this.persist();
+    if (changed) this.persist();
   }
   private persist() {
     this.db.prepare("INSERT INTO snapshot(id,body) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body")
@@ -281,7 +353,8 @@ export class CoordinationStore extends EventEmitter {
     if (!delivery || !conversation || delivery.sessionId !== conversation.leadSessionId) {
       throw new Error("Not a Lead delivery");
     }
-    const ids = delivery.eventMessageIds ?? [delivery.messageId];
+    const ids = delivery.eventMessageIds;
+    if (!ids) throw new Error("Lead delivery thiếu eventMessageIds");
     const requested = new Set(ids);
     const byId = new Map(this.state.messages.filter(m => requested.has(m.id))
       .map(m => [m.id, m]));
@@ -333,7 +406,7 @@ export class CoordinationStore extends EventEmitter {
       if (!session || session.status === "running") throw new Error("Session is unavailable");
       const conversation = data.conversations.find(c => c.id === item.conversationId);
       if (!conversation || conversation.status !== "active" ||
-        (item.generation ?? 0) !== (conversation.generation ?? 0)) {
+        item.generation !== conversation.generation) {
         throw new Error("Delivery thuộc task đã kết thúc");
       }
       // Also gate Lead deliveries already queued before Discovery was dispatched.
@@ -382,6 +455,8 @@ export class CoordinationStore extends EventEmitter {
         checkTaskBrief(data, conversation, command.brief);
         conversation.taskBrief = structuredClone(command.brief);
         result = "Đã cập nhật Task Brief; Lead chịu trách nhiệm về các nhận định và bằng chứng.";
+      } else if (command.type === "record_decision") {
+        result = recordDecision(data, conversation, command, allowedModuleIds);
       } else if (command.type === "finish") {
         finishConversation(data, conversation);
         result = "Finished conversation " + conversation.id;
@@ -402,23 +477,26 @@ export class CoordinationStore extends EventEmitter {
             s.conversationId === conversation.id && s.role === "discovery");
           if (!discovery) throw new Error("Discovery session không tồn tại trong conversation: " + command.sessionId);
         }
-        const packet = assignmentPacket(data, conversation, command);
+        const packet = assignmentPacket(data, conversation, command, discovery);
         const outbound = message(data, conversation.id, "lead", "discovery",
           text(command.message, "Discovery message"), discovery.id, packet);
         deliver(data, conversation.id, discovery.id, outbound.id);
         result = "Đã giao khám phá sơ bộ cho Discovery (sessionId=" + discovery.id +
-          "). Kết thúc Lead turn ngay, không giao Peer hoặc finish trong turn này. Chờ kết quả/lỗi Discovery tự đánh thức Lead.";
+          ")." + omissionNote(packet) +
+          " Kết thúc Lead turn ngay, không giao Peer hoặc finish trong turn này. Chờ kết quả/lỗi Discovery tự đánh thức Lead.";
         active.routingPhase = "discovery";
       } else {
-        let peer: AgentSession | undefined;
-        if (command.type === "spawn_peer") {
-          if (!allowedModuleIds.includes(command.moduleId)) {
-            throw new Error("Module không tồn tại: " + command.moduleId);
-          }
+        if (!allowedModuleIds.includes(command.moduleId)) {
+          throw new Error("Module không tồn tại: " + command.moduleId);
+        }
+        // One owner per module: reuse its Thread; the newest wins for legacy data.
+        let peer = data.sessions.filter(s => s.conversationId === conversation.id &&
+          s.role === "peer" && s.moduleId === command.moduleId).at(-1);
+        const created = !peer;
+        if (!peer) {
           peer = {
             id: randomUUID(), conversationId: conversation.id, role: "peer",
-            moduleId: command.moduleId, label: command.label?.trim().slice(0, 100) ||
-              "Peer " + command.moduleId, status: "idle",
+            moduleId: command.moduleId, label: "Peer " + command.moduleId, status: "idle",
             ...normalizeSelection({
               model: command.model ?? data.settings.peer.model,
               effort: command.effort ?? data.settings.peer.effort
@@ -426,18 +504,16 @@ export class CoordinationStore extends EventEmitter {
             createdAt: now(), updatedAt: now()
           };
           data.sessions.push(peer);
-        } else {
-          peer = data.sessions.find(s => s.id === command.sessionId &&
-            s.conversationId === conversation.id && s.role === "peer");
-          if (!peer) throw new Error("Peer session không tồn tại trong conversation: " + command.sessionId);
         }
-        if (!command.message.trim()) throw new Error("Peer message không được trống");
-        const packet = assignmentPacket(data, conversation, command);
+        const packet = assignmentPacket(data, conversation, command, peer);
         const outbound = message(data, conversation.id, "lead", "peer",
-          command.message.trim(), peer.id, packet);
+          text(command.message, "Peer message"), peer.id, packet);
         deliver(data, conversation.id, peer.id, outbound.id);
-        result = "Đã giao việc tới " + peer.label + " (sessionId=" + peer.id +
-          "). Kết quả sẽ tự gửi lại Lead.";
+        result = "Đã giao việc tới " + peer.label + " (sessionId=" + peer.id + ", " +
+          (created ? "Peer mới" : "dùng lại Thread của Peer module") + ")." +
+          (!created && (command.model || command.effort)
+            ? " model/effort chỉ áp dụng khi tạo Peer; Peer này giữ lựa chọn cũ." : "") +
+          omissionNote(packet) + " Kết quả sẽ tự gửi lại Lead.";
         active.routingPhase = "execution";
       }
       lead.handledToolCalls ??= [];
@@ -493,7 +569,7 @@ export class CoordinationStore extends EventEmitter {
       const item = message(data, conversation.id, "discovery", "lead",
         result.trim() || "(Discovery không cung cấp báo cáo sơ bộ)", session.id);
       if (conversation.status === "active" &&
-          (delivery.generation ?? 0) === (conversation.generation ?? 0)) {
+          delivery.generation === conversation.generation) {
         wakeLead(data, conversation, item.id);
       }
       conversation.updatedAt = now();
@@ -512,7 +588,7 @@ export class CoordinationStore extends EventEmitter {
         result.trim() || "(Peer không trả về nội dung)", session.id);
       // Peer-to-Lead only; no Peer-to-Peer route exists.
       if (conversation.status === "active" &&
-        (delivery.generation ?? 0) === (conversation.generation ?? 0)) {
+        delivery.generation === conversation.generation) {
         wakeLead(data, conversation, item.id);
       }
       conversation.updatedAt = now();
@@ -528,7 +604,7 @@ export class CoordinationStore extends EventEmitter {
       session.status = "interrupted"; session.error = cause; session.updatedAt = now();
       const body = session.label + " gặp lỗi: " + cause;
       if (conversation.status === "active" &&
-        (delivery.generation ?? 0) === (conversation.generation ?? 0)) {
+        delivery.generation === conversation.generation) {
         message(data, conversation.id, "system", "user", body);
         if (session.role === "peer" || session.role === "discovery") {
           const item = message(data, conversation.id, "system", "lead",

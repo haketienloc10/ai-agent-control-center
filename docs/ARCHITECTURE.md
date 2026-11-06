@@ -21,7 +21,7 @@ sequenceDiagram
       Lead->>Store: send_discovery(sessionId,message)
     end
   end
-  Lead->>Store: spawn_peer / send_peer
+  Lead->>Store: record_decision / assign_module(moduleId)
   Lead-->>Store: turn/completed, Lead idle
   Store->>Peer: Peer delivery
   Peer-->>Store: Kết quả hoặc lỗi
@@ -37,7 +37,7 @@ sequenceDiagram
 - `apps/api/src/index.ts`: HTTP/SSE localhost; task mới luôn tạo Lead delivery.
 - `apps/api/src/coordination-store.ts`: transaction SQLite, Task Brief do Lead sở hữu, kiểm tra contextRefs và snapshot Context Packet theo từng delivery, một Discovery session mỗi conversation, wakeLead event-driven, `finish` supersede queued deliveries.
 - `apps/api/src/coordinator.ts`: Lead quyết định khi nào cần Discovery/Peer và chuyển Context Packet; Discovery chỉ khảo sát sơ bộ, Peer điều tra sâu/triển khai. Scheduler theo `store.on('change')`, tối đa một turn/session và bốn turn cùng lúc, không polling.
-- `apps/api/src/codex-runtime.ts`: Codex app-server `thread/start`, `thread/resume`, `turn/start`; Lead có dynamic tools, Discovery và Peer không có. Discovery dùng policy giống Peer, khác ở `thread/start.runtimeWorkspaceRoots`.
+- `apps/api/src/codex-runtime.ts`: Codex app-server `thread/start`, `thread/resume`, `turn/start`; quy tắc vai trò (đọc từ `instructions/<role>.md`, tuỳ chọn; `apps/api/src/instructions.ts`) cộng dữ liệu phiên đi qua `developerInstructions` của `thread/start` và `thread/resume`, `turn/start` chỉ mang dữ liệu của lượt. Lead có dynamic tools, Discovery và Peer không có. Discovery dùng policy giống Peer, khác ở `thread/start.runtimeWorkspaceRoots`.
 - `apps/web/src/components/ConversationFeed.tsx`, `AgentMonitor.tsx`, `ContextPacketView.tsx`: hiển thị nhiệm vụ, Context Packet đã gửi, Task Brief và session độc lập.
 
 ## Vòng đời và giới hạn
@@ -52,16 +52,18 @@ sequenceDiagram
 
 ## Sandbox và nhiều module
 
-- Lead: `read-only` như trước.
+- Lead: `workspace-write`, `writableRoots: [lead.cwd]`, mọi `CODEX_SECURITY_MODE`. Không đọc source hay chạy lệnh trong module là **quy tắc chỉ dẫn**, không phải sandbox; chấp nhận rủi ro Lead không tuân thủ.
 - Discovery và Peer: cùng chính sách `CODEX_SECURITY_MODE`: mặc định `danger-full-access`, `approvalPolicy: never`; khi `sandbox`, `workspace-write`, `on-request`.
 - Discovery có cwd riêng và `thread/start.runtimeWorkspaceRoots` gồm Discovery cwd và module paths. Khi `workspace-write`, `turn/start.sandboxPolicy.writableRoots` dùng cùng tập roots. Đây là cơ chế app-server tương ứng với mục tiêu `--add-dir`, **không có permission profile riêng**. Discovery được cấp quyền bởi runtime; instruction khám phá sơ bộ không thay thế OS sandbox.
 - Những module được khai báo trong workspace config phải tin cậy. Discovery có thể truy cập nhiều module cùng lúc; không tự tạo Git worktree hoặc cơ chế xử lý conflict.
 
 ## Model / Effort
 
-- `Snapshot.settings` lưu Lead/Discovery/Peer trong SQLite, bổ sung `discovery: {}` khi mở snapshot cũ.
+- `Snapshot.settings` lưu Lead/Discovery/Peer trong SQLite.
 - Discovery và Lead đọc App Settings mỗi turn; giá trị trống dùng Codex default. Peer đóng băng settings khi spawn.
-- `model/list` cấp model/effort catalog. Chỉ Lead có sáu dynamic tools `update_task_brief`, `spawn_discovery`, `send_discovery`, `spawn_peer`, `send_peer`, `finish`, với `callId` chống replay.
+- `model/list` cấp model/effort catalog. Chỉ Lead có sáu dynamic tools `update_task_brief`, `record_decision`, `spawn_discovery`, `send_discovery`, `assign_module`, `finish`, với `callId` chống replay.
+- Mỗi module có đúng một Peer trong conversation: `assign_module(moduleId)` tạo Peer ở lần đầu, các lần sau dùng lại Thread của Peer đó. Peer chỉ sửa module của mình (ràng buộc bằng `instructions/peer.md`, không bằng sandbox).
+- Decision Log (`Conversation.decisions`) lưu append-only các quyết định Lead ghi bằng `record_decision`. Quyết định hiện hành của một `topic` là bản ghi cuối. Khi giao việc, App đính kèm vào Context Packet các quyết định hiện hành có `affects` chứa module của Peer mà Thread chưa có (`decisions`); quyết định đã có nằm ở `omitted.decisionIds`. Discovery không nhận quyết định. App chỉ lưu và chuyển, không đánh giá quyết định.
 - Không thêm parser/JSON protocol, outputSchema fallback, approval gate hoặc trạng thái task mới.
 
 CI dùng fake Codex transport; cần E2E với Codex CLI/app-server phiên bản thực tế để xác minh `runtimeWorkspaceRoots`.
@@ -74,19 +76,25 @@ Lead routeLeadTool()
       → validate evidenceRefs hợp lệ và không dùng Discovery/Lead làm chứng cứ verified
       → Conversation.taskBrief trong SQLite
   → spawn/send(message, expectedResult, contextRefs?)
-      → contextRefs: ≤ 8 message IDs cùng conversation, tổng ≤ 30000 ký tự
-      → originalRequest: user message đầu tiên
-      → taskBrief: snapshot đánh giá của Lead
-      → sources: text gốc + messageId + from + nhãn nguồn
-      → expectedResult: kết quả cụ thể Lead yêu cầu
+      → message: chỉ phần việc MỚI; không tóm tắt lại yêu cầu gốc, Brief hay báo cáo
+      → assignmentPacket(target) chỉ gửi phần Thread của target chưa có:
+          originalRequest  → chỉ ở lượt đầu của session
+          taskBrief        → chỉ khi khác bản đã gửi lần trước
+          sources          → contextRefs trừ: yêu cầu gốc, nguồn đã gửi,
+                             báo cáo do chính session đó tạo
+          omitted          → Brief không đổi / sourceIds không gửi lại
       → Message.contextPacket + Delivery trong một SQLite transaction
-  → Coordinator workerPrompt()
-      → thông tin cố định vai trò + Context Packet đã lưu + LEAD_MESSAGE
-      → Codex turn/start (Thread độc lập)
+      → tool result báo Lead các nguồn không gửi lại
+  → Coordinator: instructions (quy tắc vai trò) + prompt (Context Packet + LEAD_MESSAGE)
+      → Codex thread/start|resume.developerInstructions + turn/start (Thread độc lập)
 ```
 
-Lead nhận `NEW_EVENTS` kèm message ID để chọn `contextRefs`; các event trước nằm trong chính Codex Thread, nhưng Worker chỉ nhận những nguồn được chọn, yêu cầu gốc và Task Brief. UI có thể mở Context Packet đã lưu để xác minh thông tin thực tế được chuyển giao. Nguồn `discovery-preliminary` luôn là nhận định sơ bộ; App không đánh giá chất lượng nội dung Peer hay chứng thực kết luận Lead.
+"Đã có trong Thread" chỉ tính delivery `completed`. Delivery `interrupted/failed/queued` có thể chưa tới Thread, nên lượt sau gửi lại đầy đủ.
+
+Lead nhận `NEW_EVENTS` kèm message ID để chọn `contextRefs`; các event trước nằm trong chính Codex Thread. Prompt mỗi lượt của Lead chỉ gồm `PEER_SESSIONS`, `DISCOVERY_SESSIONS`, `NEW_EVENTS`; quy tắc, `MODULES`, `DISCOVERY_ENABLED` nằm trong `developerInstructions` và được làm mới ở mỗi `thread/resume`. Task Brief không gửi lại cho Lead vì Lead là bên duy nhất ghi nó. UI mở Context Packet đã lưu để xác minh phần thực tế đã chuyển giao. Nguồn `discovery-preliminary` luôn là nhận định sơ bộ; App không đánh giá chất lượng nội dung Peer hay chứng thực kết luận Lead.
+
+Chưa kiểm chứng với Codex thật: `developerInstructions` trên `thread/resume` có được áp dụng cho Thread cũ hay không (schema app-server 0.166.0 có field này; CI chỉ dùng fake transport).
 
 ## Event inbox không phát lại lịch sử App
 
-Mỗi Lead delivery có `eventMessageIds`, append khi queued và đóng băng khi running. `leadInputs(delivery.id)` chỉ trả các event đến lượt đó; `NEW_EVENTS` không phải toàn bộ App chat. `postUser` trong lúc Discovery chạy vẫn đưa event vào queued Lead delivery; `startDelivery()` chặn Lead đến khi Discovery hoàn tất, lúc đó kết quả được append vào cùng batch. `codexTurnId` đánh dấu `turn/start` đã được xác nhận, không chứng minh xử lý xong; running delivery không tự replay sau restart. SQLite snapshot cũ có queued Lead deliveries được quy về một batch khi mở DB.
+Mỗi Lead delivery có `eventMessageIds`, append khi queued và đóng băng khi running. `leadInputs(delivery.id)` chỉ trả các event đến lượt đó; `NEW_EVENTS` không phải toàn bộ App chat. `postUser` trong lúc Discovery chạy vẫn đưa event vào queued Lead delivery; `startDelivery()` chặn Lead đến khi Discovery hoàn tất, lúc đó kết quả được append vào cùng batch. `codexTurnId` đánh dấu `turn/start` đã được xác nhận, không chứng minh xử lý xong; running delivery không tự replay sau restart.

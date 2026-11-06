@@ -18,7 +18,19 @@ export type SessionStatus = "idle" | "running" | "interrupted";
 export interface Conversation {
   id: string; title: string; status: "active" | "finished";
   leadSessionId: string; generation: number; taskBrief?: TaskBrief;
+  /** Decision Log append-only; quyết định hiện hành của một topic là bản ghi cuối cùng. */
+  decisions?: Decision[];
   createdAt: string; updatedAt: string;
+}
+/** Quyết định của Lead về điều nhiều module cùng phụ thuộc. App chỉ lưu và chuyển cho Peer bị ảnh hưởng. */
+export interface Decision {
+  id: string; topic: string; decision: string; rationale: string;
+  /** Module ID mà Peer phải tuân theo quyết định. */
+  affects: string[];
+  evidenceRefs: string[];
+  /** Quyết định trước cùng topic bị thay thế. */
+  supersedes?: string;
+  createdAt: string;
 }
 export interface AgentSession {
   id: string; conversationId: string; role: AgentRole;
@@ -49,10 +61,17 @@ export interface ContextSource {
 }
 /** Bản chụp bất biến tại thời điểm giao việc, không phụ thuộc lịch sử Thread. */
 export interface ContextPacket {
-  originalRequest: { messageId: string; text: string };
+  /** Vắng mặt khi Thread của session đã nhận yêu cầu gốc ở lượt trước. */
+  originalRequest?: { messageId: string; text: string };
+  /** Vắng mặt khi Lead chưa có Task Brief hoặc Brief không đổi so với lần đã gửi cho session. */
   taskBrief?: TaskBrief;
+  /** Chỉ nguồn mới; nguồn session đã có trong Thread nằm ở `omitted.sourceIds`. */
   sources: ContextSource[];
+  /** Chỉ Peer: quyết định hiện hành ảnh hưởng module mà Thread chưa có. */
+  decisions?: Decision[];
   expectedResult: string;
+  /** Phần App không gửi lại vì đã có trong Thread của session nhận. */
+  omitted?: { taskBrief?: true; sourceIds?: string[]; decisionIds?: string[] };
 }
 export interface Message {
   id: string; conversationId: string; from: MessageAuthor;
@@ -81,10 +100,11 @@ export interface Snapshot {
   settings: AppSettings;
 }
 export type LeadCommand =
-  | { type: "spawn_peer"; moduleId: string; message: string; expectedResult: string;
-      contextRefs?: string[]; label?: string; model?: string; effort?: string }
-  | { type: "send_peer"; sessionId: string; message: string; expectedResult: string;
-      contextRefs?: string[] }
+  /** Mỗi module có một Peer: lần đầu App tạo, các lần sau dùng lại Thread của Peer đó. */
+  | { type: "assign_module"; moduleId: string; message: string; expectedResult: string;
+      contextRefs?: string[]; model?: string; effort?: string }
+  | { type: "record_decision"; topic: string; decision: string; rationale: string;
+      affects: string[]; evidenceRefs?: string[] }
   | { type: "spawn_discovery"; message: string; expectedResult: string;
       contextRefs?: string[] }
   | { type: "send_discovery"; sessionId: string; message: string; expectedResult: string;

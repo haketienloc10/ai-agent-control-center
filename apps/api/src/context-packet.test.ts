@@ -55,9 +55,9 @@ test("Lead persists Task Brief and hands independent workers exact immutable Con
     const discoveryDelivery = ctx.store.queued().find(d =>
       ctx.store.session(d.sessionId)?.role === "discovery")!;
     const discoveryOrder = ctx.store.input(discoveryDelivery.id)!;
-    assert.equal(discoveryOrder.contextPacket?.originalRequest.text,
+    assert.equal(discoveryOrder.contextPacket?.originalRequest?.text,
       "User: Todo List; backend giữ dữ liệu");
-    assert.equal(discoveryOrder.contextPacket?.originalRequest.messageId,
+    assert.equal(discoveryOrder.contextPacket?.originalRequest?.messageId,
       ctx.store.snapshot().messages.find(m => m.from === "user")?.id);
     assert.deepEqual(discoveryOrder.contextPacket?.sources.map(s => s.messageId), [update.id]);
     assert.equal(discoveryOrder.contextPacket?.sources[0].kind, "user-request");
@@ -74,7 +74,7 @@ test("Lead persists Task Brief and hands independent workers exact immutable Con
       type: "update_task_brief", brief: brief(["Discovery báo API có CRUD; chưa xác minh"])
     }, ["web"], true);
     ctx.store.routeLeadTool(resumed.id, "spawn-web", {
-      type: "spawn_peer", moduleId: "web",
+      type: "assign_module", moduleId: "web",
       message: "Xác minh contract Web; chỉ sửa chỗ thiếu, giữ thay đổi đã có",
       expectedResult, contextRefs: [discoveryReport.id, update.id]
     }, ["web"], true);
@@ -108,7 +108,7 @@ test("contextRefs reject foreign, nonexistent, duplicate, oversized sources atom
       m.conversationId === b.id && m.from === "user")!;
     const lead = startLead(ctx.store, a.id);
     const command = (refs: string[]) => ({
-      type: "spawn_peer" as const, moduleId: "api",
+      type: "assign_module" as const, moduleId: "api",
       message: "Xác minh implementation", expectedResult, contextRefs: refs
     });
     assert.throws(() => ctx.store.routeLeadTool(lead.id, "foreign",
@@ -179,7 +179,7 @@ test("Peer runtime receives the original request, selected sources and outcome, 
       if (session.role === "lead") {
         if (!sawPeer) {
           await hooks.onLeadTool!("spawn", {
-            type: "spawn_peer", moduleId: "web", message: "Verify Todo UI",
+            type: "assign_module", moduleId: "web", message: "Verify Todo UI",
             expectedResult: "Run typecheck/build and report evidence", contextRefs: []
           });
           return "Do not send this unreferenced Lead reply to Peer";
@@ -207,5 +207,77 @@ test("Peer runtime receives the original request, selected sources and outcome, 
     }
     assert.equal(ctx.store.conversation(c.id)?.status, "active");
     assert.equal(sawPeer, true);
+  } finally { ctx.cleanup(); }
+});
+
+test("Reassigning a module Peer hands only what the Peer Thread lacks; interrupted handoffs are resent in full", () => {
+  const ctx = fixture();
+  try {
+    const c = ctx.store.createConversation("Todo original requirement");
+    const original = ctx.store.snapshot().messages.find(m => m.from === "user")!;
+    const lead1 = startLead(ctx.store, c.id);
+    ctx.store.routeLeadTool(lead1.id, "brief-1", { type: "update_task_brief", brief: brief() }, ["web"], true);
+    const spawnResult = ctx.store.routeLeadTool(lead1.id, "spawn", {
+      type: "assign_module", moduleId: "web", message: "Xác minh Web", expectedResult,
+      contextRefs: [original.id]
+    }, ["web"], true);
+    const peer = ctx.store.snapshot().sessions.find(s => s.role === "peer")!;
+    const first = ctx.store.input(ctx.store.queued().find(d => d.sessionId === peer.id)!.id)!;
+    assert.equal(first.contextPacket?.originalRequest?.text, "Todo original requirement");
+    assert.deepEqual(first.contextPacket?.sources, [], "original request must not be duplicated as a source");
+    assert.deepEqual(first.contextPacket?.omitted?.sourceIds, [original.id]);
+    assert.match(spawnResult, /Không gửi lại 1 nguồn/);
+    ctx.store.completeLead(lead1.id, "");
+    const firstDelivery = ctx.store.queued().find(d => d.sessionId === peer.id)!;
+    ctx.store.startDelivery(firstDelivery.id);
+    ctx.store.completePeer(firstDelivery.id, "Báo cáo Web lượt 1");
+    const report = ctx.store.snapshot().messages.find(m => m.from === "peer")!;
+
+    const lead2 = startLead(ctx.store, c.id);
+    const sendResult = ctx.store.routeLeadTool(lead2.id, "send-1", {
+      type: "assign_module", moduleId: "web", message: "Chạy tích hợp", expectedResult,
+      contextRefs: [report.id, original.id]
+    }, ["web"], true);
+    const second = ctx.store.snapshot().messages.filter(m => m.to === "peer").at(-1)!.contextPacket!;
+    assert.equal(second.originalRequest, undefined, "Thread already holds the original request");
+    assert.equal(second.taskBrief, undefined, "Brief unchanged since the last delivery");
+    assert.equal(second.omitted?.taskBrief, true);
+    assert.deepEqual(second.sources, [], "Peer's own report is already in its Thread");
+    assert.deepEqual(second.omitted?.sourceIds, [report.id, original.id]);
+    assert.match(sendResult, /Không gửi lại 2 nguồn/);
+
+    ctx.store.routeLeadTool(lead2.id, "brief-2", {
+      type: "update_task_brief", brief: { ...brief(), nextDecision: "Chờ kết quả tích hợp" }
+    }, ["web"], true);
+    ctx.store.routeLeadTool(lead2.id, "send-2", {
+      type: "assign_module", moduleId: "web", message: "Báo thêm cổng đã dùng", expectedResult,
+      contextRefs: []
+    }, ["web"], true);
+    const third = ctx.store.snapshot().messages.filter(m => m.to === "peer").at(-1)!.contextPacket!;
+    assert.equal(third.taskBrief?.nextDecision, "Chờ kết quả tích hợp", "changed brief is sent");
+    assert.equal(third.omitted?.taskBrief, undefined);
+  } finally { ctx.cleanup(); }
+});
+
+test("A handoff whose turn never completed is resent in full to the same Peer", () => {
+  const ctx = fixture();
+  try {
+    const c = ctx.store.createConversation("Todo original requirement");
+    const lead1 = startLead(ctx.store, c.id);
+    ctx.store.routeLeadTool(lead1.id, "spawn", {
+      type: "assign_module", moduleId: "api", message: "Xác minh API", expectedResult, contextRefs: []
+    }, ["api"], true);
+    ctx.store.completeLead(lead1.id, "");
+    const peer = ctx.store.snapshot().sessions.find(s => s.role === "peer")!;
+    const delivery = ctx.store.queued().find(d => d.sessionId === peer.id)!;
+    ctx.store.startDelivery(delivery.id);
+    ctx.store.failDelivery(delivery.id, "Codex crashed before the turn finished");
+    const lead2 = startLead(ctx.store, c.id);
+    ctx.store.routeLeadTool(lead2.id, "retry", {
+      type: "assign_module", moduleId: "api", message: "Làm lại", expectedResult, contextRefs: []
+    }, ["api"], true);
+    const retry = ctx.store.snapshot().messages.filter(m => m.to === "peer").at(-1)!.contextPacket!;
+    assert.equal(retry.originalRequest?.text, "Todo original requirement");
+    assert.equal(retry.omitted, undefined);
   } finally { ctx.cleanup(); }
 });

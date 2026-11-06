@@ -4,7 +4,7 @@ import type { LeadCommand } from "@aacc/contracts";
 const contextRefField = {
   type: "array", maxItems: 8, uniqueItems: true,
   items: { type: "string" },
-  description: "Message IDs từ NEW_EVENTS hoặc turn trước của Lead; App đính kèm nguyên văn các nguồn được chọn"
+  description: "Message IDs từ NEW_EVENTS hoặc turn trước của Lead; App đính kèm nguyên văn các nguồn được chọn, trừ yêu cầu gốc và nguồn worker đã có"
 };
 const expectedResultField = {
   type: "string", description: "Kết quả và bằng chứng cụ thể cần báo lại Lead; tiêu chí kiểm chứng cho phạm vi này"
@@ -27,34 +27,36 @@ const taskBriefField = {
 };
 export const leadDynamicTools = [
   {
-    name: "spawn_peer",
-    description: "Mở một Codex Peer session mới trong module đã đăng ký và giao việc. Mọi kết quả gửi về Lead.",
+    name: "assign_module",
+    description: "Giao việc cho Peer của một module. Mỗi module có đúng một Peer: lần giao đầu App tạo Peer, các lần sau dùng lại Thread của Peer đó. Peer chỉ sửa module của mình; mọi kết quả gửi về Lead. Không dùng để hỏi tiến độ.",
     inputSchema: {
       type: "object", additionalProperties: false,
       properties: {
         moduleId: { type: "string", description: "Module ID trong danh sách MODULES" },
-        message: { type: "string", description: "Nhiệm vụ tự đầy đủ; không tham chiếu ngầm đến lịch sử Lead" },
+        message: { type: "string", description: "Chỉ phần việc mới của module này: phạm vi, ràng buộc, điều cần làm. Không tóm tắt lại yêu cầu gốc, Task Brief, quyết định hay báo cáo trước; App đã đính kèm" },
         expectedResult: expectedResultField,
         contextRefs: contextRefField,
-        label: { type: "string", description: "Nhãn hiển thị ngắn cho session" },
-        model: { type: "string", description: "Model override khi spawn Peer; bỏ trống để dùng Peer default" },
-        effort: { type: "string", description: "Reasoning effort override khi spawn Peer; bỏ trống để dùng Peer default" }
+        model: { type: "string", description: "Model override khi App tạo Peer lần đầu; bỏ trống để dùng Peer default" },
+        effort: { type: "string", description: "Reasoning effort override khi App tạo Peer lần đầu; bỏ trống để dùng Peer default" }
       },
       required: ["moduleId", "message", "expectedResult"]
     }
   },
   {
-    name: "send_peer",
-    description: "Giao yêu cầu mới hoặc sửa/bổ sung công việc trong Peer Thread. Không dùng để hỏi tiến độ khi Peer đang chạy.",
+    name: "record_decision",
+    description: "Ghi quyết định của Lead về điều nhiều module cùng phụ thuộc (interface/contract, port, định dạng dữ liệu, thứ tự). Ghi lại cùng topic sẽ thay quyết định cũ. App tự đính kèm quyết định hiện hành cho Peer của các module trong affects ở lần assign_module tiếp theo.",
     inputSchema: {
       type: "object", additionalProperties: false,
       properties: {
-        sessionId: { type: "string", description: "Peer session ID từ PEER_SESSIONS" },
-        message: { type: "string", description: "Instruction mới, thay đổi phạm vi hoặc sửa kết quả; KHÔNG hỏi tiến độ" },
-        expectedResult: expectedResultField,
-        contextRefs: contextRefField
+        topic: { type: "string", description: "Tên ngắn, ổn định của chủ đề, ví dụ api-contract" },
+        decision: { type: "string", description: "Nội dung quyết định đủ cụ thể để các Peer triển khai khớp nhau" },
+        rationale: { type: "string", description: "Lý do và đánh đổi" },
+        affects: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string" },
+          description: "Module ID phải tuân theo quyết định" },
+        evidenceRefs: { type: "array", maxItems: 8, uniqueItems: true, items: { type: "string" },
+          description: "Message IDs làm căn cứ cho quyết định" }
       },
-      required: ["sessionId", "message", "expectedResult"]
+      required: ["topic", "decision", "rationale", "affects"]
     }
   },
   {
@@ -63,7 +65,7 @@ export const leadDynamicTools = [
     inputSchema: {
       type: "object", additionalProperties: false,
       properties: {
-        message: { type: "string", description: "Câu hỏi/phạm vi cần khám phá sơ bộ" },
+        message: { type: "string", description: "Câu hỏi/phạm vi cần khám phá sơ bộ; không tóm tắt lại yêu cầu gốc vì App đã đính kèm" },
         expectedResult: expectedResultField,
         contextRefs: contextRefField
       },
@@ -77,7 +79,7 @@ export const leadDynamicTools = [
       type: "object", additionalProperties: false,
       properties: {
         sessionId: { type: "string", description: "Discovery session ID từ DISCOVERY_SESSIONS" },
-        message: { type: "string", description: "Nhiệm vụ khám phá sơ bộ mới, không phải status poll" },
+        message: { type: "string", description: "Nhiệm vụ khám phá sơ bộ mới, không lặp lại điều Discovery đã nhận; không phải status poll" },
         expectedResult: expectedResultField,
         contextRefs: contextRefField
       },
@@ -147,27 +149,32 @@ export function commandFromTool(tool: unknown, args: unknown): LeadCommand {
     throw new Error("Tool arguments phải là object");
   }
   const input = args as Record<string, unknown>;
-  if (tool === "spawn_peer") {
+  if (tool === "assign_module") {
     return {
-      type: "spawn_peer",
+      type: "assign_module",
       moduleId: nonempty(input.moduleId, "moduleId", 100),
       message: nonempty(input.message, "message"),
       expectedResult: nonempty(input.expectedResult, "expectedResult", 4000),
       contextRefs: refList(input.contextRefs),
-      ...(typeof input.label === "string" ? { label: input.label.slice(0, 100) } : {}),
       ...(typeof input.model === "string" && input.model.trim()
         ? { model: nonempty(input.model, "model", 128) } : {}),
       ...(typeof input.effort === "string" && input.effort.trim()
         ? { effort: nonempty(input.effort, "effort", 32) } : {})
     };
   }
-  if (tool === "send_peer") {
+  if (tool === "record_decision") {
+    const affects = input.affects;
+    if (!Array.isArray(affects) || !affects.length || affects.length > 20 ||
+      new Set(affects).size !== affects.length) {
+      throw new Error("affects cần danh sách module ID không rỗng, không trùng");
+    }
     return {
-      type: "send_peer",
-      sessionId: nonempty(input.sessionId, "sessionId", 100),
-      message: nonempty(input.message, "message"),
-      expectedResult: nonempty(input.expectedResult, "expectedResult", 4000),
-      contextRefs: refList(input.contextRefs)
+      type: "record_decision",
+      topic: nonempty(input.topic, "topic", 200),
+      decision: nonempty(input.decision, "decision", 8000),
+      rationale: nonempty(input.rationale, "rationale", 4000),
+      affects: affects.map(item => nonempty(item, "affects", 100)),
+      evidenceRefs: refList(input.evidenceRefs)
     };
   }
   if (tool === "spawn_discovery") {

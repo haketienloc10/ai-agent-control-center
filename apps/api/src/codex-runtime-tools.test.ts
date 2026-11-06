@@ -24,7 +24,7 @@ const code = [
   'send({id:m.id,result:{turn:{id,status:"inProgress"}}});',
   'send({method:"item/tool/call",id:900+n,params:{',
   'threadId:m.params.threadId,turnId:id,callId:"call-"+n,',
-  'tool:n===1?"spawn_peer":"finish",arguments:n===1?',
+  'tool:n===1?"assign_module":"finish",arguments:n===1?',
   '{moduleId:"web",message:"GET /api/todos returns "+JSON.stringify({todos:[{id:1}]}),expectedResult:"API contract verified"}:',
   '{} }});}',
   'if(typeof m.id==="number"&&m.id>900&&m.result){',
@@ -58,8 +58,8 @@ test("Dynamic tools dispatch nested JSON and resume the same Lead thread", async
     assert.equal(await runtime.run(session, "/workspace", "Create Web", hooks), "Turn 1 done");
     assert.equal(await runtime.run(session, "/workspace", "Finish", hooks), "Turn 2 done");
     assert.equal(session.threadId, "lead-thread");
-    assert.equal(commands[0]?.type, "spawn_peer");
-    if (commands[0]?.type === "spawn_peer") {
+    assert.equal(commands[0]?.type, "assign_module");
+    if (commands[0]?.type === "assign_module") {
       assert.match(commands[0].message, /\{"todos":\[\{"id":1\}\]\}/);
     }
     assert.deepEqual(commands[1], { type: "finish" });
