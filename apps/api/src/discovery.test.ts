@@ -109,7 +109,8 @@ test("Lead dispatches Discovery, waits without polling and receives an independe
           assert.match(result, /Discovery/);
           return "Đã giao Discovery";
         }
-        assert.match(prompt, /Chỉ khảo sát cấu trúc API và Web/);
+        assert.doesNotMatch(prompt, /Chỉ khảo sát cấu trúc API và Web/,
+          "NEW_EVENTS must not replay the prior Lead assignment");
         assert.match(prompt, /Đã xác minh/);
         assert.match(prompt, /DISCOVERY_SESSIONS:/);
         return "Đã nhận báo cáo sơ bộ";
