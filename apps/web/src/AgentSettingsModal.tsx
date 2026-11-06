@@ -44,12 +44,13 @@ export function AgentSettingsModal({ initial, onClose, onSaved }: {
       <p>{description}</p>
       <label htmlFor={role + "-model"}>Model</label>
       <input id={role + "-model"} list="codex-models" value={selection.model ?? ""}
-        autoComplete="off" placeholder="Để trống = mặc định Codex"
+        autoComplete="off"
+        placeholder={role === "discovery" ? "Để trống = workspace config / Codex" : "Để trống = mặc định Codex"}
         onChange={event => patch(role, "model", event.target.value)}/>
       <label htmlFor={role + "-effort"}>Reasoning effort</label>
       <input id={role + "-effort"} list={role + "-effort-choices"}
         value={selection.effort ?? ""} autoComplete="off"
-        placeholder="Để trống = mặc định Codex"
+        placeholder={role === "discovery" ? "Để trống = workspace config / Codex" : "Để trống = mặc định Codex"}
         onChange={event => patch(role, "effort", event.target.value)}/>
       <datalist id={role + "-effort-choices"}>
         {efforts.map(effort => <option key={effort} value={effort}/>)}
@@ -98,7 +99,7 @@ export function AgentSettingsModal({ initial, onClose, onSaved }: {
         {error && <p role="alert" className="settings-error">{error}</p>}
         {saved && <p role="status" className="settings-saved">Đã lưu App Settings vào SQLite.</p>}
         <div className="settings-actions">
-          <button type="button" onClick={() => setDraft({ lead: {}, peer: {}, discovery: {} })}>Dùng mặc định Codex</button>
+          <button type="button" onClick={() => setDraft({ lead: {}, peer: {}, discovery: {} })}>Đặt về giá trị kế thừa</button>
           <button type="submit" className="primary" disabled={saving}>
             {saving ? "Đang lưu…" : "Lưu Settings"}
           </button>
