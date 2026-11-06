@@ -47,7 +47,7 @@ sequenceDiagram
 
 ## Dynamic tools
 
-Chỉ Lead có `spawn_peer`, `send_peer`, `finish` khi `thread/start.dynamicTools`. Discovery và Peer không có routing tools. Discovery có `cwd` riêng, sandbox `readOnly`, `access.restricted.readableRoots` gồm Discovery workspace và module paths. Không có JSON routing, `outputSchema` fallback hay parser cũ. `send_peer` dành cho instruction thật sự, không dùng hỏi tiến độ. Tool `callId` được lưu trước khi trả kết quả, chống replay.
+Chỉ Lead có `spawn_peer`, `send_peer`, `finish` khi `thread/start.dynamicTools`. Discovery và Peer không có routing tools. Discovery có `cwd` riêng và named permission profile cấu hình trong `thread/start.config`. `thread/start.permissions` và `turn/start.permissions` chọn profile chỉ đọc `:workspace_roots` (Discovery workspace + module paths) và `:minimal`, network tắt. Không dùng `readOnly.access` cũ hoặc fallback full read. Không có JSON routing, `outputSchema` fallback hay parser cũ. `send_peer` dành cho instruction thật sự, không dùng hỏi tiến độ. Tool `callId` được lưu trước khi trả kết quả, chống replay.
 
 ## Recovery
 

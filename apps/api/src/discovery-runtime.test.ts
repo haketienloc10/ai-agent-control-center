@@ -13,20 +13,23 @@ const server = [
   'const m=JSON.parse(s);',
   'if(m.method==="initialize")send({id:m.id,result:{}});',
   'if(m.method==="thread/start"){',
-  'if(m.params.dynamicTools)send({id:m.id,error:{message:"Discovery must not have routing tools"}});',
+  'if(m.params.dynamicTools || m.params.sandbox || !m.params.permissions)',
+  'send({id:m.id,error:{message:"Discovery must use named permissions only"}});',
   'else send({id:m.id,result:{thread:{id:"discovery-thread"}}});}',
   'if(m.method==="turn/start"){',
-  'const p=m.params.sandboxPolicy;',
+  'if(m.params.sandboxPolicy?.access || m.params.sandboxPolicy)',
+  'send({id:m.id,error:{message:"Legacy readOnly access must not be used"}});',
+  'const p=m.params.permissions;',
   'send({id:m.id,result:{turn:{id:"turn-1",status:"inProgress"}}});',
   'send({method:"item/completed",params:{threadId:"discovery-thread",turnId:"turn-1",',
-  'item:{type:"agentMessage",text:JSON.stringify({policy:p,',
+  'item:{type:"agentMessage",text:JSON.stringify({profile:p,',
   'approval:m.params.approvalPolicy,cwd:m.params.cwd})}}});',
   'send({method:"turn/completed",params:{threadId:"discovery-thread",',
   'turn:{id:"turn-1",status:"completed"}}});',
   '}}});'
 ].join("");
 
-test("Discovery app-server turn uses its own thread, no Lead dynamic tools, restricted read-only roots", async () => {
+test("Discovery app-server turn uses named restricted permissions without legacy sandboxPolicy", async () => {
   const client = new CodexClient(process.execPath, ["-e", server]);
   const runtime = new CodexAgentRuntime(client);
   const at = "2026-11-05T00:00:00Z";
@@ -40,19 +43,11 @@ test("Discovery app-server turn uses its own thread, no Lead dynamic tools, rest
       onTurn: id => { session.turnId = id; }
     }, { model: "demo", effort: "low" }, ["/work/discovery", "/work/api", "/work/web"]);
     const response = JSON.parse(result) as {
-      cwd: string; approval: string;
-      policy: { type: string; networkAccess: boolean; access: {
-        type: string; includePlatformDefaults: boolean; readableRoots: string[]
-      } }
+      cwd: string; approval: string; profile: string;
     };
     assert.equal(session.threadId, "discovery-thread");
     assert.equal(response.cwd, "/work/discovery");
     assert.equal(response.approval, "never");
-    assert.equal(response.policy.type, "readOnly");
-    assert.equal(response.policy.networkAccess, false);
-    assert.equal(response.policy.access.type, "restricted");
-    assert.equal(response.policy.access.includePlatformDefaults, true);
-    assert.deepEqual(response.policy.access.readableRoots,
-      ["/work/discovery", "/work/api", "/work/web"]);
+    assert.equal(response.profile, "aacc-discovery-discovery-id");
   } finally { client.stop(); }
 });

@@ -31,18 +31,31 @@ export class CodexAgentRuntime implements AgentRuntime {
     const sandbox = peer ? (safe ? "workspace-write" : "danger-full-access") : "read-only";
     const sandboxPolicy = peer ? (safe
       ? { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false }
-      : { type: "dangerFullAccess" })
-      : discovery ? {
-          type: "readOnly", networkAccess: false,
-          access: { type: "restricted", includePlatformDefaults: true,
-            readableRoots: [...new Set([cwd, ...(readableRoots ?? [])])] }
+      : { type: "dangerFullAccess" }) : { type: "readOnly" };
+
+    // Restricted reads moved from readOnly.access to named permission profiles.
+    // A per-thread profile grants read access only to Discovery and module roots.
+    const discoveryProfile = "aacc-discovery-" + session.id.replace(/[^a-zA-Z0-9_-]/g, "");
+    const discoveryRoots = [...new Set([cwd, ...(readableRoots ?? [])])];
+    const discoveryPermissions = {
+      permissions: discoveryProfile,
+      runtimeWorkspaceRoots: discoveryRoots,
+      config: {
+        ["permissions." + discoveryProfile]: {
+          filesystem: {
+            ":minimal": "read",
+            ":workspace_roots": { ".": "read" }
+          },
+          network: { enabled: false }
         }
-      : { type: "readOnly" };
+      }
+    };
 
     const started: { thread: { id: string } } = session.threadId
       ? await this.client.request("thread/resume", { threadId: session.threadId, excludeTurns: true })
       : await this.client.request("thread/start", {
-          cwd, approvalPolicy, sandbox,
+          cwd, approvalPolicy,
+          ...(discovery ? discoveryPermissions : { sandbox }),
           ...(selection.model ? { model: selection.model } : {}),
           ...(session.role === "lead" ? { dynamicTools: leadDynamicTools } : {})
         });
@@ -111,7 +124,8 @@ export class CodexAgentRuntime implements AgentRuntime {
     try {
       const turn: { turn: { id: string } } = await this.client.request("turn/start", {
         threadId, input: [{ type: "text", text: prompt }],
-        cwd, approvalPolicy, sandboxPolicy,
+        cwd, approvalPolicy,
+        ...(discovery ? { permissions: discoveryProfile } : { sandboxPolicy }),
         ...(selection.model ? { model: selection.model } : {}),
         ...(selection.effort ? { effort: selection.effort } : {})
       });
