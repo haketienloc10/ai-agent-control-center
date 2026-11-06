@@ -101,7 +101,8 @@ test("Lead dispatches Discovery, waits without polling and receives an independe
         if (leadTurns === 1) {
           assert.match(prompt, /DISCOVERY_ENABLED: true/);
           assert.match(prompt, /spawn_discovery/);
-          assert.match(prompt, /ORIGINAL_USER_REQUEST: "Build Todo"/);
+          assert.match(prompt, /NEW_EVENTS:/);
+          assert.match(prompt, /Build Todo/);
           const result = await hooks.onLeadTool!("lead:spawn", {
             type: "spawn_discovery", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", message: "Chỉ khảo sát cấu trúc API và Web"
           });
