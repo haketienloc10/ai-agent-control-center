@@ -51,7 +51,7 @@ export class CodexAgentRuntime implements AgentRuntime {
       }
     };
 
-    const started: { thread: { id: string } } = session.threadId
+    const started: { thread: { id: string }; activePermissionProfile?: { id: string } } = session.threadId
       ? await this.client.request("thread/resume", { threadId: session.threadId, excludeTurns: true })
       : await this.client.request("thread/start", {
           cwd, approvalPolicy,
@@ -61,6 +61,9 @@ export class CodexAgentRuntime implements AgentRuntime {
         });
     const threadId = started?.thread?.id;
     if (!threadId) throw new Error("Codex không trả về thread.id");
+    if (discovery && started.activePermissionProfile?.id !== discoveryProfile) {
+      throw new Error("Codex không xác nhận Discovery permission profile: " + discoveryProfile);
+    }
     if (session.threadId && threadId !== session.threadId) {
       throw new Error("Codex resume returned unexpected thread.id");
     }
