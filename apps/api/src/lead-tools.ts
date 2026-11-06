@@ -33,9 +33,16 @@ export const leadDynamicTools = [
       type: "object", additionalProperties: false,
       properties: {
         moduleId: { type: "string", description: "Module ID trong danh sách MODULES" },
-        message: { type: "string", description: "Chỉ phần việc mới của module này: phạm vi, ràng buộc, điều cần làm. Không tóm tắt lại yêu cầu gốc, Task Brief, quyết định hay báo cáo trước; App đã đính kèm" },
+        message: { type: "string", description: "Phần việc mới, phạm vi và thao tác đủ rõ khi đọc riêng. Có thể nhắc ràng buộc trực tiếp ảnh hưởng việc mới; không chép lại toàn lịch sử. App luôn gửi checkpoint mục tiêu/tiêu chí và toàn bộ quyết định áp dụng" },
         expectedResult: expectedResultField,
         contextRefs: contextRefField,
+        constraints: { type: "array", maxItems: 20, items: { type: "string" },
+          description: "Toàn bộ ràng buộc bổ sung hiện hành của assignment, do Lead viết. Gửi lại ở mỗi lượt cần áp dụng; bỏ trống nghĩa là không có bổ sung, không tự kế thừa lượt trước" },
+        previousContext: { type: "array", maxItems: 8, items: {
+          type: "object", additionalProperties: false,
+          properties: { messageId: { type: "string" }, summary: { type: "string" } },
+          required: ["messageId", "summary"] },
+          description: "Tóm tắt do Lead viết cho nguồn trong contextRefs mà Peer đã có, gồm cả báo cáo của chính Peer. App chuyển nguyên văn tóm tắt, không tự suy diễn" },
         model: { type: "string", description: "Model override khi App tạo Peer lần đầu; bỏ trống để dùng Peer default" },
         effort: { type: "string", description: "Reasoning effort override khi App tạo Peer lần đầu; bỏ trống để dùng Peer default" }
       },
@@ -44,7 +51,7 @@ export const leadDynamicTools = [
   },
   {
     name: "record_decision",
-    description: "Ghi quyết định của Lead về điều nhiều module cùng phụ thuộc (interface/contract, port, định dạng dữ liệu, thứ tự). Ghi lại cùng topic sẽ thay quyết định cũ. App tự đính kèm quyết định hiện hành cho Peer của các module trong affects ở lần assign_module tiếp theo.",
+    description: "Ghi quyết định của Lead về điều nhiều module cùng phụ thuộc (interface/contract, port, định dạng dữ liệu, thứ tự). Ghi lại cùng topic thay quyết định cũ. Mỗi assign_module gửi toàn bộ snapshot quyết định hiện hành áp dụng cho module; danh sách mới thay danh sách cũ của assignment trước.",
     inputSchema: {
       type: "object", additionalProperties: false,
       properties: {
@@ -150,12 +157,35 @@ export function commandFromTool(tool: unknown, args: unknown): LeadCommand {
   }
   const input = args as Record<string, unknown>;
   if (tool === "assign_module") {
+    let constraints: string[] | undefined;
+    if (input.constraints !== undefined) {
+      if (!Array.isArray(input.constraints) || input.constraints.length > 20) {
+        throw new Error("constraints phải là mảng tối đa 20 phần tử");
+      }
+      constraints = input.constraints.map(item => nonempty(item, "constraint", 2000));
+    }
+    let previousContext: import("@aacc/contracts").PreviousContextNote[] | undefined;
+    if (input.previousContext !== undefined) {
+      if (!Array.isArray(input.previousContext) || input.previousContext.length > 8) {
+        throw new Error("previousContext cần tối đa 8 nguồn");
+      }
+      previousContext = input.previousContext.map(item => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("previousContext entry không hợp lệ");
+        return { messageId: nonempty(item.messageId, "previousContext messageId", 100),
+          summary: nonempty(item.summary, "previousContext summary", 2000) };
+      });
+      if (new Set(previousContext.map(item => item.messageId)).size !== previousContext.length) {
+        throw new Error("previousContext không được trùng nguồn");
+      }
+    }
     return {
       type: "assign_module",
       moduleId: nonempty(input.moduleId, "moduleId", 100),
       message: nonempty(input.message, "message"),
       expectedResult: nonempty(input.expectedResult, "expectedResult", 4000),
       contextRefs: refList(input.contextRefs),
+      ...(constraints ? { constraints } : {}),
+      ...(previousContext ? { previousContext } : {}),
       ...(typeof input.model === "string" && input.model.trim()
         ? { model: nonempty(input.model, "model", 128) } : {}),
       ...(typeof input.effort === "string" && input.effort.trim()

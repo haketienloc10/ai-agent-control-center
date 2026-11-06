@@ -7,6 +7,7 @@
   "scripts": {
     "dev:api": "npm run dev -w @aacc/api",
     "dev:web": "npm run dev -w @aacc/web",
+    "demo:peer-prompts": "tsx scripts/demo-peer-prompts.ts",
     "typecheck": "npm run typecheck --workspaces",
     "test": "npm run test -w @aacc/api && npm run test -w @aacc/web",
     "build": "npm run build -w @aacc/web"

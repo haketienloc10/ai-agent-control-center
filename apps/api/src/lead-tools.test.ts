@@ -8,6 +8,8 @@ test("Dynamic tool schemas expose only Lead routing operations", () => {
   const assign = leadDynamicTools.find(t => t.name === "assign_module")!;
   assert.ok("model" in assign.inputSchema.properties);
   assert.ok("effort" in assign.inputSchema.properties);
+  assert.ok("constraints" in assign.inputSchema.properties);
+  assert.ok("previousContext" in assign.inputSchema.properties);
   assert.ok(!("label" in assign.inputSchema.properties), "Peer identity is the module, not a free label");
   assert.ok(!("sessionId" in assign.inputSchema.properties));
   assert.deepEqual(assign.inputSchema.required, ["moduleId", "message", "expectedResult"]);
@@ -22,6 +24,18 @@ test("Dynamic tool schemas expose only Lead routing operations", () => {
   const finish = leadDynamicTools.find(t => t.name === "finish")!;
   assert.deepEqual(finish.inputSchema.properties, {});
   assert.equal(finish.inputSchema.additionalProperties, false);
+});
+test("Peer tool validates Lead-authored constraints and previous context summaries", () => {
+  const input = { moduleId: "api", message: "Bổ sung validation", expectedResult: "Báo bằng chứng",
+    contextRefs: ["r1"], constraints: ["Giữ dữ liệu"], previousContext: [{ messageId: "r1", summary: "Còn thiếu validation" }] };
+  assert.deepEqual(commandFromTool("assign_module", input), { type: "assign_module", ...input });
+  for (const constraints of [null, "bad", [""], Array(21).fill("x"), ["x".repeat(2001)]]) {
+    assert.throws(() => commandFromTool("assign_module", { ...input, constraints }), /constraint/);
+  }
+  for (const previousContext of [null, [null], [{ messageId: "r1", summary: "" }],
+    [{ messageId: "r1", summary: "a" }, { messageId: "r1", summary: "b" }], Array(9).fill({ messageId: "r1", summary: "s" })]) {
+    assert.throws(() => commandFromTool("assign_module", { ...input, previousContext }), /previousContext/);
+  }
 });
 test("Tool transport requires self-contained assignments and preserves refs", () => {
   const message = 'API contract: GET /api/todos → {"todos":[{"id":1,"completed":false}]}';

@@ -48,9 +48,10 @@ const text = (value: unknown, label: string, limit = 20000): string => {
   return value.trim();
 };
 function message(data: Data, conversationId: string, from: MessageAuthor,
-  to: Message["to"], body: string, agentSessionId?: string, contextPacket?: ContextPacket): Message {
+  to: Message["to"], body: string, agentSessionId?: string, contextPacket?: ContextPacket,
+  id = randomUUID()): Message {
   const entry: Message = {
-    id: randomUUID(), conversationId, from, to, text: body,
+    id, conversationId, from, to, text: body,
     ...(agentSessionId ? (data.sessions.some(s => s.id === agentSessionId &&
         s.role === "discovery")
       ? { discoverySessionId: agentSessionId } : { peerSessionId: agentSessionId }) : {}),
@@ -60,6 +61,9 @@ function message(data: Data, conversationId: string, from: MessageAuthor,
   data.messages.push(entry);
   return entry;
 }
+const sourceKind = (from: MessageAuthor): ContextSource["kind"] =>
+  from === "discovery" ? "discovery-preliminary" : from === "peer" ? "peer-report" :
+  from === "user" ? "user-request" : from === "lead" ? "lead-note" : "system-event";
 /** Resolve selected evidence strictly within the same conversation, before queueing.
  * Refs in `skip` are still validated but not copied again. */
 function contextSources(data: Data, conversationId: string, refs: string[] = [],
@@ -76,11 +80,7 @@ function contextSources(data: Data, conversationId: string, refs: string[] = [],
     if (skip.has(ref)) continue;
     total += item.text.length;
     if (total > 30000) throw new Error("contextRefs vượt giới hạn 30000 ký tự; Lead cần chọn nguồn liên quan hơn");
-    const kind: ContextSource["kind"] = item.from === "discovery" ? "discovery-preliminary" :
-      item.from === "peer" ? "peer-report" :
-      item.from === "user" ? "user-request" :
-      item.from === "lead" ? "lead-note" : "system-event";
-    sources.push({ messageId: item.id, from: item.from, kind, text: item.text,
+    sources.push({ messageId: item.id, from: item.from, kind: sourceKind(item.from), text: item.text,
       createdAt: item.createdAt });
   }
   return sources;
@@ -118,9 +118,10 @@ function currentDecisions(conversation: Conversation): Decision[] {
   return [...byTopic.values()];
 }
 
-/** Build the delta handoff for `target`: no field the target Thread already holds is resent. */
+/** Peer luôn nhận checkpoint; Discovery và nguồn dài tiếp tục dùng delta. */
 function assignmentPacket(data: Data, conversation: Conversation,
-  command: Extract<LeadCommand, { message: string }>, target: AgentSession): ContextPacket {
+  command: Extract<LeadCommand, { message: string }>, target: AgentSession,
+  assignmentId?: string): ContextPacket {
   const original = data.messages.find(m => m.conversationId === conversation.id &&
     m.from === "user");
   if (!original) throw new Error("Conversation không có yêu cầu gốc");
@@ -131,22 +132,58 @@ function assignmentPacket(data: Data, conversation: Conversation,
   const refs = command.contextRefs ?? [];
   const skippedIds = refs.filter(ref => skip.has(ref));
   const brief = conversation.taskBrief;
+  const sources = contextSources(data, conversation.id, refs, skip);
+  if (command.type === "assign_module") {
+    const constraints = command.constraints ?? [];
+    if (!Array.isArray(constraints) || constraints.length > 20) {
+      throw new Error("constraints phải là mảng tối đa 20 phần tử");
+    }
+    const checkedConstraints = constraints.map(item => text(item, "constraint", 2000));
+    const notes = command.previousContext ?? [];
+    if (!Array.isArray(notes) || notes.length > 8 ||
+      new Set(notes.map(note => note?.messageId)).size !== notes.length) {
+      throw new Error("previousContext cần tối đa 8 nguồn không trùng");
+    }
+    for (const note of notes) {
+      if (!note || !refs.includes(note.messageId) || !known.messageIds.has(note.messageId)) {
+        throw new Error("previousContext phải chọn nguồn trong contextRefs đã có trong Thread");
+      }
+      text(note.summary, "previousContext summary", 2000);
+    }
+    const summaries = new Map(notes.map(note => [note.messageId, note.summary.trim()]));
+    const previous = data.messages.filter(m => m.from === "lead" && m.peerSessionId === target.id).at(-1);
+    const decisions = currentDecisions(conversation).filter(d => d.affects.includes(command.moduleId));
+    const previousContext = skippedIds.filter(id => known.messageIds.has(id)).map(id => {
+      const item = data.messages.find(m => m.id === id)!;
+      return {
+        messageId: item.id, from: item.from, kind: sourceKind(item.from),
+        createdAt: item.createdAt,
+        ...(summaries.has(id) ? { summary: summaries.get(id)! } : {})
+      };
+    });
+    if (!assignmentId) throw new Error("Peer assignment thiếu ID");
+    return {
+      peerCheckpoint: {
+        assignmentId, moduleId: command.moduleId,
+        ...(previous ? { continues: previous.id } : {}),
+        goal: brief?.goal ?? original.text,
+        acceptanceCriteria: structuredClone(brief?.acceptanceCriteria ?? []),
+        constraints: checkedConstraints
+      },
+      ...(known.hasRequest ? {} : { originalRequest: { messageId: original.id, text: original.text } }),
+      sources, previousContext, decisions: structuredClone(decisions), expectedResult,
+      ...(skippedIds.length ? { omitted: { sourceIds: skippedIds } } : {})
+    };
+  }
   const briefUnchanged = Boolean(brief) && known.brief === JSON.stringify(brief);
-  // Decisions bind module owners only; Discovery is a preliminary survey.
-  const binding = target.role === "peer" ? currentDecisions(conversation)
-    .filter(d => d.affects.includes(target.moduleId!)) : [];
-  const newDecisions = binding.filter(d => !known.decisionIds.has(d.id));
-  const knownDecisionIds = binding.filter(d => known.decisionIds.has(d.id)).map(d => d.id);
   return {
     ...(known.hasRequest ? {} : { originalRequest: { messageId: original.id, text: original.text } }),
     ...(brief && !briefUnchanged ? { taskBrief: structuredClone(brief) } : {}),
-    sources: contextSources(data, conversation.id, refs, skip),
-    ...(newDecisions.length ? { decisions: structuredClone(newDecisions) } : {}),
+    sources,
     expectedResult,
-    ...(briefUnchanged || skippedIds.length || knownDecisionIds.length ? { omitted: {
+    ...(briefUnchanged || skippedIds.length ? { omitted: {
       ...(briefUnchanged ? { taskBrief: true as const } : {}),
-      ...(skippedIds.length ? { sourceIds: skippedIds } : {}),
-      ...(knownDecisionIds.length ? { decisionIds: knownDecisionIds } : {})
+      ...(skippedIds.length ? { sourceIds: skippedIds } : {})
     } } : {})
   };
 }
@@ -505,9 +542,10 @@ export class CoordinationStore extends EventEmitter {
           };
           data.sessions.push(peer);
         }
-        const packet = assignmentPacket(data, conversation, command, peer);
+        const assignmentId = randomUUID();
+        const packet = assignmentPacket(data, conversation, command, peer, assignmentId);
         const outbound = message(data, conversation.id, "lead", "peer",
-          text(command.message, "Peer message"), peer.id, packet);
+          text(command.message, "Peer message"), peer.id, packet, assignmentId);
         deliver(data, conversation.id, peer.id, outbound.id);
         result = "Đã giao việc tới " + peer.label + " (sessionId=" + peer.id + ", " +
           (created ? "Peer mới" : "dùng lại Thread của Peer module") + ")." +

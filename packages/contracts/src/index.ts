@@ -59,15 +59,28 @@ export interface ContextSource {
   text: string;
   createdAt: string;
 }
+/** Tóm tắt do Lead viết cho nguồn đã có trong Thread, không phải App suy diễn. */
+export interface PreviousContextNote { messageId: string; summary: string; }
+export interface ContextReference extends Omit<ContextSource, "text"> { summary?: string; }
+/** Trạng thái cốt lõi được chốt theo assignment, luôn gửi lại cho Peer. */
+export interface PeerCheckpoint {
+  assignmentId: string; moduleId: string; continues?: string;
+  goal: string; acceptanceCriteria: string[]; constraints: string[];
+}
 /** Bản chụp bất biến tại thời điểm giao việc, không phụ thuộc lịch sử Thread. */
 export interface ContextPacket {
+  /** Peer mới: mục tiêu/tiêu chí từ Brief của Lead (goal dùng yêu cầu gốc nếu chưa có Brief). */
+  peerCheckpoint?: PeerCheckpoint;
+  /** Metadata và tóm tắt do Lead cung cấp cho nguồn không gửi lại nguyên văn. */
+  previousContext?: ContextReference[];
   /** Vắng mặt khi Thread của session đã nhận yêu cầu gốc ở lượt trước. */
   originalRequest?: { messageId: string; text: string };
-  /** Vắng mặt khi Lead chưa có Task Brief hoặc Brief không đổi so với lần đã gửi cho session. */
+  /** Discovery/packet cũ: vắng khi chưa có Brief hoặc Brief không đổi. Peer mới dùng checkpoint gọn. */
   taskBrief?: TaskBrief;
   /** Chỉ nguồn mới; nguồn session đã có trong Thread nằm ở `omitted.sourceIds`. */
   sources: ContextSource[];
-  /** Chỉ Peer: quyết định hiện hành ảnh hưởng module mà Thread chưa có. */
+  /** Peer checkpoint: toàn bộ quyết định hiện hành áp dụng, kể cả mảng rỗng.
+   * Packet cũ: chỉ những quyết định Thread chưa có. */
   decisions?: Decision[];
   expectedResult: string;
   /** Phần App không gửi lại vì đã có trong Thread của session nhận. */
@@ -102,7 +115,8 @@ export interface Snapshot {
 export type LeadCommand =
   /** Mỗi module có một Peer: lần đầu App tạo, các lần sau dùng lại Thread của Peer đó. */
   | { type: "assign_module"; moduleId: string; message: string; expectedResult: string;
-      contextRefs?: string[]; model?: string; effort?: string }
+      contextRefs?: string[]; constraints?: string[]; previousContext?: PreviousContextNote[];
+      model?: string; effort?: string }
   | { type: "record_decision"; topic: string; decision: string; rationale: string;
       affects: string[]; evidenceRefs?: string[] }
   | { type: "spawn_discovery"; message: string; expectedResult: string;
