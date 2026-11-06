@@ -63,7 +63,7 @@ sequenceDiagram
 - Discovery và Lead đọc App Settings mỗi turn; giá trị trống dùng Codex default. Peer đóng băng settings khi spawn.
 - `model/list` cấp model/effort catalog. Chỉ Lead có sáu dynamic tools `update_task_brief`, `record_decision`, `spawn_discovery`, `send_discovery`, `assign_module`, `finish`, với `callId` chống replay.
 - Mỗi module có đúng một Peer trong conversation: `assign_module(moduleId)` tạo Peer ở lần đầu, các lần sau dùng lại Thread của Peer đó. Peer chỉ sửa module của mình (ràng buộc bằng `instructions/peer.md`, không bằng sandbox).
-- Decision Log (`Conversation.decisions`) lưu append-only các quyết định Lead ghi bằng `record_decision`. Quyết định hiện hành của một `topic` là bản ghi cuối. Khi giao việc, App đính kèm vào Context Packet các quyết định hiện hành có `affects` chứa module của Peer mà Thread chưa có (`decisions`); quyết định đã có nằm ở `omitted.decisionIds`. Discovery không nhận quyết định. App chỉ lưu và chuyển, không đánh giá quyết định.
+- Decision Log (`Conversation.decisions`) lưu append-only các quyết định Lead ghi bằng `record_decision`. Quyết định hiện hành của một `topic` là bản ghi cuối. Mỗi assignment mới của Peer chốt toàn bộ quyết định có `affects` chứa module (`decisions`), kể cả `[]`; snapshot này thay danh sách quyết định trước đó của Peer. Khi một topic không còn áp dụng cho module, assignment tiếp theo có danh sách không chứa topic đó. Không sửa packet đã queued/running. Discovery không nhận quyết định. App chỉ lưu và chuyển, không đánh giá quyết định.
 - Không thêm parser/JSON protocol, outputSchema fallback, approval gate hoặc trạng thái task mới.
 
 CI dùng fake Codex transport; cần E2E với Codex CLI/app-server phiên bản thực tế để xác minh `runtimeWorkspaceRoots`.
@@ -75,21 +75,29 @@ Lead routeLeadTool()
   → update_task_brief(brief)
       → validate evidenceRefs hợp lệ và không dùng Discovery/Lead làm chứng cứ verified
       → Conversation.taskBrief trong SQLite
-  → spawn/send(message, expectedResult, contextRefs?)
-      → message: chỉ phần việc MỚI; không tóm tắt lại yêu cầu gốc, Brief hay báo cáo
-      → assignmentPacket(target) chỉ gửi phần Thread của target chưa có:
-          originalRequest  → chỉ ở lượt đầu của session
-          taskBrief        → chỉ khi khác bản đã gửi lần trước
+  → assign_module(message, expectedResult, contextRefs?, constraints?, previousContext?)
+      → message: việc mới đủ rõ; có thể nhắc ràng buộc trực tiếp, không chép toàn lịch sử
+      → assignmentPacket(Peer):
+          peerCheckpoint   → luôn có assignmentId, moduleId, continues nếu có,
+                             goal/acceptanceCriteria từ Brief và constraints do Lead viết
+          decisions        → toàn bộ quyết định hiện hành áp dụng, kể cả []
+          originalRequest  → khi session chưa có lượt completed nhận yêu cầu gốc
           sources          → contextRefs trừ: yêu cầu gốc, nguồn đã gửi,
                              báo cáo do chính session đó tạo
-          omitted          → Brief không đổi / sourceIds không gửi lại
+          previousContext  → metadata nguồn đã có và summary do Lead cung cấp
+  → spawn_discovery/send_discovery(message, expectedResult, contextRefs?)
+      → assignmentPacket(Discovery): original/Brief theo delta, nguồn được chọn
       → Message.contextPacket + Delivery trong một SQLite transaction
       → tool result báo Lead các nguồn không gửi lại
-  → Coordinator: instructions (quy tắc vai trò) + prompt (Context Packet + LEAD_MESSAGE)
+  → Coordinator: instructions (quy tắc vai trò) + prompt từ packet bất biến và việc mới
       → Codex thread/start|resume.developerInstructions + turn/start (Thread độc lập)
 ```
 
-"Đã có trong Thread" chỉ tính delivery `completed`. Delivery `interrupted/failed/queued` có thể chưa tới Thread, nên lượt sau gửi lại đầy đủ.
+"Đã có trong Thread" chỉ tính delivery `completed` và báo cáo do chính session tạo. Nguồn từ delivery `interrupted/queued` chưa được xem là đã nhận. Peer checkpoint không dedup mục tiêu/tiêu chí/constraints/quyết định nên queued A → B → A vẫn giữ đúng từng snapshot. `previousContext` chỉ được trỏ nguồn trong contextRefs đã có trong Thread; kiểm tra nguồn/tóm tắt và tạo delivery cùng transaction. `constraints` không tự kế thừa từ assignment trước.
+
+Prompt Peer mới gồm `ASSIGNMENT`, `MODULE`, `CONTINUES` khi có, `ORIGINAL_USER_REQUEST` khi cần, `CURRENT_GOAL`, `ACCEPTANCE_CRITERIA`, `CURRENT_CONSTRAINTS`, `ACTIVE_DECISIONS`, `PREVIOUS_CONTEXT`, `NEW_SUPPORTING_CONTEXT`, `WORK`, `EXPECTED_RESULT`. Mục tiêu dùng yêu cầu gốc khi chưa có Brief, tiêu chí rỗng được ghi rõ chưa được Lead cung cấp. Toàn bộ đánh giá `verified/preliminary/unknowns/nextDecision` không tự gửi lại cho Peer; Lead chọn nguồn và phần việc cần dùng. App không đánh giá nội dung hoặc tóm tắt báo cáo.
+
+Packet cũ chưa có `peerCheckpoint` vẫn được render theo định dạng cũ; không lấy Brief/decisions mới để tái tạo packet cũ. Instructions Peer giải thích cả định dạng mới và packet cũ. Demo [hai lượt](PEER_PROMPT_DEMO.md) được sinh từ JSON-RPC request qua app-server giả; regression đối chiếu nguyên văn demo với payload chuẩn hóa UUID/timestamp. Đây không phải Codex E2E thật.
 
 Lead nhận `NEW_EVENTS` kèm message ID để chọn `contextRefs`; các event trước nằm trong chính Codex Thread. Prompt mỗi lượt của Lead chỉ gồm `PEER_SESSIONS`, `DISCOVERY_SESSIONS`, `NEW_EVENTS`; quy tắc, `MODULES`, `DISCOVERY_ENABLED` nằm trong `developerInstructions` và được làm mới ở mỗi `thread/resume`. Task Brief không gửi lại cho Lead vì Lead là bên duy nhất ghi nó. UI mở Context Packet đã lưu để xác minh phần thực tế đã chuyển giao. Nguồn `discovery-preliminary` luôn là nhận định sơ bộ; App không đánh giá chất lượng nội dung Peer hay chứng thực kết luận Lead.
 

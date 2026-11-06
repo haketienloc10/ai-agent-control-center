@@ -63,7 +63,7 @@ test("assign_module keeps exactly one Peer per module and reuses its Thread", ()
   } finally { ctx.cleanup(); }
 });
 
-test("Decisions reach only affected Peers, once, and a superseding decision is resent", () => {
+test("Every Peer assignment snapshots all current applicable decisions", () => {
   const ctx = fixture();
   try {
     const c = ctx.store.createConversation("Todo");
@@ -88,10 +88,9 @@ test("Decisions reach only affected Peers, once, and a superseding decision is r
     ctx.store.routeLeadTool(lead2.id, "a2",
       { type: "assign_module", moduleId: "api", message: "Đổi response", expectedResult }, modules);
     const api = lastPacket(ctx.store, "api");
-    assert.deepEqual(api.decisions?.map(d => d.decision), ["GET /api/todos trả { todos }"]);
+    assert.deepEqual(api.decisions?.map(d => d.decision), ["GET /api/todos trả { todos }", "data/todos.json"]);
     assert.equal(api.decisions?.[0].supersedes, ctx.store.conversation(c.id)!.decisions![0].id);
-    assert.deepEqual(api.omitted?.decisionIds, [ctx.store.conversation(c.id)!.decisions![1].id],
-      "unchanged storage decision is already in the Thread");
+    assert.equal(api.omitted?.decisionIds, undefined, "unchanged decisions are repeated in the checkpoint");
     assert.equal(ctx.store.conversation(c.id)!.decisions!.length, 3, "Decision Log is append-only");
   } finally { ctx.cleanup(); }
 });
@@ -115,7 +114,28 @@ test("record_decision validates modules and evidence atomically; Discovery gets 
   } finally { ctx.cleanup(); }
 });
 
-test("Peer prompt carries decisions as data, and only once per Thread", async () => {
+test("An empty decision snapshot clears decisions no longer applying to a module without rewriting queued packets", () => {
+  const ctx = fixture();
+  try {
+    const c = ctx.store.createConversation("Todo");
+    const lead1 = startLead(ctx.store, c.id);
+    ctx.store.routeLeadTool(lead1.id, "d1", decision("format", "Cũ", ["api"]), modules);
+    ctx.store.routeLeadTool(lead1.id, "a1", { type: "assign_module", moduleId: "api", message: "Làm", expectedResult }, modules);
+    const first = lastPacket(ctx.store, "api");
+    ctx.store.completeLead(lead1.id, ""); runPeer(ctx.store, "api", "Xong");
+    const lead2 = startLead(ctx.store, c.id);
+    ctx.store.routeLeadTool(lead2.id, "queued-old", { type: "assign_module", moduleId: "api", message: "Bổ sung", expectedResult }, modules);
+    const queued = lastPacket(ctx.store, "api");
+    ctx.store.routeLeadTool(lead2.id, "d2", decision("format", "Mới chỉ cho Web", ["web"]), modules);
+    ctx.store.routeLeadTool(lead2.id, "a2", { type: "assign_module", moduleId: "api", message: "Theo snapshot mới", expectedResult }, modules);
+    assert.deepEqual(lastPacket(ctx.store, "api").decisions, []);
+    assert.deepEqual(queued.decisions, first.decisions);
+    const queuedMessage = ctx.store.snapshot().messages.find(m => m.id === queued.peerCheckpoint!.assignmentId)!;
+    assert.deepEqual(queuedMessage.contextPacket, queued, "new decisions never mutate earlier assignments");
+  } finally { ctx.cleanup(); }
+});
+
+test("Peer prompt repeats active decisions as data on the same Thread", async () => {
   const dir = mkdtempSync(join(tmpdir(), "aacc-ownership-runtime-"));
   const store = new CoordinationStore(dir);
   const config: WorkspaceConfig = { lead: { cwd: "/repo/lead" },
@@ -145,9 +165,9 @@ test("Peer prompt carries decisions as data, and only once per Thread", async ()
       if (Date.now() - start > 5000) throw new Error("Peer turns did not run");
       await new Promise(resolve => setTimeout(resolve, 10));
     }
-    assert.match(prompts[0], /DECISIONS_FROM_LEAD: \[\{"id":"[^"]+","topic":"api-contract","decision":"GET \/api\/todos"/);
-    assert.doesNotMatch(prompts[1], /DECISIONS_FROM_LEAD/);
-    assert.match(prompts[1], /DECISIONS_ALREADY_IN_THREAD: \["[^"]+"\]/);
+    assert.match(prompts[0], /ACTIVE_DECISIONS:\n- [^\n]+ · api-contract\n  GET \/api\/todos/);
+    assert.match(prompts[1], /ACTIVE_DECISIONS:\n- [^\n]+ · api-contract\n  GET \/api\/todos/);
+    assert.doesNotMatch(prompts[1], /DECISIONS_ALREADY_IN_THREAD/);
     assert.equal(store.snapshot().sessions.filter(s => s.role === "peer").length, 1);
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 });

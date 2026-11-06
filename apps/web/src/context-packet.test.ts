@@ -98,6 +98,27 @@ test("Context Packet delta shows what the Thread already holds instead of resend
   assert.match(html, /Không gửi lại \(đã có trong Thread\): peer-report-1/);
   assert.doesNotMatch(html, /Tạo Todo List với backend storage/);
 });
+
+test("Peer checkpoint trace shows repeated goal, criteria, constraints, active decisions and Lead source notes", () => {
+  const checkpoint: ContextPacket = {
+    peerCheckpoint: { assignmentId: "api-02", moduleId: "api", continues: "api-01",
+      goal: "Thêm dueDate", acceptanceCriteria: ["Dữ liệu cũ vẫn đọc được"], constraints: ["Không chuyển timezone"] },
+    sources: [], expectedResult: "Báo ca invalid date",
+    previousContext: [{ messageId: "r1", from: "peer", kind: "peer-report", createdAt: time,
+      summary: "Lead đánh giá còn thiếu validation" }],
+    decisions: [{ id: "d1", topic: "date-format", decision: "YYYY-MM-DD", rationale: "Định dạng chung",
+      affects: ["api"], evidenceRefs: [], createdAt: time }]
+  };
+  const html = renderToStaticMarkup(createElement(ContextPacketView, { packet: checkpoint }));
+  for (const content of ["ASSIGNMENT · api-02", "CONTINUES: api-01", "CURRENT_GOAL", "Thêm dueDate",
+    "ACCEPTANCE_CRITERIA", "Dữ liệu cũ vẫn đọc được", "CURRENT_CONSTRAINTS", "Không chuyển timezone",
+    "ACTIVE_DECISIONS", "YYYY-MM-DD", "PREVIOUS_CONTEXT", "r1", "peer-report", "Lead đánh giá còn thiếu validation",
+    "NEW_SUPPORTING_CONTEXT", "Báo ca invalid date"]) assert.ok(html.includes(content), content);
+  assert.doesNotMatch(html, /TASK_BRIEF_FROM_LEAD: không đổi|Quyết định đã có trong Thread/);
+  const empty = renderToStaticMarkup(createElement(ContextPacketView, { packet: { ...checkpoint, decisions: [] } }));
+  assert.match(empty, /Không có quyết định áp dụng cho module trong assignment này/);
+  assert.doesNotMatch(empty, /YYYY-MM-DD/);
+});
 test("Decision Log opens inside the Lead card; packets show new and already-held decisions", () => {
   const first: Decision = { id: "dec-1", topic: "api-contract", decision: "GET /api/todos",
     rationale: "Hai module dùng chung", affects: ["api", "web"], evidenceRefs: [], createdAt: time };

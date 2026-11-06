@@ -71,7 +71,33 @@ function peerInstructions(config: WorkspaceConfig, session: AgentSession, dir: s
   ]);
 }
 function peerPrompt(message: Message): string {
-  return [...packetParts(workerPacket(message)), "LEAD_MESSAGE: " + message.text].join("\n\n");
+  const packet = workerPacket(message);
+  const checkpoint = packet.peerCheckpoint;
+  // Giữ nguyên packet cũ đã queued; không tái tạo context bằng trạng thái mới hơn.
+  if (!checkpoint) return [...packetParts(packet), "LEAD_MESSAGE: " + message.text].join("\n\n");
+  const list = (items: string[], empty: string) => items.length
+    ? items.map(item => "- " + item.replaceAll("\n", "\n  ")).join("\n") : empty;
+  return [
+    "ASSIGNMENT: " + checkpoint.assignmentId,
+    "MODULE: " + checkpoint.moduleId,
+    ...(checkpoint.continues ? ["CONTINUES: " + checkpoint.continues] : []),
+    ...(packet.originalRequest ? ["ORIGINAL_USER_REQUEST:\n" + packet.originalRequest.text] : []),
+    "CURRENT_GOAL:\n" + checkpoint.goal,
+    "ACCEPTANCE_CRITERIA:\n" + list(checkpoint.acceptanceCriteria, "Lead chưa cung cấp tiêu chí hoàn thành."),
+    "CURRENT_CONSTRAINTS:\n" + list(checkpoint.constraints, "Không có ràng buộc bổ sung do Lead cung cấp."),
+    "ACTIVE_DECISIONS:\n" + list((packet.decisions ?? []).map(d =>
+      d.id + " · " + d.topic + "\n" + d.decision +
+      (d.evidenceRefs.length ? "\nCăn cứ: " + d.evidenceRefs.join(", ") : "")),
+      "Không có quyết định áp dụng cho module trong assignment này."),
+    "PREVIOUS_CONTEXT:\n" + list((packet.previousContext ?? []).map(source =>
+      source.messageId + " · " + source.kind + " · " + source.from + " · " + source.createdAt +
+      "\n" + (source.summary ?? "Nội dung đã có trong Thread; Lead không cung cấp tóm tắt.")), "Không có nguồn cũ được chọn."),
+    "NEW_SUPPORTING_CONTEXT:\n" + (packet.sources.length ? packet.sources.map(source =>
+      source.messageId + " · " + source.kind + " · " + source.from + " · " + source.createdAt + "\n" + source.text
+    ).join("\n\n") : "Không có nguồn mới."),
+    "WORK:\n" + message.text,
+    "EXPECTED_RESULT:\n" + packet.expectedResult
+  ].join("\n\n");
 }
 
 /** Queued event deliveries wake idle sessions; no Lead polling turn is scheduled. */
