@@ -163,7 +163,7 @@ test("send_discovery only works in a new Lead turn after the prior Discovery rep
     assert.throws(() => ctx.store.routeLeadTool(leadA.id, "too-early", cmd, [], true),
       /Kết thúc Lead turn/);
     assert.throws(() => ctx.store.routeLeadTool(leadB.id, "foreign", cmd, [], true),
-      /Discovery đang chạy/);
+      /Discovery session/);
     ctx.store.completeLead(leadA.id, "");
     ctx.store.completeDiscovery(original.id, "Đã khảo sát");
     assert.equal(ctx.store.queued().filter(item => item.sessionId === a.leadSessionId).length, 1);
