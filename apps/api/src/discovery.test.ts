@@ -55,7 +55,8 @@ test("New tasks begin with Lead; only Lead can spawn optional Discovery", () => 
     assert.equal(ctx.store.snapshot().sessions.filter(s => s.role === "discovery").length, 0);
     assert.equal(ctx.store.queued()[0].sessionId, task.leadSessionId);
     const lead = startLead(ctx.store, task.id);
-    assert.throws(() => spawn(ctx.store, lead.id), /chưa được cấu hình/);
+    assert.throws(() => ctx.store.routeLeadTool(lead.id, "disabled",
+      { type: "spawn_discovery", message: "Khảo sát" }, [], false), /chưa được cấu hình/);
     const text = spawn(ctx.store, lead.id, "spawn-enabled");
     assert.match(text, /sessionId=/);
     const d = discoverySession(ctx.store);
