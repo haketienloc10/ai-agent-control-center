@@ -7,7 +7,7 @@ export interface WorkspaceConfig {
 }
 /** Giá trị bỏ trống sẽ kế thừa cấu hình Codex. */
 export interface ModelSelection { model?: string; effort?: string; }
-export interface AppSettings { lead: ModelSelection; peer: ModelSelection; }
+export interface AppSettings { lead: ModelSelection; peer: ModelSelection; discovery: ModelSelection; }
 export interface CodexModelOption {
   id: string; displayName: string;
   defaultReasoningEffort?: string;

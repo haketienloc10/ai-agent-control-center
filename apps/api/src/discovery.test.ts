@@ -189,3 +189,33 @@ test("Workspace config validates independent discovery cwd, mode and selection",
     assert.throws(() => loadWorkspaceConfig(path), /discovery.model/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+
+test("Discovery App Settings override workspace config per field when the Discovery turn starts", async () => {
+  const ctx = fixture();
+  const captured: Array<{ role: string; model?: string; effort?: string }> = [];
+  const runtime: AgentRuntime = {
+    async run(session, _cwd, _prompt, hooks, selection) {
+      hooks.onThread(session.id + "-thread");
+      hooks.onTurn(session.id + "-turn");
+      captured.push({ role: session.role, model: selection?.model, effort: selection?.effort });
+      return session.role === "discovery" ? "Sơ bộ: module API" : "Đã nhận báo cáo";
+    }
+  };
+  try {
+    const task = ctx.store.createConversation("Khảo sát API", undefined, true);
+    ctx.store.updateSettings({
+      lead: { model: "lead-model", effort: "medium" },
+      discovery: { model: "ui-model" },
+      peer: { model: "peer-model" }
+    });
+    new Coordinator(config, ctx.store, runtime);
+    await until(() => ctx.store.snapshot().messages.some(m => m.text === "Đã nhận báo cáo"));
+    assert.equal(ctx.store.conversation(task.id)?.status, "active");
+    assert.deepEqual(captured, [
+      { role: "discovery", model: "ui-model", effort: "low" },
+      { role: "lead", model: "lead-model", effort: "medium" }
+    ]);
+    assert.equal(ctx.store.queued().length, 0);
+  } finally { ctx.cleanup(); }
+});

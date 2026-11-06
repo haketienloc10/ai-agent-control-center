@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { CoordinationStore } from "./coordination-store.js";
 
 function fixture() {
@@ -175,7 +176,7 @@ test("Unknown module and foreign session are rejected before dispatch", () => {
 test("App Settings persist; spawn override and defaults are frozen on Peer sessions", () => {
   const ctx = fixture();
   try {
-    assert.deepEqual(ctx.store.snapshot().settings, { lead: {}, peer: {} });
+    assert.deepEqual(ctx.store.snapshot().settings, { lead: {}, peer: {}, discovery: {} });
     ctx.store.updateSettings({
       lead: { model: "lead-model", effort: "high" },
       peer: { model: "peer-default", effort: "medium" }
@@ -211,7 +212,8 @@ test("App Settings persist; spawn override and defaults are frozen on Peer sessi
     ctx.reopen();
     assert.deepEqual(ctx.store.settings(), {
       lead: { model: "lead-new", effort: "low" },
-      peer: { model: "peer-new", effort: "high" }
+      peer: { model: "peer-new", effort: "high" },
+      discovery: {}
     });
     assert.deepEqual([ctx.store.session(peers[0].id)?.model, ctx.store.session(peers[0].id)?.effort],
       ["peer-special", "xhigh"]);
@@ -223,12 +225,12 @@ test("App Settings validate transport and empty values inherit Codex without aff
   const ctx = fixture();
   try {
     ctx.store.updateSettings({ lead: { model: "", effort: "" }, peer: {} });
-    assert.deepEqual(ctx.store.settings(), { lead: {}, peer: {} });
+    assert.deepEqual(ctx.store.settings(), { lead: {}, peer: {}, discovery: {} });
     assert.throws(() => ctx.store.updateSettings({ lead: { model: " bad model" }, peer: {} }),
       /model không hợp lệ/);
     assert.throws(() => ctx.store.updateSettings({ lead: {}, peer: { effort: 123 } }),
       /effort không hợp lệ/);
-    assert.deepEqual(ctx.store.settings(), { lead: {}, peer: {} });
+    assert.deepEqual(ctx.store.settings(), { lead: {}, peer: {}, discovery: {} });
     const c = ctx.store.createConversation("Todo");
     const lead = ctx.store.queued()[0];
     ctx.store.startDelivery(lead.id);
@@ -243,4 +245,67 @@ test("App Settings validate transport and empty values inherit Codex without aff
     assert.equal(ctx.store.conversation(c.id)?.status, "finished");
     assert.equal(ctx.store.queued().length, 0, "PR13 superseded queued deliveries after finish");
   } finally { ctx.cleanup(); }
+});
+
+
+
+test("Discovery Model/Effort App Settings validate and persist independently of Lead/Peer", () => {
+  const ctx = fixture();
+  try {
+    ctx.store.updateSettings({
+      lead: { model: "lead-current", effort: "medium" },
+      discovery: { model: "discovery-custom", effort: "high" },
+      peer: { model: "peer-current", effort: "low" }
+    });
+    assert.deepEqual(ctx.store.settings().discovery, { model: "discovery-custom", effort: "high" });
+    assert.throws(() => ctx.store.updateSettings({
+      lead: {}, peer: {}, discovery: { model: "invalid model" }
+    }), /model không hợp lệ/);
+    assert.throws(() => ctx.store.updateSettings({
+      lead: {}, peer: {}, discovery: { effort: "bad effort" }
+    }), /effort không hợp lệ/);
+    assert.deepEqual(ctx.store.settings().discovery, { model: "discovery-custom", effort: "high" });
+    ctx.reopen();
+    assert.deepEqual(ctx.store.settings().discovery, { model: "discovery-custom", effort: "high" });
+    ctx.store.updateSettings({
+      lead: { model: "lead-current" },
+      peer: {},
+      discovery: { model: "", effort: "" }
+    });
+    assert.deepEqual(ctx.store.settings().discovery, {});
+    assert.equal(ctx.store.settings().lead.model, "lead-current");
+  } finally { ctx.cleanup(); }
+});
+
+test("Old SQLite snapshots without Discovery settings migrate to an empty selection", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aacc-discovery-settings-migration-"));
+  let store: CoordinationStore | undefined;
+  try {
+    store = new CoordinationStore(dir);
+    store.createConversation("Legacy");
+    store.close();
+    store = undefined;
+
+    const db = new DatabaseSync(join(dir, "coordination.sqlite"));
+    try {
+      const existing = db.prepare("SELECT body FROM snapshot WHERE id = 1")
+        .get() as { body: string };
+      const snapshot = JSON.parse(existing.body) as {
+        settings: { lead: { model?: string }; peer: Record<string, never>; discovery?: object }
+      };
+      snapshot.settings = { lead: { model: "legacy-lead" }, peer: {} };
+      db.prepare("UPDATE snapshot SET body = ? WHERE id = 1").run(JSON.stringify(snapshot));
+    } finally { db.close(); }
+
+    store = new CoordinationStore(dir);
+    assert.deepEqual(store.settings(), {
+      lead: { model: "legacy-lead" }, peer: {}, discovery: {}
+    });
+    store.close();
+    store = new CoordinationStore(dir);
+    assert.deepEqual(store.settings().discovery, {});
+  } finally {
+    store?.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

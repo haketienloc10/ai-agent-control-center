@@ -12,7 +12,7 @@ import "./style.css";
 
 const empty: Snapshot = {
   modules: [], conversations: [], sessions: [], messages: [], deliveries: [],
-  settings: { lead: {}, peer: {} }
+  settings: { lead: {}, peer: {}, discovery: {} }
 };
 
 async function api<T>(path: string, body?: unknown): Promise<T> {

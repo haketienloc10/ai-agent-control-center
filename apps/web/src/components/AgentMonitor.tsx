@@ -77,6 +77,8 @@ export function AgentMonitor({ data, conversation, selectedPeerId, onSelectPeer 
               <span className={"status-chip " + sessionStatus(discovery).tone}>
                 {sessionStatus(discovery).label}</span></span>
             <small>Khám phá sơ bộ · read-only · session riêng</small>
+            <small>Model yêu cầu: {data.settings.discovery?.model || "Mặc định Discovery"}</small>
+            <small>Effort: {data.settings.discovery?.effort || "Mặc định Discovery"}</small>
             <small className="turn-meta">{lastTurnText(discovery, data)}</small>
           </span>
           <span className="expand-chevron" aria-hidden="true">

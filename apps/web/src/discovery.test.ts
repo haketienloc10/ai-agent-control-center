@@ -15,7 +15,7 @@ const conversation: Conversation = {
 function fixture(): Snapshot {
   return {
     conversations: [conversation], modules: [],
-    settings: { lead: {}, peer: {} },
+    settings: { lead: {}, peer: {}, discovery: {} },
     sessions: [
       { id: "lead", conversationId: "todo", role: "lead", label: "Lead",
         status: "idle", createdAt: time, updatedAt: time },
@@ -41,6 +41,7 @@ test("Discovery report is hidden by default, routed to Lead, and visible in Disc
   const data = fixture();
   data.sessions[1].status = "idle";
   data.deliveries[0].status = "completed";
+  data.settings.discovery = { model: "discovery-model", effort: "low" };
   data.messages.push({
     id: "report", conversationId: "todo", from: "discovery", to: "lead",
     discoverySessionId: "discovery", text: "## Tổng quan\n\n- **API** đã xác minh",
@@ -60,6 +61,8 @@ test("Discovery report is hidden by default, routed to Lead, and visible in Disc
     data, conversation, selectedPeerId: "discovery", onSelectPeer: () => {}
   }));
   assert.match(monitor, /Discovery Session/);
+  assert.match(monitor, /Model yêu cầu: .*discovery-model/);
+  assert.match(monitor, /Effort: .*low/);
   assert.match(monitor, /Báo cáo sơ bộ gửi Lead/);
   assert.match(monitor, /<strong>API<\/strong>/);
 });

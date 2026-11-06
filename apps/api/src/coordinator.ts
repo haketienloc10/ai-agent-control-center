@@ -134,7 +134,11 @@ export class Coordinator {
       const selection = session.role === "lead"
         ? this.store.settings().lead
         : session.role === "discovery"
-          ? { model: this.config.discovery?.model, effort: this.config.discovery?.effort }
+          ? {
+              // App Settings take precedence; old workspace config remains a fallback.
+              model: this.store.settings().discovery.model ?? this.config.discovery?.model,
+              effort: this.store.settings().discovery.effort ?? this.config.discovery?.effort
+            }
           : { model: session.model, effort: session.effort };
       const readableRoots = session.role === "discovery"
         ? [...new Set([cwd, ...this.config.modules.map(m => m.path)])]

@@ -59,9 +59,9 @@ Lead read-only; Peer sửa source trực tiếp. Không có OS isolation khi YOL
 
 ## Model/effort Settings trên event-driven lifecycle
 
-- `Snapshot.settings` lưu `AppSettings.lead` và `AppSettings.peer`. `CoordinationStore.updateSettings()` xác thực trường transport rồi lưu vào SQLite. Snapshot PR #13 cũ được bổ sung settings mặc định khi mở.
+- `Snapshot.settings` lưu `AppSettings.lead`, `AppSettings.discovery` và `AppSettings.peer`. `CoordinationStore.updateSettings()` xác thực trường transport rồi lưu vào SQLite. SQLite snapshot cũ chưa có Discovery được bổ sung `discovery: {}` khi mở.
 - `GET /api/models` dùng `model/list` và phân trang để lấy model/effort hỗ trợ; UI vẫn cho nhập model ID khi catalog lỗi.
-- `Coordinator.execute()` đọc Lead defaults **mỗi turn mới**. Peer dùng `session.model/effort` đã chốt khi spawn, không bị thay đổi khi App Settings cập nhật.
+- `Coordinator.execute()` đọc Lead defaults **mỗi turn mới**; Discovery lấy `App Settings Discovery → discovery workspace config → Codex default` cho từng trường khi Discovery bắt đầu. Peer dùng `session.model/effort` đã chốt khi spawn, không bị thay đổi khi App Settings cập nhật.
 - `routeLeadTool(spawn_peer)` áp dụng thứ tự `override → Peer default → Codex default` cho từng trường độc lập. `send_peer` chỉ giao công việc, không hỏi trạng thái.
 - `CodexAgentRuntime.run()` truyền model ở `thread/start` và model/effort ở `turn/start`. Dynamic tools là giao thức điều phối duy nhất. Không thêm legacy JSON parser, schema fallback, timer 10 phút hay status polling.
 - Không thay đổi PR #13: task `generation`, `wakeLead`, `superseded`, `finish`, chống Peer result đến muộn vẫn có hiệu lực.

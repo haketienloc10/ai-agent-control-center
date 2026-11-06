@@ -9,7 +9,7 @@ import type {
 
 type Data = Omit<Snapshot, "modules">;
 const now = () => new Date().toISOString();
-const emptySettings = (): AppSettings => ({ lead: {}, peer: {} });
+const emptySettings = (): AppSettings => ({ lead: {}, peer: {}, discovery: {} });
 /** Validate transport values; Codex decides whether a model supports the selection. */
 export function normalizeSelection(value: unknown): ModelSelection {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -34,7 +34,11 @@ export function normalizeSettings(value: unknown): AppSettings {
     throw new Error("App Settings phải là object");
   }
   const input = value as Record<string, unknown>;
-  return { lead: normalizeSelection(input.lead), peer: normalizeSelection(input.peer) };
+  return {
+    lead: normalizeSelection(input.lead),
+    peer: normalizeSelection(input.peer),
+    discovery: normalizeSelection(input.discovery ?? {})
+  };
 }
 const text = (value: unknown, label: string, limit = 20000): string => {
   if (typeof value !== "string" || !value.trim() || value.length > limit) {
@@ -100,8 +104,10 @@ export class CoordinationStore extends EventEmitter {
     const row = this.db.prepare("SELECT body FROM snapshot WHERE id = 1").get() as { body: string } | undefined;
     this.state = row ? JSON.parse(row.body) as Data
       : { conversations: [], sessions: [], messages: [], deliveries: [], settings: emptySettings() };
-    const missingSettings = !this.state.settings;
+    const missingSettings = !this.state.settings || !this.state.settings.discovery;
     this.state.settings ??= emptySettings();
+    // Existing SQLite snapshots from Lead/Peer-only versions have no Discovery settings.
+    this.state.settings.discovery ??= {};
     // Never replay turns already started before a crash. Queued deliveries were not started.
     let changed = false;
     for (const delivery of this.state.deliveries) {

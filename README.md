@@ -47,9 +47,9 @@ link dùng kiểm tra URL mặc định của renderer và mở an toàn, hình 
 
 ## App Settings: model và reasoning effort
 
-Mở **App Settings · Model / Effort** ở thanh bên để đặt cấu hình riêng cho Lead và Peer. UI lấy model và effort gợi ý từ Codex `model/list` qua `GET /api/models`. Khi catalog không khả dụng, người dùng vẫn có thể nhập model ID thủ công. Trường rỗng kế thừa cấu hình mặc định của Codex.
+Mở **App Settings · Model / Effort** ở thanh bên để đặt cấu hình riêng cho Lead, Discovery và Peer. UI lấy model và effort gợi ý từ Codex `model/list` qua `GET /api/models`. Khi catalog không khả dụng, người dùng vẫn có thể nhập model ID thủ công. Trường rỗng kế thừa cấu hình mặc định của Codex.
 
-Settings lưu bền trong SQLite qua `PUT /api/settings` và được đưa vào `GET /api/snapshot`. **Lead defaults** áp dụng mỗi lượt Lead tiếp theo, kể cả Thread đang tồn tại. **Peer defaults** được chốt lúc `spawn_peer`; Peer đã tồn tại không thay đổi theo Settings mới.
+Settings lưu bền trong SQLite qua `PUT /api/settings` và được đưa vào `GET /api/snapshot`. **Lead defaults** áp dụng mỗi lượt Lead tiếp theo, kể cả Thread đang tồn tại. **Discovery defaults** áp dụng khi Discovery bắt đầu turn mới (không khởi động lại Discovery đang chạy). **Peer defaults** được chốt lúc `spawn_peer`; Peer đã tồn tại không thay đổi theo Settings mới.
 
 Lead có thể override `model` và `effort` khi gọi dynamic tool `spawn_peer`. Thứ tự cho từng trường độc lập: `spawn_peer override → Peer App Settings → Codex default`. Codex kiểm tra model/effort có được hỗ trợ hay không; app không tự tạo model IDs hoặc đánh giá chất lượng đầu ra.
 
@@ -59,7 +59,7 @@ Runtime truyền `model` trong `thread/start` và `model`/`effort` trong `turn/s
 
 - Khai báo `discovery.cwd` riêng trong `config/workspace.local.json` để bật Discovery. Nếu không khai báo, luồng Lead ↔ Peer cũ giữ nguyên.
 - `discovery.mode`: `auto` (mặc định khi đã khai báo, chạy với task mới; bỏ qua những yêu cầu thuần hỏi trạng thái/tiến độ), `always` (mọi task mới), `off` (tắt). **Không chạy lại theo từng Lead turn hoặc khi người dùng tiếp tục conversation cũ.** Cách nhận diện `auto` là heuristic đơn giản, không phải phân loại bằng LLM.
-- `discovery.model` và `discovery.effort` tùy chọn, độc lập với Lead/Peer Settings; để trống sẽ kế thừa Codex mặc định.
+- Discovery có lựa chọn model và reasoning effort riêng trong **App Settings · Model & Effort**, lưu SQLite như Lead/Peer. Khi giá trị App Settings để trống, vẫn hỗ trợ `discovery.model` và `discovery.effort` trong workspace config cũ làm fallback; nếu không có, kế thừa Codex mặc định. Thứ tự mỗi trường: `App Settings Discovery → discovery workspace config → Codex default`.
 - Discovery có Codex session/thread riêng với `cwd=discovery.cwd`. App-server dùng **named permissions profile** được khai báo qua `thread/start.config`, chọn bằng `thread/start.permissions`, sau đó dùng `turn/start.permissions`; `runtimeWorkspaceRoots` gồm Discovery workspace và các module. Profile cấp `read` cho `:workspace_roots` và `:minimal`, tắt network, không cấp `write`. Không dùng `readOnly.access` đã bị loại bỏ, không kết hợp `permissions` với `sandbox`/`sandboxPolicy` và không truyền CLI `--add-dir` vào JSON RPC. Cần Codex app-server hỗ trợ permission profiles và `runtimeWorkspaceRoots` (experimental API). Nếu Codex từ chối profile, Discovery báo lỗi cho Lead; app không tự hạ quyền kiểm soát đọc xuống chế độ full read.
 - Discovery chỉ đọc có chọn lọc để hiểu module, công nghệ, entry point và vùng có khả năng liên quan. **Không sửa code, truy vết sâu, phân tích root cause, tự lập kế hoạch hay quyết định thay Lead.** Discovery không có dynamic routing tools. Quy tắc thay đổi theo repository nằm trong `AGENTS.md` do Codex đọc.
 - Báo cáo Discovery là message `discovery → lead`, không phải Peer report hoặc kết quả triển khai. Lead chỉ nhận báo cáo và có thể giao Peer khảo sát sâu khi thiếu bằng chứng.
@@ -95,7 +95,7 @@ Runtime truyền `model` trong `thread/start` và `model`/`effort` trong `turn/s
 - `GET /api/health` — trạng thái Backend.
 - `GET /api/snapshot` — conversations, sessions, messages, deliveries, modules và settings.
 - `GET /api/models` — model/effort catalog do Codex app-server cung cấp.
-- `PUT /api/settings` — lưu `{"lead":{"model":"MODEL_ID","effort":"high"},"peer":{"model":"MODEL_ID","effort":"medium"}}`; dùng `""` để kế thừa Codex.
+- `PUT /api/settings` — lưu `{"lead":{"model":"MODEL_ID","effort":"high"},"discovery":{"model":"MODEL_ID","effort":"low"},"peer":{"model":"MODEL_ID","effort":"medium"}}`. Dùng `""` để kế thừa mặc định (Discovery có thể kế thừa workspace config cũ).
 - `GET /api/events` — SSE thay đổi.
 - `POST /api/conversations` — tạo task từ `{"text":"Yêu cầu"}`.
 - `POST /api/conversations/:id/messages` — gửi bổ sung cho Lead.

@@ -12,7 +12,7 @@ const peer: AgentSession = { id: "web", conversationId: "c", role: "peer",
   label: "Todo Web", moduleId: "web", status: "idle", createdAt: at, updatedAt: at };
 function fixture(): Snapshot {
   return { conversations: [{ ...c }], sessions: [{ ...lead }, { ...peer }],
-    modules: [], messages: [], deliveries: [], settings: { lead: {}, peer: {} } };
+    modules: [], messages: [], deliveries: [], settings: { lead: {}, peer: {}, discovery: {} } };
 }
 const delivery = (status: Delivery["status"]): Delivery => ({
   id: status, conversationId: "c", sessionId: "web", messageId: "msg", generation: 0,
