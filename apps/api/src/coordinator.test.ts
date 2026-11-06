@@ -9,7 +9,7 @@ import { Coordinator } from "./coordinator.js";
 import type { AgentRuntime } from "./codex-runtime.js";
 
 const config: WorkspaceConfig = {
-  lead: { cwd: "/tmp/agent-workspace", instructions: "Điều phối" },
+  lead: { cwd: "/tmp/agent-workspace" },
   modules: [{ id: "web", label: "Web", path: "/tmp/module-web" }]
 };
 async function until(check: () => boolean, timeout = 4000) {
@@ -26,15 +26,17 @@ test("Lead returns to idle after dispatch; only Peer completion starts another L
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   const runtime: AgentRuntime = {
-    async run(session, cwd, prompt, hooks) {
+    async run(session, cwd, prompt, hooks, _selection, _roots, instructions) {
       hooks.onThread(session.threadId ?? session.id + "-thread");
       hooks.onTurn(session.id + "-turn");
       if (session.role === "lead") {
         leadTurns++;
         if (leadTurns === 1) {
-          assert.match(prompt, /không gọi send_peer chỉ để hỏi trạng thái/);
+          assert.match(instructions ?? "", /không gọi assign_module chỉ để hỏi trạng thái/);
+          assert.doesNotMatch(prompt, /không gọi assign_module chỉ để hỏi trạng thái/,
+            "quy tắc cố định không lặp lại trong prompt từng lượt");
           await hooks.onLeadTool!("lead:spawn", {
-            type: "spawn_peer", moduleId: "web", message: "Create Todo UI"
+            type: "assign_module", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "web", message: "Create Todo UI"
           });
           return "Đã giao Web";
         }
@@ -78,7 +80,7 @@ test("Peer error emits an event; does not create polling loop", async () => {
       leadTurns++;
       if (leadTurns === 1) {
         await hooks.onLeadTool!("lead:spawn", {
-          type: "spawn_peer", moduleId: "web", message: "Implement UI"
+          type: "assign_module", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "web", message: "Implement UI"
         });
         return "Đã giao";
       }
@@ -95,7 +97,9 @@ test("Peer error emits an event; does not create polling loop", async () => {
     assert.equal(store.queued().filter(d => d.sessionId === c.leadSessionId).length, 0);
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
-test("Two Peers run concurrently; Lead stays idle until event", async () => {
+test("Peers of two modules run concurrently; Lead stays idle until event", async () => {
+  const twoModules: WorkspaceConfig = { ...config,
+    modules: [...config.modules, { id: "api", label: "API", path: "/tmp/module-api" }] };
   const dir = mkdtempSync(join(tmpdir(), "aacc-parallel-"));
   const store = new CoordinationStore(dir);
   let peersStarted = 0, leadTurns = 0;
@@ -109,20 +113,20 @@ test("Two Peers run concurrently; Lead stays idle until event", async () => {
         leadTurns++;
         if (leadTurns === 1) {
           await hooks.onLeadTool!("lead:a",
-            { type: "spawn_peer", moduleId: "web", message: "Task A" });
+            { type: "assign_module", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "web", message: "Task A" });
           await hooks.onLeadTool!("lead:b",
-            { type: "spawn_peer", moduleId: "web", message: "Task B" });
+            { type: "assign_module", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "api", message: "Task B" });
         }
         return "";
       }
       peersStarted++;
-      assert.equal(cwd, config.modules[0].path);
+      assert.equal(cwd, twoModules.modules.find(m => m.id === session.moduleId)?.path);
       await gate;
       return "Completed " + session.id;
     }
   };
   try {
-    new Coordinator(config, store, runtime);
+    new Coordinator(twoModules, store, runtime);
     const c = store.createConversation("Parallel work");
     await until(() => peersStarted === 2 && store.session(c.leadSessionId)?.status === "idle");
     assert.equal(leadTurns, 1);
@@ -146,7 +150,7 @@ test("Coordinator uses current Lead defaults and frozen Peer selection without p
   let peerRunning = 0;
   const captured: Array<{ role: string; model?: string; effort?: string }> = [];
   const runtime: AgentRuntime = {
-    async run(session, _cwd, prompt, hooks, selection) {
+    async run(session, _cwd, prompt, hooks, selection, _roots, instructions) {
       hooks.onThread(session.threadId ?? session.id + "-thread");
       hooks.onTurn(session.id + "-turn");
       captured.push({ role: session.role, model: selection?.model, effort: selection?.effort });
@@ -156,9 +160,9 @@ test("Coordinator uses current Lead defaults and frozen Peer selection without p
         return "Peer completed";
       }
       if (captured.filter(c => c.role === "lead").length === 1) {
-        assert.match(prompt, /không gọi send_peer chỉ để hỏi trạng thái/);
+        assert.match(instructions ?? "", /không gọi assign_module chỉ để hỏi trạng thái/);
         await hooks.onLeadTool!("lead:spawn", {
-          type: "spawn_peer", moduleId: "web", message: "Build Todo",
+          type: "assign_module", expectedResult: "Kết quả, file thay đổi, bằng chứng và lệnh kiểm chứng thực tế", moduleId: "web", message: "Build Todo",
           model: "peer-override"
         });
         return "Dispatched";
@@ -218,7 +222,6 @@ test("Failure after finish preserves finished state and reports missing finalTex
     assert.equal(store.queued().length, 0);
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
-
 
 test("Lead Codex input contains only incrementally delivered events, not App chat history", async () => {
   const dir = mkdtempSync(join(tmpdir(), "aacc-incremental-input-"));

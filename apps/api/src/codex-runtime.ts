@@ -8,8 +8,9 @@ export interface AgentRunHooks {
   onLeadTool?(callId: string, command: LeadCommand): Promise<string> | string;
 }
 export interface AgentRuntime {
+  /** `instructions` là quy tắc vai trò cố định của Thread (developerInstructions); `prompt` chỉ chứa dữ liệu của lượt này. */
   run(session: AgentSession, cwd: string, prompt: string, hooks: AgentRunHooks,
-    selection?: ModelSelection): Promise<string>;
+    selection?: ModelSelection, workspaceRoots?: string[], instructions?: string): Promise<string>;
 }
 
 /** Event-driven Codex turn; Lead actions use dynamic tools, never text/JSON envelopes. */
@@ -22,22 +23,31 @@ export class CodexAgentRuntime implements AgentRuntime {
   }
 
   async run(session: AgentSession, cwd: string, prompt: string, hooks: AgentRunHooks,
-    selection: ModelSelection = {}): Promise<string> {
+    selection: ModelSelection = {}, workspaceRoots?: string[], instructions?: string): Promise<string> {
     await this.client.start();
-    const peer = session.role === "peer";
+    const worker = session.role !== "lead";
     const safe = process.env.CODEX_SECURITY_MODE === "sandbox";
-    const approvalPolicy = peer && safe ? "on-request" : "never";
-    const sandbox = peer ? (safe ? "workspace-write" : "danger-full-access") : "read-only";
-    const sandboxPolicy = peer ? (safe
-      ? { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false }
-      : { type: "dangerFullAccess" }) : { type: "readOnly" };
+    const approvalPolicy = worker && safe ? "on-request" : "never";
+    // Lead may read/write only its own workspace by sandbox; the module boundary is an instruction.
+    const sandbox = worker ? (safe ? "workspace-write" : "danger-full-access") : "workspace-write";
+    // Discovery and Peer share the same execution policy; the caller passes Discovery's multi-module roots.
+    const roots = workspaceRoots ?? [cwd];
+    const sandboxPolicy = worker ? (safe
+      ? { type: "workspaceWrite", writableRoots: roots, networkAccess: false }
+      : { type: "dangerFullAccess" })
+      : { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false };
 
     const started: { thread: { id: string } } = session.threadId
-      ? await this.client.request("thread/resume", { threadId: session.threadId, excludeTurns: true })
+      ? await this.client.request("thread/resume", {
+          threadId: session.threadId, excludeTurns: true,
+          ...(instructions ? { developerInstructions: instructions } : {})
+        })
       : await this.client.request("thread/start", {
           cwd, approvalPolicy, sandbox,
+          ...(session.role === "discovery" ? { runtimeWorkspaceRoots: roots } : {}),
+          ...(instructions ? { developerInstructions: instructions } : {}),
           ...(selection.model ? { model: selection.model } : {}),
-          ...(peer ? {} : { dynamicTools: leadDynamicTools })
+          ...(session.role === "lead" ? { dynamicTools: leadDynamicTools } : {})
         });
     const threadId = started?.thread?.id;
     if (!threadId) throw new Error("Codex không trả về thread.id");
@@ -80,7 +90,9 @@ export class CodexAgentRuntime implements AgentRuntime {
       const id = event.id;
       void (async () => {
         try {
-          if (peer || !hooks.onLeadTool) throw new Error("Tool routing is available only to Lead");
+          if (session.role !== "lead" || !hooks.onLeadTool) {
+            throw new Error("Tool routing is available only to Lead");
+          }
           const params = event.params!;
           const args = typeof params.arguments === "string"
             ? JSON.parse(params.arguments) as unknown : params.arguments;
@@ -104,7 +116,8 @@ export class CodexAgentRuntime implements AgentRuntime {
     try {
       const turn: { turn: { id: string } } = await this.client.request("turn/start", {
         threadId, input: [{ type: "text", text: prompt }],
-        cwd, approvalPolicy, sandboxPolicy,
+        cwd, approvalPolicy,
+        sandboxPolicy,
         ...(selection.model ? { model: selection.model } : {}),
         ...(selection.effort ? { effort: selection.effort } : {})
       });

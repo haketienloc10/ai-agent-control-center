@@ -15,7 +15,7 @@ const code = [
   'if(m.params?.capabilities?.experimentalApi!==true)send({id:m.id,error:{code:-32602,message:"Missing experimentalApi"}});',
   'else send({id:m.id,result:{}});}',
   'if(m.method==="thread/start"){',
-  'if(!m.params.dynamicTools || m.params.dynamicTools.length!==3)',
+  'if(!m.params.dynamicTools || m.params.dynamicTools.length!==6)',
   'send({id:m.id,error:{code:-32602,message:"Missing dynamicTools"}});',
   'else send({id:m.id,result:{thread:{id:"lead-thread"}}});}',
   'if(m.method==="thread/resume")send({id:m.id,result:{thread:{id:m.params.threadId}}});',
@@ -24,8 +24,8 @@ const code = [
   'send({id:m.id,result:{turn:{id,status:"inProgress"}}});',
   'send({method:"item/tool/call",id:900+n,params:{',
   'threadId:m.params.threadId,turnId:id,callId:"call-"+n,',
-  'tool:n===1?"spawn_peer":"finish",arguments:n===1?',
-  '{moduleId:"web",message:"GET /api/todos returns "+JSON.stringify({todos:[{id:1}]})}:',
+  'tool:n===1?"assign_module":"finish",arguments:n===1?',
+  '{moduleId:"web",message:"GET /api/todos returns "+JSON.stringify({todos:[{id:1}]}),expectedResult:"API contract verified"}:',
   '{} }});}',
   'if(typeof m.id==="number"&&m.id>900&&m.result){',
   'if(!m.result.success){process.exit(2);}',
@@ -58,8 +58,8 @@ test("Dynamic tools dispatch nested JSON and resume the same Lead thread", async
     assert.equal(await runtime.run(session, "/workspace", "Create Web", hooks), "Turn 1 done");
     assert.equal(await runtime.run(session, "/workspace", "Finish", hooks), "Turn 2 done");
     assert.equal(session.threadId, "lead-thread");
-    assert.equal(commands[0]?.type, "spawn_peer");
-    if (commands[0]?.type === "spawn_peer") {
+    assert.equal(commands[0]?.type, "assign_module");
+    if (commands[0]?.type === "assign_module") {
       assert.match(commands[0].message, /\{"todos":\[\{"id":1\}\]\}/);
     }
     assert.deepEqual(commands[1], { type: "finish" });

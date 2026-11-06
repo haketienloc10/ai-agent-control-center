@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { AppSettings, CodexModelOption, ModelSelection } from "@aacc/contracts";
 
-const defaults: AppSettings = { lead: {}, peer: {} };
+const defaults: AppSettings = { lead: {}, peer: {}, discovery: {} };
 
 export function AgentSettingsModal({ initial, onClose, onSaved }: {
   initial: AppSettings; onClose: () => void; onSaved: () => Promise<void>;
@@ -25,14 +25,14 @@ export function AgentSettingsModal({ initial, onClose, onSaved }: {
       });
     return () => { live = false; };
   }, []);
-  const patch = (role: "lead" | "peer", key: "model" | "effort", value: string) => {
+  const patch = (role: "lead" | "peer" | "discovery", key: "model" | "effort", value: string) => {
     setSaved(false);
     setDraft(previous => ({
       ...previous,
       [role]: { ...previous[role], [key]: value }
     }));
   };
-  const modelForm = (role: "lead" | "peer", title: string, description: string) => {
+  const modelForm = (role: "lead" | "peer" | "discovery", title: string, description: string) => {
     const selection: ModelSelection = draft[role];
     const selectedModel = models.find(m => m.id === selection.model);
     const efforts = selectedModel?.supportedReasoningEfforts ?? [];
@@ -90,11 +90,12 @@ export function AgentSettingsModal({ initial, onClose, onSaved }: {
       </datalist>
       <form onSubmit={event => { event.preventDefault(); void save(); }}>
         {modelForm("lead", "Lead Agent", "Áp dụng cho các lượt Lead tiếp theo, kể cả Thread hiện tại.")}
+        {modelForm("discovery", "Discovery Agent", "Áp dụng cho các Discovery turn tiếp theo. Để trống kế thừa Codex default.")}
         {modelForm("peer", "Peer Agents", "Áp dụng khi Lead tạo Peer session mới. Peer đang tồn tại giữ cấu hình đã chọn.")}
         {error && <p role="alert" className="settings-error">{error}</p>}
         {saved && <p role="status" className="settings-saved">Đã lưu App Settings vào SQLite.</p>}
         <div className="settings-actions">
-          <button type="button" onClick={() => setDraft({ lead: {}, peer: {} })}>Dùng mặc định Codex</button>
+          <button type="button" onClick={() => setDraft({ lead: {}, peer: {}, discovery: {} })}>Dùng mặc định Codex</button>
           <button type="submit" className="primary" disabled={saving}>
             {saving ? "Đang lưu…" : "Lưu Settings"}
           </button>

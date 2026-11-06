@@ -29,7 +29,7 @@ function session(role: "lead" | "peer"): AgentSession {
     ...(role === "peer" ? { moduleId: "web" } : {}),
     createdAt: time, updatedAt: time };
 }
-test("Codex runtime starts once, resumes same thread, Lead read-only, Peer direct YOLO", async () => {
+test("Codex runtime starts once, resumes same thread, Lead writes only its workspace, Peer direct YOLO", async () => {
   const before = process.env.CODEX_SECURITY_MODE;
   delete process.env.CODEX_SECURITY_MODE;
   const client = new CodexClient(process.execPath, ["-e", fakeServer]);
@@ -45,7 +45,9 @@ test("Codex runtime starts once, resumes same thread, Lead read-only, Peer direc
     assert.equal(first.threadModel, "lead-default");
     assert.equal(first.turnModel, "lead-default");
     assert.equal(first.effort, "high");
-    assert.equal(first.sandboxPolicy.type, "readOnly");
+    assert.equal(first.sandboxPolicy.type, "workspaceWrite");
+    assert.deepEqual((first.sandboxPolicy as unknown as { writableRoots: string[] }).writableRoots,
+      ["/agent/workspace"]);
     const peer = session("peer");
     const result1 = JSON.parse(await runtime.run(peer, "/modules/web", "Create README", {
       onThread: id => { peer.threadId = id; },
@@ -71,4 +73,26 @@ test("Codex runtime starts once, resumes same thread, Lead read-only, Peer direc
     if (before === undefined) delete process.env.CODEX_SECURITY_MODE;
     else process.env.CODEX_SECURITY_MODE = before;
   }
+});
+
+const instructionServer = fakeServer
+  .replace("let threadModel;", "let threadModel; let instr;")
+  .replace("threadModel=m.params.model;", "threadModel=m.params.model;instr=m.params.developerInstructions;")
+  .replace('if(m.method==="thread/resume")send(', 'if(m.method==="thread/resume"){instr=m.params.developerInstructions;}if(m.method==="thread/resume")send(')
+  .replace("threadId:m.params.threadId,cwd:m.params.cwd,", "threadId:m.params.threadId,cwd:m.params.cwd,instr,prompt:m.params.input[0].text,");
+test("Codex runtime sends role rules as developerInstructions on thread/start and thread/resume, not in the turn input", async () => {
+  const client = new CodexClient(process.execPath, ["-e", instructionServer]);
+  const runtime = new CodexAgentRuntime(client);
+  try {
+    const peer = session("peer");
+    const hooks = { onThread: (id: string) => { peer.threadId = id; }, onTurn: () => {} };
+    const first = JSON.parse(await runtime.run(peer, "/modules/web", "Turn 1 data", hooks,
+      {}, undefined, "ROLE RULES v1")) as { instr: string; prompt: string };
+    assert.equal(first.instr, "ROLE RULES v1");
+    assert.equal(first.prompt, "Turn 1 data");
+    const second = JSON.parse(await runtime.run(peer, "/modules/web", "Turn 2 data", hooks,
+      {}, undefined, "ROLE RULES v2")) as { instr: string; prompt: string };
+    assert.equal(second.instr, "ROLE RULES v2", "resume must refresh rules for existing threads");
+    assert.equal(second.prompt, "Turn 2 data");
+  } finally { client.stop(); }
 });

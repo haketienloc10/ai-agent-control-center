@@ -1,6 +1,7 @@
 import type { AgentSession, Conversation, Message, Snapshot } from "@aacc/contracts";
 import { peerMessages } from "../message-view.js";
 import { MarkdownContent } from "./MarkdownContent.js";
+import { ContextPacketView, DecisionLogView, TaskBriefView } from "./ContextPacketView.js";
 import { latestDelivery, recentActivity, sessionStatus, shortTime } from "../selectors.js";
 
 function lastTurnText(session: AgentSession, data: Snapshot): string {
@@ -22,7 +23,9 @@ function PeerTranscript({ peer, messages }: { peer: AgentSession; messages: Mess
     {transcript.slice(-8).map(message => <div key={message.id} className="transcript-message">
       <strong>{message.from === "lead" ? "Lead giao việc" : "Peer phản hồi"}
         <time dateTime={message.createdAt}>{shortTime(message.createdAt)}</time></strong>
-      <div className="peer-message-content"><MarkdownContent content={message.text}/></div>
+      <div className="peer-message-content"><MarkdownContent content={message.text}/>
+        {message.contextPacket && <ContextPacketView packet={message.contextPacket}/>}
+      </div>
     </div>)}
     {!transcript.length && <p>Chưa có trao đổi với Peer này.</p>}
     {peer.error && <p className="peer-error" role="alert">{peer.error}</p>}
@@ -38,29 +41,95 @@ export function AgentMonitor({ data, conversation, selectedPeerId, onSelectPeer 
   const sessions = data.sessions.filter(s => s.conversationId === conversation.id);
   const lead = sessions.find(s => s.id === conversation.leadSessionId);
   const peers = sessions.filter(s => s.role === "peer");
+  const discovery = sessions.find(s => s.role === "discovery");
   const events = recentActivity(data, conversation.id, 5);
   const conversationMessages = data.messages.filter(m => m.conversationId === conversation.id);
   const leadState = lead ? sessionStatus(lead) : { label: "Chưa khởi tạo", tone: "neutral" };
+  // Same accordion as Discovery/Peer: Task Brief opens only when the user selects the Lead card.
+  const decisions = conversation.decisions ?? [];
+  const leadHasDetail = Boolean(conversation.taskBrief || decisions.length);
+  const leadExpanded = Boolean(lead && leadHasDetail && selectedPeerId === lead.id);
+  const leadInfo = <>
+    <span className="avatar lead-avatar" aria-hidden="true">L</span>
+    <span className="agent-info">
+      <span className="agent-title"><strong>Lead Agent</strong>
+        <span className={"status-chip " + leadState.tone}>{leadState.label}</span></span>
+      <small>Workspace chung</small>
+      <small>Model yêu cầu: {data.settings.lead.model || "Mặc định Codex"}</small>
+      <small>Effort: {data.settings.lead.effort || "Mặc định Codex"}</small>
+      {lead?.status === "idle" && discovery?.status === "running" &&
+        <span className="waiting-note">Lead đang chờ báo cáo Discovery</span>}
+      {lead?.status === "idle" && peers.some(p => p.status === "running") &&
+        <span className="waiting-note">Lead đang chờ kết quả Peer</span>}
+    </span>
+  </>;
   return <aside className="agents-panel" aria-label="Theo dõi hoạt động">
     <div className="section-header monitor-heading">
       <div><h2>Theo dõi hoạt động</h2>
         <p>Trạng thái thực của các agent và thông tin gần đây.</p></div>
     </div>
     <div className="monitor-section">
-      <div className="lead-card">
-        <span className="avatar lead-avatar" aria-hidden="true">L</span>
-        <div className="agent-info">
-          <div className="agent-title"><strong>Lead Agent</strong>
-            <span className={"status-chip " + leadState.tone}>{leadState.label}</span></div>
-          <small>Workspace chung</small>
-          <small>Model yêu cầu: {data.settings.lead.model || "Mặc định Codex"}</small>
-          <small>Effort: {data.settings.lead.effort || "Mặc định Codex"}</small>
-          {lead?.status === "idle" && peers.some(p => p.status === "running") &&
-            <span className="waiting-note">Lead đang chờ kết quả Peer</span>}
-          {lead?.error && <p className="peer-error" role="alert">{lead.error}</p>}
-        </div>
+      <div className={"lead-unit" + (leadExpanded ? " expanded" : "")}>
+        {lead && leadHasDetail
+          ? <button type="button" className="lead-card" aria-expanded={leadExpanded}
+            aria-controls={"task-brief-" + conversation.id}
+            onClick={() => onSelectPeer(leadExpanded ? "" : lead.id)}>
+            {leadInfo}
+            <span className="expand-chevron" aria-hidden="true">{leadExpanded ? "⌃" : "⌄"}</span>
+          </button>
+          : <div className="lead-card">{leadInfo}</div>}
+        {leadExpanded && <div className="peer-transcript" id={"task-brief-" + conversation.id}>
+          {conversation.taskBrief && <>
+            <div className="transcript-title">Task Brief · Lead</div>
+            <TaskBriefView brief={conversation.taskBrief}/>
+          </>}
+          {decisions.length > 0 && <>
+            <div className="transcript-title">Decision Log · {decisions.length}</div>
+            <DecisionLogView decisions={decisions}/>
+          </>}
+        </div>}
       </div>
+      {lead?.error && <p className="peer-error" role="alert">{lead.error}</p>}
     </div>
+    {discovery && <div className="monitor-section">
+      <div className="monitor-section-title"><h3>Discovery Session</h3><span>1</span></div>
+      <div className="peer-unit">
+        <button type="button" className="peer-card"
+          aria-expanded={selectedPeerId === discovery.id}
+          aria-controls={"transcript-" + discovery.id}
+          onClick={() => onSelectPeer(selectedPeerId === discovery.id ? "" : discovery.id)}>
+          <span className="avatar peer-avatar" aria-hidden="true">D</span>
+          <span className="agent-info">
+            <span className="agent-title"><strong>Discovery</strong>
+              <span className={"status-chip " + sessionStatus(discovery).tone}>
+                {sessionStatus(discovery).label}</span></span>
+            <small>Khám phá sơ bộ · cùng chính sách thực thi Peer · nhiều module</small>
+            <small>Model yêu cầu: {data.settings.discovery.model || "Mặc định Codex"}</small>
+            <small>Effort: {data.settings.discovery.effort || "Mặc định Codex"}</small>
+            <small className="turn-meta">{lastTurnText(discovery, data)}</small>
+          </span>
+          <span className="expand-chevron" aria-hidden="true">
+            {selectedPeerId === discovery.id ? "⌃" : "⌄"}</span>
+        </button>
+        {selectedPeerId === discovery.id && <div className="peer-transcript"
+          id={"transcript-" + discovery.id}>
+          <div className="transcript-title">Trao đổi Lead ↔ Discovery</div>
+          {conversationMessages.filter(m => m.discoverySessionId === discovery.id &&
+            (m.from === "lead" || m.from === "discovery")).map(m =>
+            <div className="transcript-message" key={m.id}>
+              <strong>{m.from === "lead" ? "Lead giao khám phá" : "Discovery báo cáo"}
+                <time dateTime={m.createdAt}>{shortTime(m.createdAt)}</time></strong>
+              <div className="peer-message-content"><MarkdownContent content={m.text}/>
+                {m.contextPacket && <ContextPacketView packet={m.contextPacket}/>}
+              </div>
+            </div>)}
+          {!conversationMessages.some(m => m.discoverySessionId === discovery.id &&
+            (m.from === "lead" || m.from === "discovery")) &&
+            <p>Chưa có trao đổi với Discovery.</p>}
+          {discovery.error && <p className="peer-error" role="alert">{discovery.error}</p>}
+        </div>}
+      </div>
+    </div>}
     <div className="monitor-section">
       <div className="monitor-section-title"><h3>Peer Sessions</h3><span>{peers.length}</span></div>
       <div className="peer-list">

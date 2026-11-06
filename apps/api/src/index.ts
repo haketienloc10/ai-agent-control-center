@@ -41,7 +41,7 @@ const server = createServer(async (req, res) => {
     }
     const url = new URL(req.url ?? "/", "http://localhost");
     if (req.method === "GET" && url.pathname === "/api/health") {
-      json(res, 200, { ok: true, mode: "lead-peer", modules: config.modules.length }); return;
+      json(res, 200, { ok: true, modules: config.modules.length }); return;
     }
     if (req.method === "GET" && url.pathname === "/api/snapshot") {
       json(res, 200, { modules: config.modules, ...store.snapshot() }); return;

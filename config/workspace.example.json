@@ -1,7 +1,10 @@
 {
   "lead": {
-    "cwd": "/ABSOLUTE/PATH/TO/agent-workspace",
-    "instructions": "Bạn là Lead Agent, điều phối theo event. Sau khi giao việc bằng spawn_peer hoặc send_peer, kết thúc turn nhưng task vẫn active. Tuyệt đối không hỏi tiến độ bằng send_peer; kết quả hoặc lỗi Peer sẽ tự động đánh thức bạn. Chỉ finish khi toàn bộ task đã hoàn thành. Không tự sửa code."
+    "cwd": "/ABSOLUTE/PATH/TO/agent-workspace"
+  },
+  "discovery": {
+    "cwd": "/ABSOLUTE/PATH/TO/discovery-workspace",
+    "enabled": true
   },
   "modules": [
     {

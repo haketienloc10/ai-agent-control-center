@@ -29,7 +29,7 @@ const data: Snapshot = {
   ],
   deliveries: [{ id: "d", conversationId: "c", sessionId: "peer", messageId: "b",
     status: "running", generation: 0, createdAt: now, updatedAt: now }],
-  settings: { lead: { model: "model-lead" }, peer: { model: "model-peer" } }
+  settings: { lead: { model: "model-lead" }, peer: { model: "model-peer" }, discovery: {} }
 };
 const nop = () => {};
 

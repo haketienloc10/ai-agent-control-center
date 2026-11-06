@@ -13,10 +13,10 @@ function directory(input: unknown, field: string): string {
 export function loadWorkspaceConfig(file = process.env.WORKSPACE_CONFIG ?? defaultFile): WorkspaceConfig {
   const raw = JSON.parse(readFileSync(resolve(file), "utf8")) as Partial<WorkspaceConfig>;
   if (!raw.lead || !Array.isArray(raw.modules)) throw new Error("Thiếu lead hoặc modules");
-  const lead = {
-    cwd: directory(raw.lead.cwd, "lead.cwd"),
-    instructions: typeof raw.lead.instructions === "string" ? raw.lead.instructions : ""
-  };
+  if (Object.keys(raw.lead).some(key => key !== "cwd")) {
+    throw new Error("lead chỉ nhận cwd; quy tắc dự án tùy chỉnh thuộc AGENTS.md");
+  }
+  const lead = { cwd: directory(raw.lead.cwd, "lead.cwd") };
   const ids = new Set<string>();
   const modules = raw.modules.map((module, index) => {
     if (!module || typeof module.id !== "string" || !/^[a-z0-9_-]+$/.test(module.id) ||
@@ -26,5 +26,19 @@ export function loadWorkspaceConfig(file = process.env.WORKSPACE_CONFIG ?? defau
     ids.add(module.id);
     return { id: module.id, label: module.label, path: directory(module.path, "modules[" + index + "].path") };
   });
-  return { lead, modules };
+  let discovery: WorkspaceConfig["discovery"];
+  if (raw.discovery) {
+    if (Object.keys(raw.discovery).some(key => !["cwd", "enabled"].includes(key))) {
+      throw new Error("discovery chỉ nhận cwd và enabled; model/effort thuộc App Settings");
+    }
+    const cwd = directory(raw.discovery.cwd, "discovery.cwd");
+    if (cwd === lead.cwd || modules.some(module => module.path === cwd)) {
+      throw new Error("discovery.cwd phải là thư mục riêng, khác Lead và các module");
+    }
+    if (raw.discovery.enabled !== undefined && typeof raw.discovery.enabled !== "boolean") {
+      throw new Error("discovery.enabled phải là boolean");
+    }
+    discovery = { cwd, enabled: raw.discovery.enabled ?? true };
+  }
+  return { lead, ...(discovery ? { discovery } : {}), modules };
 }
