@@ -367,11 +367,11 @@ test("Workspace config accepts only enabled and rejects obsolete Discovery setti
     save({ ...body, discovery: { cwd: body.discovery!.cwd, enabled: "yes" } });
     assert.throws(() => loadWorkspaceConfig(path), /discovery.enabled/);
     save({ ...body, discovery: { cwd: body.discovery!.cwd, mode: "auto" } });
-    assert.throws(() => loadWorkspaceConfig(path), /discovery.mode/);
+    assert.throws(() => loadWorkspaceConfig(path), /discovery chỉ nhận/);
     save({ ...body, discovery: { cwd: body.lead.cwd } });
     assert.throws(() => loadWorkspaceConfig(path), /thư mục riêng/);
     save({ ...body, discovery: { cwd: body.discovery!.cwd, model: "gpt-test" } });
-    assert.throws(() => loadWorkspaceConfig(path), /discovery.model/);
+    assert.throws(() => loadWorkspaceConfig(path), /discovery chỉ nhận/);
     save(body);
     assert.equal(loadWorkspaceConfig(path).discovery?.enabled, true);
   } finally { rmSync(root, { recursive: true, force: true }); }

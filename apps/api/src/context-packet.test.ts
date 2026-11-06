@@ -190,9 +190,9 @@ test("Peer runtime receives the original request, selected sources and outcome, 
       sawPeer = true;
       assert.match(prompt, /ORIGINAL_USER_REQUEST:/);
       assert.match(prompt, /Todo original requirement/);
-      assert.match(prompt, /LEAD_EXPECTED_RESULT: Run typecheck\\/build and report evidence/);
+      assert.match(prompt, /LEAD_EXPECTED_RESULT: Run typecheck\/build and report evidence/);
       assert.match(prompt, /LEAD_MESSAGE: Verify Todo UI/);
-      assert.match(prompt, /SUPPORTING_CONTEXT: \\[\\]/);
+      assert.match(prompt, /SUPPORTING_CONTEXT: \[\]/);
       assert.doesNotMatch(prompt, /Do not send this unreferenced Lead reply to Peer/);
       return "Peer passed build";
     }

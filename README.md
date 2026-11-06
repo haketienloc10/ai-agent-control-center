@@ -55,14 +55,25 @@ Lead có thể override `model` và `effort` khi gọi dynamic tool `spawn_peer`
 
 Runtime truyền `model` trong `thread/start` và `model`/`effort` trong `turn/start`. Logic event-driven, `finish`, chống late Peer event và giới hạn timeout của PR #13 vẫn giữ nguyên. Không có legacy JSON protocol.
 
+## Lead là bộ não; ba agent có context độc lập
+
+- **Lead** hiểu yêu cầu, nắm tiêu chí hoàn thành, quản lý điều đã biết/chưa biết, phân tích dependency, giao Discovery/Peer và xử lý blocker. Lead cập nhật `Task Brief` bằng `update_task_brief(brief)`: `goal`, `acceptanceCriteria`, `verified` (kèm `evidenceRefs`), `preliminary`, `unknowns`, `nextDecision`. App chỉ lưu đánh giá của Lead, không chứng thực kết luận hay tạo quality gate.
+- **Discovery** khám phá sơ bộ đúng phạm vi. Báo cáo của Discovery là `discovery-preliminary`, cần Peer kiểm tra khi quyết định phụ thuộc implementation cụ thể.
+- **Peer** điều tra source chi tiết, sửa phần còn thiếu, báo cáo file, kết quả và bằng chứng; phân biệt build, HTTP integration, browser E2E. Lead chỉ định trách nhiệm kiểm chứng tích hợp khi giao việc đa module.
+- Mỗi `spawn_peer`/`send_peer`/`spawn_discovery`/`send_discovery` cần `message` tự đầy đủ và `expectedResult`, có thể chọn `contextRefs` (tối đa 8 message IDs từ cùng conversation). App snapshot nguyên văn yêu cầu gốc, Task Brief và các source được chọn thành **Context Packet** lưu cùng message trong SQLite, rồi chuyển cho worker trong prompt. Không tự gửi toàn bộ Lead/Discovery Thread.
+- `RECENT_CONVERSATION` của Lead chứa message IDs để chọn nguồn. Nếu Lead nói “dựa trên Discovery” hoặc dựa trên kết quả một Peer, phải đính kèm message ID liên quan trong `contextRefs`; người nhận không tự biết nội dung đó.
+- UI **Xem luồng điều phối** và Agent Monitor cho phép xem đúng Context Packet đã gửi, gồm nguồn, nhãn `discovery-preliminary`/`peer-report` và `expectedResult`. Không tái tạo context từ lịch sử mới hơn.
+- Lead không giao triển khai các phần phụ thuộc contract chưa xác minh; có thể chạy song song các việc thực sự độc lập. Trước `finish()`, Lead đối chiếu kết quả Peer với tiêu chí và nêu giới hạn test chưa thực hiện.
+- Quy tắc vận hành agent là cố định trong App; quy tắc code, test và conventions tùy chỉnh thuộc `AGENTS.md` của workspace/module. `workspace.local.json` chỉ nhận `lead.cwd`, `discovery.cwd/enabled` và danh sách module; model/effort thuộc App Settings.
+
 ## Discovery: Lead chủ động giao khảo sát sơ bộ
 
-- Cấu hình `discovery.cwd` riêng và `discovery.enabled: true` trong `config/workspace.local.json`. Nếu thiếu hoặc tắt, Lead tiếp tục điều phối Peer trực tiếp. `discovery.mode` cũ vẫn được đọc để tương thích: `off` → tắt, `auto`/`always` → bật **khả năng gọi tool**, không tự khởi chạy.
+- Cấu hình `discovery.cwd` riêng và `discovery.enabled: true` trong `config/workspace.local.json`. Nếu thiếu hoặc tắt, Lead tiếp tục điều phối Peer trực tiếp. Discovery không tự khởi chạy.
 - Khi tạo conversation, **Lead luôn nhận delivery đầu tiên**. Lead chủ động dùng `spawn_discovery(message)` khi cần hiểu tổng quan các module. Chỉ có **một Discovery Session mỗi conversation**, có thể giao khảo sát bổ sung bằng `send_discovery(sessionId,message)` trong cùng Codex Thread; không hỏi tiến độ.
 - **Discovery là một giai đoạn bắt buộc phải hoàn thành nếu đã được chọn:** sau `spawn_discovery` hoặc `send_discovery` thành công, Lead phải kết thúc turn ngay. Store từ chối các tool Peer/`finish()` tiếp theo trong cùng Lead turn, đồng thời không bắt đầu Lead turn khác khi Discovery còn `queued/running`. Chỉ event báo cáo/lỗi Discovery mới cho phép Lead tiếp tục. Một Lead turn đã giao Peer cũng không được giao Discovery trong cùng turn.
 - Discovery có `cwd` riêng và truy cập nhiều module qua `thread/start.runtimeWorkspaceRoots: [discovery.cwd, ...module paths]`. Đây là cách app-server mở thêm các thư mục, tương ứng mục tiêu CLI `--add-dir`. Không dùng `readOnly.access`, named permission profile hay hạn chế sandbox riêng.
 - Discovery dùng **cùng sandbox và approval policy với Peer**: mặc định `danger-full-access`/`never`; `CODEX_SECURITY_MODE=sandbox` dùng `workspace-write`/`on-request`, với `writableRoots` gồm Discovery cwd và các module. Quy tắc *chỉ khám phá sơ bộ, không triển khai hoặc điều tra root cause* là instruction về vai trò, **không phải giới hạn runtime**. Cấu hình module phải được người dùng tin cậy.
-- Model/effort của Discovery có lựa chọn riêng trong **App Settings · Model & Effort** (SQLite). Thứ tự từng trường: `App Settings Discovery → discovery workspace config → Codex default`.
+- Model/effort của Discovery được chỉnh riêng trong **App Settings · Model & Effort** (SQLite), để trống dùng Codex default.
 - Báo cáo kết quả/lỗi Discovery được lưu riêng và đánh thức Lead qua event. Lead chỉ dùng báo cáo định hướng; điều tra source, xác minh root cause và triển khai chuyên sâu vẫn do Peer thực hiện. Discovery không có dynamic routing tools.
 - Discovery bị lỗi hoặc backend restart khi turn đang chạy sẽ tạo cảnh báo cho Lead; không replay turn, không poll. Báo cáo muộn sau `finish()` được lưu nhưng không đánh thức Lead.
 
@@ -77,8 +88,8 @@ Runtime truyền `model` trong `thread/start` và `model`/`effort` trong `turn/s
 
 ## Điều phối và giao thức
 
-- Chỉ Lead có Codex dynamic tools: `spawn_discovery`, `send_discovery`, `spawn_peer`, `send_peer`, `finish`. Không dùng JSON envelope, `outputSchema`, parser hoặc fallback protocol cũ.
-- Codex CLI không hỗ trợ dynamic tools sẽ trả lỗi; cần cập nhật CLI. Với các Conversation Lead cũ không có tool registry, hãy tạo Conversation mới.
+- Chỉ Lead có Codex dynamic tools: `update_task_brief`, `spawn_discovery`, `send_discovery`, `spawn_peer`, `send_peer`, `finish`. Không dùng JSON envelope, `outputSchema` hoặc parser tự chế.
+- Codex CLI không hỗ trợ dynamic tools sẽ trả lỗi; cần cập nhật Codex CLI và tạo conversation mới để nạp tool registry hiện tại.
 - Tool call được lưu SQLite atomically kèm `callId`, chống xử lý lặp cùng lời gọi.
 - Discovery và Peer không có routing tools. Discovery có session/cwd riêng và cùng quyền thực thi với Peer nhưng thêm nhiều module qua `runtimeWorkspaceRoots`. Peer thực thi trong module riêng, không giao tiếp Peer-to-Peer.
 - Nhiều Peer có thể chạy trong cùng module, không có Git worktree hay tự động xử lý conflict.
@@ -94,9 +105,9 @@ Runtime truyền `model` trong `thread/start` và `model`/`effort` trong `turn/s
 ## API local
 
 - `GET /api/health` — trạng thái Backend.
-- `GET /api/snapshot` — conversations, sessions, messages, deliveries, modules và settings.
+- `GET /api/snapshot` — conversations (Task Brief của Lead), sessions, messages (bao gồm Context Packet), deliveries, modules và settings.
 - `GET /api/models` — model/effort catalog do Codex app-server cung cấp.
-- `PUT /api/settings` — lưu `{"lead":{"model":"MODEL_ID","effort":"high"},"discovery":{"model":"MODEL_ID","effort":"low"},"peer":{"model":"MODEL_ID","effort":"medium"}}`. Dùng `""` để kế thừa mặc định (Discovery có thể kế thừa workspace config cũ).
+- `PUT /api/settings` — lưu `{"lead":{"model":"MODEL_ID","effort":"high"},"discovery":{"model":"MODEL_ID","effort":"low"},"peer":{"model":"MODEL_ID","effort":"medium"}}`. Dùng `""` để kế thừa Codex default.
 - `GET /api/events` — SSE thay đổi.
 - `POST /api/conversations` — tạo task từ `{"text":"Yêu cầu"}`.
 - `POST /api/conversations/:id/messages` — gửi bổ sung cho Lead.

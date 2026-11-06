@@ -35,10 +35,10 @@ sequenceDiagram
 ## Trách nhiệm
 
 - `apps/api/src/index.ts`: HTTP/SSE localhost; task mới luôn tạo Lead delivery.
-- `apps/api/src/coordination-store.ts`: transaction SQLite, Lead routing idempotent, một Discovery session mỗi conversation, message Lead ↔ Discovery, wakeLead event-driven, `finish` supersede queued deliveries.
-- `apps/api/src/coordinator.ts`: Lead quyết định khi nào gọi Discovery; Discovery chỉ khám phá sơ bộ theo instruction, Peer điều tra sâu và triển khai. Scheduler theo `store.on('change')`, tối đa một turn/session và bốn turn cùng lúc, không polling.
+- `apps/api/src/coordination-store.ts`: transaction SQLite, Task Brief do Lead sở hữu, kiểm tra contextRefs và snapshot Context Packet theo từng delivery, một Discovery session mỗi conversation, wakeLead event-driven, `finish` supersede queued deliveries.
+- `apps/api/src/coordinator.ts`: Lead quyết định khi nào cần Discovery/Peer và chuyển Context Packet; Discovery chỉ khảo sát sơ bộ, Peer điều tra sâu/triển khai. Scheduler theo `store.on('change')`, tối đa một turn/session và bốn turn cùng lúc, không polling.
 - `apps/api/src/codex-runtime.ts`: Codex app-server `thread/start`, `thread/resume`, `turn/start`; Lead có dynamic tools, Discovery và Peer không có. Discovery dùng policy giống Peer, khác ở `thread/start.runtimeWorkspaceRoots`.
-- `apps/web/src/components/ConversationFeed.tsx`, `AgentMonitor.tsx`: hiển thị luồng giao việc, báo cáo Discovery và trạng thái session độc lập.
+- `apps/web/src/components/ConversationFeed.tsx`, `AgentMonitor.tsx`, `ContextPacketView.tsx`: hiển thị nhiệm vụ, Context Packet đã gửi, Task Brief và session độc lập.
 
 ## Vòng đời và giới hạn
 
@@ -60,8 +60,29 @@ sequenceDiagram
 ## Model / Effort
 
 - `Snapshot.settings` lưu Lead/Discovery/Peer trong SQLite, bổ sung `discovery: {}` khi mở snapshot cũ.
-- Discovery lấy `App Settings Discovery → discovery workspace config → Codex default` cho từng trường tại thời điểm bắt đầu turn. Lead đọc defaults mỗi turn; Peer đóng băng settings lúc spawn.
-- `model/list` cấp model/effort catalog. Chỉ Lead có năm dynamic tools `spawn_discovery`, `send_discovery`, `spawn_peer`, `send_peer`, `finish`, với `callId` chống replay.
+- Discovery và Lead đọc App Settings mỗi turn; giá trị trống dùng Codex default. Peer đóng băng settings khi spawn.
+- `model/list` cấp model/effort catalog. Chỉ Lead có sáu dynamic tools `update_task_brief`, `spawn_discovery`, `send_discovery`, `spawn_peer`, `send_peer`, `finish`, với `callId` chống replay.
 - Không thêm parser/JSON protocol, outputSchema fallback, approval gate hoặc trạng thái task mới.
 
 CI dùng fake Codex transport; cần E2E với Codex CLI/app-server phiên bản thực tế để xác minh `runtimeWorkspaceRoots`.
+
+## Giao tiếp không dùng shared context
+
+```text
+Lead routeLeadTool()
+  → update_task_brief(brief)
+      → validate evidenceRefs hợp lệ và không dùng Discovery/Lead làm chứng cứ verified
+      → Conversation.taskBrief trong SQLite
+  → spawn/send(message, expectedResult, contextRefs?)
+      → contextRefs: ≤ 8 message IDs cùng conversation, tổng ≤ 30000 ký tự
+      → originalRequest: user message đầu tiên
+      → taskBrief: snapshot đánh giá của Lead
+      → sources: text gốc + messageId + from + nhãn nguồn
+      → expectedResult: kết quả cụ thể Lead yêu cầu
+      → Message.contextPacket + Delivery trong một SQLite transaction
+  → Coordinator workerPrompt()
+      → thông tin cố định vai trò + Context Packet đã lưu + LEAD_MESSAGE
+      → Codex turn/start (Thread độc lập)
+```
+
+Lead nhận `RECENT_CONVERSATION` kèm message ID để chọn `contextRefs`, nhưng Worker chỉ nhận những nguồn được chọn, yêu cầu gốc và Task Brief. UI có thể mở Context Packet đã lưu để xác minh thông tin thực tế được chuyển giao. Nguồn `discovery-preliminary` luôn là nhận định sơ bộ; App không đánh giá chất lượng nội dung Peer hay chứng thực kết luận Lead.
