@@ -56,27 +56,45 @@ function MessageRow({ message, sessions }: { message: Message; sessions: AgentSe
   </article>;
 }
 
-export function ConversationFeed({ messages, sessions, conversationId, showRouting, onRoutingChange }: {
+export function ConversationFeed({ messages, sessions, conversationId, showRouting, onRoutingChange,
+  expanded = false, onExpandedChange }: {
   messages: Message[];
   sessions: AgentSession[];
   conversationId: string;
   showRouting: boolean;
   onRoutingChange: (show: boolean) => void;
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
 }) {
   const feed = visibleMessages(messages, conversationId, showRouting);
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end", behavior: "instant" });
   }, [conversationId, feed.length, showRouting]);
-  return <section className="chat-panel" aria-label="Hội thoại với Lead">
+  const panelId = useId();
+  return <section id={panelId} className="chat-panel" aria-label="Hội thoại với Lead">
     <div className="section-header chat-header">
       <div><h2>Hội thoại</h2>
         <p>Theo dõi trao đổi và kết quả điều phối.</p></div>
-      <label className="routing-toggle">
-        <input type="checkbox" checked={showRouting}
-          onChange={e => onRoutingChange(e.target.checked)}/>
-        <span>Xem luồng điều phối</span>
-      </label>
+      <div className="chat-actions">
+        <label className="routing-toggle">
+          <input type="checkbox" checked={showRouting}
+            onChange={e => onRoutingChange(e.target.checked)}/>
+          <span>Xem luồng điều phối</span>
+        </label>
+        {onExpandedChange && <button type="button" className="conversation-expand"
+          aria-expanded={expanded} aria-controls={panelId}
+          title={expanded ? "Thu lại Hội thoại (Esc)" : "Mở rộng Hội thoại"}
+          onClick={() => onExpandedChange(!expanded)}>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+            strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d={expanded
+              ? "M4 9h5V4m11 5h-5V4M4 15h5v5m11-5h-5v5"
+              : "M9 4H4v5m11-5h5v5M4 15v5h5m11-5v5h-5"}/>
+          </svg>
+          <span>{expanded ? "Thu lại" : "Mở rộng"}</span>
+        </button>}
+      </div>
     </div>
     <div className="chat-feed" role="log" aria-label="Lịch sử hội thoại">
       {feed.map(m => <MessageRow key={m.id} message={m} sessions={sessions}/>)}

@@ -35,6 +35,7 @@ function App() {
   const [showNew, setShowNew] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showRouting, setShowRouting] = useState(false);
+  const [conversationExpanded, setConversationExpanded] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [connection, setConnection] = useState<ConnectionState>("connecting");
@@ -61,6 +62,15 @@ function App() {
     events.onerror = () => setConnection("offline");
     return () => { events.close(); };
   }, [refresh]);
+
+  useEffect(() => {
+    if (!conversationExpanded || showNew || showSettings) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented) setConversationExpanded(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [conversationExpanded, showNew, showSettings]);
 
   const conversations = useMemo(
     () => [...data.conversations].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
@@ -96,7 +106,7 @@ function App() {
     finally { setSending(false); }
   };
 
-  return <div className="shell">
+  return <div className={"shell" + (conversation && conversationExpanded ? " conversation-expanded" : "")}>
     <Sidebar data={data} conversations={conversations} activeId={activeId}
       connection={connection} onSelect={id => { setSelectedId(id); setPeerFocus(""); }}
       onNew={() => setShowNew(true)} onSettings={() => setShowSettings(true)}/>
@@ -110,10 +120,16 @@ function App() {
         <div className="content">
           <div className="conversation-column">
             <ConversationFeed conversationId={activeId} messages={data.messages}
-              sessions={sessions} showRouting={showRouting} onRoutingChange={setShowRouting}/>
+              sessions={sessions} showRouting={showRouting} onRoutingChange={setShowRouting}
+              expanded={conversationExpanded} onExpandedChange={setConversationExpanded}/>
             <MessageComposer value={draft} onChange={setDraft}
               onSend={() => { void sendMessage(); }} sending={sending}/>
           </div>
+          <button type="button" className="monitor-rail" title="Xem theo dõi hoạt động"
+            aria-label="Xem theo dõi hoạt động và thu lại Hội thoại"
+            onClick={() => setConversationExpanded(false)}>
+            <span aria-hidden="true">◎</span><span>Hoạt động</span>
+          </button>
           <AgentMonitor data={data} conversation={conversation}
             selectedPeerId={peerFocus} onSelectPeer={setPeerFocus}/>
         </div>
