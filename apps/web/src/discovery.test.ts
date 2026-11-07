@@ -45,6 +45,8 @@ test("Discovery report is hidden by default, routed to Lead, and visible in Disc
   data.messages.push({
     id: "instruction", conversationId: "todo", from: "lead", to: "discovery",
     discoverySessionId: "discovery", text: "Khảo sát sơ bộ API và Web",
+    contextPacket: { sources: [], expectedResult: "Báo cáo" },
+    handoffPrompt: "SUPPORTING_CONTEXT: []\n\nLEAD_MESSAGE: khảo sát **nguyên văn**",
     createdAt: time
   });
   data.messages.push({
@@ -66,10 +68,13 @@ test("Discovery report is hidden by default, routed to Lead, and visible in Disc
   assert.match(shown, /Lead giao Discovery khảo sát sơ bộ/);
   assert.match(shown, /Khảo sát sơ bộ API và Web/);
   assert.match(shown, /Tổng quan/);
+  assert.match(shown, /Xem nội dung chuyển giao/);
+  assert.ok(shown.includes(data.messages[0].handoffPrompt!));
   const monitor = renderToStaticMarkup(createElement(AgentMonitor, {
     data, conversation, selectedPeerId: "discovery", onSelectPeer: () => {}
   }));
   assert.match(monitor, /Discovery Session/);
+  assert.ok(monitor.includes(data.messages[0].handoffPrompt!));
   assert.match(monitor, /Model yêu cầu: .*discovery-model/);
   assert.match(monitor, /Effort: .*low/);
   assert.match(monitor, /Trao đổi Lead ↔ Discovery/);

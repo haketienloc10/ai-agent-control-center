@@ -38,7 +38,7 @@ function MessageRow({ message, sessions }: { message: Message; sessions: AgentSe
         <strong>{label}</strong><time>{shortTime(message.createdAt)}</time></summary>
       <div className="event-detail">
         <MarkdownContent content={message.text}/>
-        {message.contextPacket && <ContextPacketView packet={message.contextPacket}/>}
+        {(message.contextPacket || message.handoffPrompt !== undefined) && <ContextPacketView prompt={message.handoffPrompt}/>}
       </div>
     </details>;
   }

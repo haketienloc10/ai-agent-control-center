@@ -1,61 +1,13 @@
-import type { ContextPacket, Decision, TaskBrief } from "@aacc/contracts";
+import type { Decision, TaskBrief } from "@aacc/contracts";
 import { MarkdownContent } from "./MarkdownContent.js";
 
-/** Renders the immutable handoff actually stored on the worker delivery. */
-export function ContextPacketView({ packet }: { packet: ContextPacket }) {
-  const checkpoint = packet.peerCheckpoint;
+/** Hiển thị chuỗi nguyên văn đã lưu tại thời điểm gọi runtime. */
+export function ContextPacketView({ prompt }: { prompt?: string }) {
   return <details className="context-packet">
-    <summary>Context Packet đã gửi cho agent · {packet.sources.length} nguồn</summary>
-    <div className="context-packet-body">
-      {checkpoint && <div>
-        <strong>ASSIGNMENT · {checkpoint.assignmentId}</strong>
-        <p>MODULE: {checkpoint.moduleId}</p>
-        {checkpoint.continues && <p>CONTINUES: {checkpoint.continues}</p>}
-        <strong>CURRENT_GOAL</strong>
-        <MarkdownContent content={checkpoint.goal}/>
-        <strong>ACCEPTANCE_CRITERIA</strong>
-        {checkpoint.acceptanceCriteria.length
-          ? <ul>{checkpoint.acceptanceCriteria.map((item, i) => <li key={i}>{item}</li>)}</ul>
-          : <p>Lead chưa cung cấp tiêu chí hoàn thành.</p>}
-        <strong>CURRENT_CONSTRAINTS</strong>
-        {checkpoint.constraints.length
-          ? <ul>{checkpoint.constraints.map((item, i) => <li key={i}>{item}</li>)}</ul>
-          : <p>Không có ràng buộc bổ sung do Lead cung cấp.</p>}
-        <strong>ACTIVE_DECISIONS · snapshot của assignment</strong>
-        {packet.decisions?.length ? <DecisionLogView decisions={packet.decisions}/>
-          : <p>Không có quyết định áp dụng cho module trong assignment này.</p>}
-        <strong>PREVIOUS_CONTEXT</strong>
-        {packet.previousContext?.length ? packet.previousContext.map(source => <div key={source.messageId}>
-          <small>{source.messageId} · {source.kind} · {source.from} · {source.createdAt}</small>
-          <MarkdownContent content={source.summary ?? "Nội dung đã có trong Thread; Lead không cung cấp tóm tắt."}/>
-        </div>) : <p>Không có nguồn cũ được chọn.</p>}
-      </div>}
-      {packet.originalRequest ? <>
-        <strong>ORIGINAL_USER_REQUEST · {packet.originalRequest.messageId}</strong>
-        <MarkdownContent content={packet.originalRequest.text}/>
-      </> : !checkpoint && <p>ORIGINAL_USER_REQUEST: đã có trong Thread của agent từ lượt trước.</p>}
-      {packet.taskBrief && <div>
-        <strong>TASK_BRIEF_FROM_LEAD</strong>
-        <TaskBriefView brief={packet.taskBrief} compact/>
-      </div>}
-      {packet.omitted?.taskBrief && <p>TASK_BRIEF_FROM_LEAD: không đổi so với lượt trước.</p>}
-      <strong>{checkpoint ? "NEW_SUPPORTING_CONTEXT" : "SUPPORTING_CONTEXT"} · nguồn nguyên văn</strong>
-      {packet.sources.map(source => <div key={source.messageId}>
-        <small>{source.kind} · {source.from} · {source.messageId}</small>
-        <MarkdownContent content={source.text}/>
-      </div>)}
-      {!packet.sources.length && <p>Lead không đính kèm nguồn bổ sung.</p>}
-      {!checkpoint && !!packet.omitted?.sourceIds?.length && <p>
-        Không gửi lại (đã có trong Thread): {packet.omitted.sourceIds.join(", ")}</p>}
-      {!checkpoint && !!packet.decisions?.length && <div>
-        <strong>DECISIONS_FROM_LEAD</strong>
-        <DecisionLogView decisions={packet.decisions}/>
-      </div>}
-      {!checkpoint && !!packet.omitted?.decisionIds?.length && <p>
-        Quyết định đã có trong Thread: {packet.omitted.decisionIds.join(", ")}</p>}
-      <strong>{checkpoint ? "EXPECTED_RESULT" : "LEAD_EXPECTED_RESULT"}</strong>
-      <MarkdownContent content={packet.expectedResult}/>
-    </div>
+    <summary>Xem nội dung chuyển giao</summary>
+    {prompt !== undefined
+      ? <pre className="handoff-prompt">{prompt}</pre>
+      : <p className="handoff-unavailable">Chưa có bản ghi nội dung chuyển giao cho lượt này.</p>}
   </details>;
 }
 

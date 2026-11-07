@@ -90,6 +90,8 @@ export interface Message {
   id: string; conversationId: string; from: MessageAuthor;
   to: "user" | "lead" | "peer" | "discovery";
   text: string; peerSessionId?: string; discoverySessionId?: string;
+  /** Nguyên văn turn/start.input[0].text, lưu trước khi gọi runtime; không gồm developerInstructions. */
+  handoffPrompt?: string;
   contextPacket?: ContextPacket; createdAt: string;
 }
 export interface Delivery {
