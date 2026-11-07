@@ -8,6 +8,7 @@ import { ConversationFeed } from "./components/ConversationFeed.js";
 import { MessageComposer } from "./components/MessageComposer.js";
 import { AgentMonitor } from "./components/AgentMonitor.js";
 import { NewTaskModal } from "./components/NewTaskModal.js";
+import { createSnapshotSync } from "./snapshot-sync.js";
 import "./style.css";
 
 const empty: Snapshot = {
@@ -39,29 +40,22 @@ function App() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [connection, setConnection] = useState<ConnectionState>("connecting");
-  const requestVersion = useRef(0);
+  const syncRef = useRef<ReturnType<typeof createSnapshotSync<Snapshot>> | null>(null);
 
-  const refresh = useCallback(async (): Promise<void> => {
-    const current = ++requestVersion.current;
-    try {
-      const result = await api<Snapshot>("/snapshot");
-      if (current === requestVersion.current) {
-        setData(result);
-        setError("");
-      }
-    } catch (cause) {
-      if (current === requestVersion.current) setError(errorText(cause));
-    }
-  }, []);
+  const refresh = useCallback((): Promise<void> =>
+    syncRef.current?.refresh() ?? Promise.resolve(), []);
 
   useEffect(() => {
-    void refresh();
-    const events = new EventSource("/api/events");
-    events.onopen = () => setConnection("connected");
-    events.onmessage = () => { void refresh(); };
-    events.onerror = () => setConnection("offline");
-    return () => { events.close(); };
-  }, [refresh]);
+    const sync = createSnapshotSync({
+      events: new EventSource("/api/events"),
+      load: () => api<Snapshot>("/snapshot"),
+      onData: result => { setData(result); setError(""); },
+      onError: cause => setError(errorText(cause)),
+      onConnection: setConnection
+    });
+    syncRef.current = sync;
+    return () => { syncRef.current = null; sync.dispose(); };
+  }, []);
 
   useEffect(() => {
     if (!conversationExpanded || showNew || showSettings) return;
