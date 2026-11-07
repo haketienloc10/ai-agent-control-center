@@ -24,7 +24,7 @@ function PeerTranscript({ peer, messages }: { peer: AgentSession; messages: Mess
       <strong>{message.from === "lead" ? "Lead giao việc" : "Peer phản hồi"}
         <time dateTime={message.createdAt}>{shortTime(message.createdAt)}</time></strong>
       <div className="peer-message-content"><MarkdownContent content={message.text}/>
-        {message.contextPacket && <ContextPacketView packet={message.contextPacket}/>}
+        {(message.contextPacket || message.handoffPrompt !== undefined) && <ContextPacketView prompt={message.handoffPrompt}/>}
       </div>
     </div>)}
     {!transcript.length && <p>Chưa có trao đổi với Peer này.</p>}
@@ -120,7 +120,7 @@ export function AgentMonitor({ data, conversation, selectedPeerId, onSelectPeer 
               <strong>{m.from === "lead" ? "Lead giao khám phá" : "Discovery báo cáo"}
                 <time dateTime={m.createdAt}>{shortTime(m.createdAt)}</time></strong>
               <div className="peer-message-content"><MarkdownContent content={m.text}/>
-                {m.contextPacket && <ContextPacketView packet={m.contextPacket}/>}
+                {(m.contextPacket || m.handoffPrompt !== undefined) && <ContextPacketView prompt={m.handoffPrompt}/>}
               </div>
             </div>)}
           {!conversationMessages.some(m => m.discoverySessionId === discovery.id &&

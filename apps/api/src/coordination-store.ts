@@ -356,6 +356,19 @@ export class CoordinationStore extends EventEmitter {
     return result;
   }
   snapshot(): Data { return structuredClone(this.state); }
+  /** Ghi cùng snapshot SQLite; lịch sử cũ không được dựng lại thành prompt đã gửi. */
+  recordHandoffPrompt(deliveryId: string, prompt: string): string {
+    return this.mutate(data => {
+      const delivery = data.deliveries.find(d => d.id === deliveryId);
+      const input = data.messages.find(m => m.id === delivery?.messageId);
+      if (!delivery || delivery.status !== "running" || !input ||
+          input.from !== "lead" || (input.to !== "peer" && input.to !== "discovery")) {
+        throw new Error("Không thể lưu nội dung chuyển giao ngoài lượt worker đang chạy");
+      }
+      input.handoffPrompt ??= prompt;
+      return input.handoffPrompt;
+    });
+  }
   settings(): AppSettings { return structuredClone(this.state.settings); }
   updateSettings(input: unknown): AppSettings {
     const settings = normalizeSettings(input);

@@ -52,74 +52,46 @@ const data: Snapshot = {
     messageId: assignment.id, generation: 0, status: "running",
     createdAt: time, updatedAt: time }]
 };
-test("Context Packet renders exact source text, provenance and Lead expected result", () => {
-  const html = renderToStaticMarkup(createElement(ContextPacketView, { packet }));
-  assert.match(html, /Context Packet đã gửi cho agent/);
-  assert.match(html, /Tạo Todo List với backend storage/);
-  assert.match(html, /discovery-preliminary/);
-  assert.match(html, /discovery-report-1/);
-  assert.match(html, /chưa xác minh HTTP integration/);
-  assert.match(html, /Báo build, HTTP status/);
-  assert.match(html, /TASK_BRIEF_FROM_LEAD/);
-});
-test("Context Packet stays hidden when routing is off; shown in feed and peer transcript", () => {
-  const props = { messages: data.messages, sessions: data.sessions,
-    conversationId: "c", onRoutingChange: () => {} };
-  const hidden = renderToStaticMarkup(createElement(ConversationFeed,
-    { ...props, showRouting: false }));
-  assert.doesNotMatch(hidden, /Context Packet đã gửi/);
-  const routed = renderToStaticMarkup(createElement(ConversationFeed,
-    { ...props, showRouting: true }));
-  assert.match(routed, /Context Packet đã gửi/);
-  assert.match(routed, /discovery-report-1/);
-  const monitor = renderToStaticMarkup(createElement(AgentMonitor, {
-    data, conversation, selectedPeerId: "peer", onSelectPeer: () => {}
-  }));
-  assert.doesNotMatch(monitor, /Task Brief · Lead/, "Task Brief thu gọn khi chưa chọn Lead");
-  assert.match(monitor, /class="lead-card" aria-expanded="false"/);
-  const leadOpen = renderToStaticMarkup(createElement(AgentMonitor, {
-    data, conversation, selectedPeerId: "lead", onSelectPeer: () => {}
-  }));
-  assert.match(leadOpen, /class="lead-card" aria-expanded="true"/);
-  assert.match(leadOpen, /Task Brief · Lead/);
-  assert.match(leadOpen, /Lead đánh giá đã xác minh/);
-  assert.match(leadOpen, /Browser E2E/);
-  assert.match(monitor, /Context Packet đã gửi/);
-  assert.match(monitor, /Browser E2E/);
-});
-test("Context Packet delta shows what the Thread already holds instead of resending it", () => {
-  const delta: ContextPacket = {
-    sources: [], expectedResult: "Báo HTTP status",
-    omitted: { taskBrief: true, sourceIds: ["peer-report-1"] }
-  };
-  const html = renderToStaticMarkup(createElement(ContextPacketView, { packet: delta }));
-  assert.match(html, /ORIGINAL_USER_REQUEST: đã có trong Thread/);
-  assert.match(html, /TASK_BRIEF_FROM_LEAD: không đổi/);
-  assert.match(html, /Không gửi lại \(đã có trong Thread\): peer-report-1/);
-  assert.doesNotMatch(html, /Tạo Todo List với backend storage/);
+test("Nội dung chuyển giao giữ nguyên prompt, xuống dòng và Markdown/HTML dạng chữ", () => {
+  const prompt = 'ASSIGNMENT: api-01\n\nWORK:\n  **Giữ nguyên**\n<script>alert(1)</script>\n\nEXPECTED_RESULT:\nKết quả & bằng chứng\n';
+  const html = renderToStaticMarkup(createElement(ContextPacketView, { prompt }));
+  assert.match(html, /<summary>Xem nội dung chuyển giao<\/summary>/);
+  assert.ok(html.includes('<pre class="handoff-prompt">' + prompt
+    .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;') + '</pre>'));
+  assert.doesNotMatch(html, /<script>|<strong>|<h[1-6]>/);
+  assert.doesNotMatch(html, /Context Packet đã gửi|· 0 nguồn/);
 });
 
-test("Peer checkpoint trace shows repeated goal, criteria, constraints, active decisions and Lead source notes", () => {
-  const checkpoint: ContextPacket = {
-    peerCheckpoint: { assignmentId: "api-02", moduleId: "api", continues: "api-01",
-      goal: "Thêm dueDate", acceptanceCriteria: ["Dữ liệu cũ vẫn đọc được"], constraints: ["Không chuyển timezone"] },
-    sources: [], expectedResult: "Báo ca invalid date",
-    previousContext: [{ messageId: "r1", from: "peer", kind: "peer-report", createdAt: time,
-      summary: "Lead đánh giá còn thiếu validation" }],
-    decisions: [{ id: "d1", topic: "date-format", decision: "YYYY-MM-DD", rationale: "Định dạng chung",
-      affects: ["api"], evidenceRefs: [], createdAt: time }]
-  };
-  const html = renderToStaticMarkup(createElement(ContextPacketView, { packet: checkpoint }));
-  for (const content of ["ASSIGNMENT · api-02", "CONTINUES: api-01", "CURRENT_GOAL", "Thêm dueDate",
-    "ACCEPTANCE_CRITERIA", "Dữ liệu cũ vẫn đọc được", "CURRENT_CONSTRAINTS", "Không chuyển timezone",
-    "ACTIVE_DECISIONS", "YYYY-MM-DD", "PREVIOUS_CONTEXT", "r1", "peer-report", "Lead đánh giá còn thiếu validation",
-    "NEW_SUPPORTING_CONTEXT", "Báo ca invalid date"]) assert.ok(html.includes(content), content);
-  assert.doesNotMatch(html, /TASK_BRIEF_FROM_LEAD: không đổi|Quyết định đã có trong Thread/);
-  const empty = renderToStaticMarkup(createElement(ContextPacketView, { packet: { ...checkpoint, decisions: [] } }));
-  assert.match(empty, /Không có quyết định áp dụng cho module trong assignment này/);
-  assert.doesNotMatch(empty, /YYYY-MM-DD/);
+test("Lịch sử chưa lưu prompt báo thiếu bản ghi, không dựng lại Context Packet", () => {
+  const html = renderToStaticMarkup(createElement(ContextPacketView, {}));
+  assert.match(html, /Chưa có bản ghi nội dung chuyển giao cho lượt này/);
+  assert.doesNotMatch(html, /<pre/);
 });
-test("Decision Log opens inside the Lead card; packets show new and already-held decisions", () => {
+
+test("Prompt từng lượt chỉ xuất hiện trong luồng điều phối và transcript agent tương ứng", () => {
+  const prompt = 'ASSIGNMENT: api-02\n\nCONTINUES: api-01\n\nWORK:\n**Kiểm tra ngày**';
+  const snapshot = { ...data, messages: data.messages.map(m => m.id === assignment.id
+    ? { ...m, handoffPrompt: prompt } : m) };
+  const props = { messages: snapshot.messages, sessions: snapshot.sessions,
+    conversationId: "c", onRoutingChange: () => {} };
+  const hidden = renderToStaticMarkup(createElement(ConversationFeed, { ...props, showRouting: false }));
+  assert.doesNotMatch(hidden, /Xem nội dung chuyển giao|CONTINUES/);
+  const routed = renderToStaticMarkup(createElement(ConversationFeed, { ...props, showRouting: true }));
+  assert.match(routed, /Xem nội dung chuyển giao/);
+  assert.ok(routed.includes(prompt));
+  const monitor = renderToStaticMarkup(createElement(AgentMonitor, {
+    data: snapshot, conversation, selectedPeerId: "peer", onSelectPeer: () => {}
+  }));
+  assert.ok(monitor.includes(prompt));
+  assert.doesNotMatch(monitor, /Task Brief · Lead/);
+  const leadOpen = renderToStaticMarkup(createElement(AgentMonitor, {
+    data: snapshot, conversation, selectedPeerId: "lead", onSelectPeer: () => {}
+  }));
+  assert.match(leadOpen, /Task Brief · Lead/);
+  assert.match(leadOpen, /Lead đánh giá đã xác minh/);
+});
+
+test("Decision Log opens inside the Lead card", () => {
   const first: Decision = { id: "dec-1", topic: "api-contract", decision: "GET /api/todos",
     rationale: "Hai module dùng chung", affects: ["api", "web"], evidenceRefs: [], createdAt: time };
   const second: Decision = { ...first, id: "dec-2", decision: "GET /api/todos trả { todos }",
@@ -138,10 +110,4 @@ test("Decision Log opens inside the Lead card; packets show new and already-held
   assert.doesNotMatch(open, /Task Brief · Lead/);
   assert.ok(open.indexOf("trả { todos }") < open.indexOf("GET /api/todos<"), "newest first");
   assert.match(open, /class="superseded"[^]*đã bị thay/);
-  const html = renderToStaticMarkup(createElement(ContextPacketView, { packet: {
-    sources: [], expectedResult: "Báo cáo", decisions: [second], omitted: { decisionIds: ["dec-9"] }
-  } }));
-  assert.match(html, /DECISIONS_FROM_LEAD/);
-  assert.match(html, /api-contract/);
-  assert.match(html, /Quyết định đã có trong Thread: dec-9/);
 });

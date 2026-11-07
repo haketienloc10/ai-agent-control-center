@@ -370,3 +370,9 @@ button.lead-card:hover { background: #e4f1e6; }
 .markdown-content hr { border: 0; border-top: 1px solid #dce8de; margin: 12px 0; }
 .markdown-content input[type="checkbox"] { accent-color: #237852; }
 .markdown-image-alt { color: #728579; font-style: italic; font-size: 11px; }
+
+.context-packet > summary { cursor: pointer; padding: 8px 0; font-weight: 650; }
+.handoff-prompt { margin: 8px 0 0; padding: 12px; border: 1px solid var(--border);
+  border-radius: 8px; background: #f5f8f5; font-family: ui-monospace, monospace;
+  font-size: 11px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.handoff-unavailable { color: var(--muted); font-size: 11px; }
