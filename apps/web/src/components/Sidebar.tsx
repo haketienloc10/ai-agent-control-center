@@ -19,11 +19,11 @@ export function Sidebar({ data, conversations, activeId, connection, onSelect, o
         <small>LEAD · PEER · LOCAL</small></span>
     </div>
     <div className="sidebar-actions">
-      <button type="button" className="primary full" onClick={onNew}>
-        <span aria-hidden="true">＋</span> Yêu cầu mới cho Lead
+      <button type="button" className="primary full" onClick={onNew} title="Yêu cầu mới cho Lead">
+        <span aria-hidden="true">＋</span> <span className="sidebar-action-label">Yêu cầu mới cho Lead</span>
       </button>
-      <button type="button" className="settings-open full" onClick={onSettings}>
-        <span aria-hidden="true">⚙</span> App Settings
+      <button type="button" className="settings-open full" onClick={onSettings} title="App Settings">
+        <span aria-hidden="true">⚙</span> <span className="sidebar-action-label">App Settings</span>
       </button>
     </div>
     <div className="side-heading">Các cuộc việc <span>{conversations.length}</span></div>
@@ -32,6 +32,7 @@ export function Sidebar({ data, conversations, activeId, connection, onSelect, o
         const status = conversationStatus(data, conversation);
         return <button key={conversation.id} type="button"
           className={"conversation-link " + (conversation.id === activeId ? "chosen" : "")}
+          title={conversation.title + " · " + status.label}
           aria-current={conversation.id === activeId ? "page" : undefined}
           onClick={() => onSelect(conversation.id)}>
           <span className="conversation-icon" aria-hidden="true">▤</span>
@@ -47,7 +48,8 @@ export function Sidebar({ data, conversations, activeId, connection, onSelect, o
       </p>}
     </nav>
     <div className="sidebar-footer">
-      <div className="connection-line">
+      <div className="connection-line" title={connection === "connected" ? "Backend đã kết nối" :
+        connection === "connecting" ? "Đang kết nối Backend" : "Mất kết nối Backend"}>
         <span className={"connection-dot " + connection} aria-hidden="true"/>
         <span>{connection === "connected" ? "Backend đã kết nối" :
           connection === "connecting" ? "Đang kết nối Backend" : "Mất kết nối Backend"}</span>
