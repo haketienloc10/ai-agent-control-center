@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { CoordinationStore } from "./coordination-store.js";
 
 function fixture() {
@@ -390,4 +391,43 @@ test("Interrupted Lead turn retains its event batch and acknowledged turn ID wit
     assert.deepEqual(ctx.store.leadInputs(next.id).map(m => m.text), ["Manual follow-up"]);
     assert.equal(ctx.store.snapshot().messages.filter(m => m.from === "user").length, 2);
   } finally { ctx.cleanup(); }
+});
+
+test("SQLite từ chối commit không đổi state, ghi callId hoặc phát change; retry vẫn nguyên tử", () => {
+  const ctx = fixture();
+  const db = new DatabaseSync(join(ctx.dir, "coordination.sqlite"));
+  try {
+    const conversation = ctx.store.createConversation("Kiểm tra commit");
+    const lead = startLead(ctx.store, conversation.id);
+    const before = ctx.store.snapshot();
+    const command = { type: "assign_module" as const, moduleId: "web",
+      message: "Thực hiện thay đổi", expectedResult: "Báo cáo và bằng chứng" };
+    let changes = 0;
+    ctx.store.on("change", () => {
+      changes += 1;
+      // Listener phải thấy snapshot đã được commit, gồm cả mutation và callId.
+      const row = db.prepare("SELECT body FROM snapshot WHERE id = 1").get() as { body: string };
+      assert.equal(row.body, JSON.stringify(ctx.store.snapshot()));
+    });
+    db.exec(`CREATE TRIGGER reject_commit BEFORE UPDATE ON snapshot
+      BEGIN SELECT RAISE(ABORT, 'commit rejected'); END;`);
+    assert.throws(() => ctx.store.routeLeadTool(lead.id, "retry-call", command, ["web"]), /commit rejected/);
+    assert.deepEqual(ctx.store.snapshot(), before);
+    const row = db.prepare("SELECT body FROM snapshot WHERE id = 1").get() as { body: string };
+    assert.equal(row.body, JSON.stringify(before));
+    assert.equal(changes, 0);
+
+    db.exec("DROP TRIGGER reject_commit");
+    ctx.store.routeLeadTool(lead.id, "retry-call", command, ["web"]);
+    assert.equal(changes, 1);
+    assert.deepEqual(ctx.store.session(conversation.leadSessionId)?.handledToolCalls, ["retry-call"]);
+    assert.equal(ctx.store.snapshot().sessions.filter(s => s.role === "peer").length, 1);
+    assert.equal(ctx.store.snapshot().messages.filter(m => m.to === "peer").length, 1);
+    assert.equal(ctx.store.queued().length, 1);
+    assert.match(ctx.store.routeLeadTool(lead.id, "retry-call", command, ["web"]), /Already executed/);
+    assert.equal(ctx.store.queued().length, 1);
+  } finally {
+    db.close();
+    ctx.cleanup();
+  }
 });
