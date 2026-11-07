@@ -19,6 +19,30 @@ function startLead(store: CoordinationStore, conversationId: string) {
   return delivery;
 }
 
+for (const finished of [false, true]) {
+  test(`Phản hồi Lead dài được lưu nguyên văn qua restart khi task ${finished ? "finished" : "active"}`, () => {
+    const ctx = fixture();
+    try {
+      const c = ctx.store.createConversation("Báo cáo dài");
+      const lead = startLead(ctx.store, c.id);
+      const reply = "  \n# Báo cáo\n\n" + "Nội dung kiểm chứng tiếng Việt.\n".repeat(1000) +
+        "\n```ts\nconst result = true;\n```\n\nKết thúc báo cáo.  \n";
+      assert.ok(reply.length > 20000);
+      if (finished) ctx.store.routeLeadTool(lead.id, "finish", { type: "finish" }, []);
+      ctx.store.completeLead(lead.id, reply, finished);
+      const assertReply = () => {
+        const replies = ctx.store.snapshot().messages.filter(m =>
+          m.conversationId === c.id && m.from === "lead" && m.to === "user");
+        assert.equal(replies.length, 1);
+        assert.equal(replies[0].text, reply);
+      };
+      assertReply();
+      ctx.reopen();
+      assertReply();
+    } finally { ctx.cleanup(); }
+  });
+}
+
 test("Lead dispatches and becomes idle until Peer emits an event", () => {
   const ctx = fixture();
   try {

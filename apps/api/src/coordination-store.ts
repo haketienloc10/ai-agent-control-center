@@ -601,8 +601,8 @@ export class CoordinationStore extends EventEmitter {
       // A finished turn keeps its normal Codex finalText; an empty finalText gets one fallback.
       // Other turns still cannot publish replies after the task was finished.
       if (finished || conversation.status === "active") {
-        const body = reply.trim() || (finished ? "Task đã hoàn thành." : "");
-        if (body) message(data, conversation.id, "lead", "user", body.slice(0, 20000));
+        const body = reply.trim() ? reply : (finished ? "Task đã hoàn thành." : "");
+        if (body) message(data, conversation.id, "lead", "user", body);
       }
       conversation.updatedAt = now();
     });
